@@ -1,0 +1,42 @@
+﻿# Dependencies
+node_modules/
+.pnpm-store/
+
+# Next.js
+.next/
+out/
+
+# Builds
+dist/
+build/
+coverage/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Supabase local state
+supabase/.temp/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local backups
+Downloads/
+*.zip
+*.bak
+*.backup
+
+# Misc
+*.local
