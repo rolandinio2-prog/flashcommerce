@@ -1,6 +1,22 @@
-import { Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  ParseUUIDPipe,
+  Post,
+} from '@nestjs/common';
 
 import { PaymentsService } from './payments.service';
+
+interface ConfirmCashPaymentBody {
+  tenantCode?: string;
+  branchCode?: string;
+  cashReceivedAmount?: string | number;
+  cashierReference?: string;
+  terminalReference?: string;
+}
 
 @Controller('payments')
 export class PaymentsController {
@@ -28,6 +44,33 @@ export class PaymentsController {
 @Controller('ops/payments')
 export class OpsPaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
+
+  // SOLO CAJA PRESENCIAL:
+  // POST /api/v1/ops/payments/orders/:orderId/cash
+  @Post('orders/:orderId/cash')
+  confirmCashPayment(
+    @Param('orderId', new ParseUUIDPipe())
+    orderId: string,
+
+    @Headers('x-cashier-key')
+    cashierAccessKey: string | undefined,
+
+    @Headers('idempotency-key')
+    idempotencyKey: string | undefined,
+
+    @Body()
+    body: ConfirmCashPaymentBody,
+  ) {
+    return this.paymentsService.confirmCashPayment(orderId, {
+      tenantCode: body?.tenantCode,
+      branchCode: body?.branchCode,
+      cashReceivedAmount: body?.cashReceivedAmount,
+      cashierReference: body?.cashierReference,
+      terminalReference: body?.terminalReference,
+      idempotencyKey,
+      cashierAccessKey,
+    });
+  }
 
   // SOLO LABORATORIO:
   // POST /api/v1/ops/payments/:paymentId/mock-confirm
