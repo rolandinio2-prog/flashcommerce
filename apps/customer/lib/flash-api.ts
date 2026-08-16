@@ -378,6 +378,8 @@ export interface PaymentAttempt {
   expiresAt: string | null;
   paidAt: string | null;
   verifiedAt: string | null;
+  cashReceivedAmount?: number | null;
+  cashChangeAmount?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -412,6 +414,44 @@ export function getOrderPayment(
   );
 }
 
+// =========================================================
+// PAGO EN EFECTIVO - SOLO OPERACIONES
+// =========================================================
+
+export interface ConfirmOperationalCashPaymentInput {
+  tenantCode: string;
+  branchCode: string;
+  cashReceivedAmount: string;
+  cashierReference: string;
+  terminalReference: string;
+}
+
+export interface ConfirmOperationalCashPaymentResponse {
+  changed: boolean;
+  order: PaymentOrderSummary;
+  payment: PaymentAttempt;
+}
+
+export function confirmOperationalCashPayment(
+  orderId: string,
+  input: ConfirmOperationalCashPaymentInput,
+  idempotencyKey: string,
+  cashierAccessKey: string,
+): Promise<ConfirmOperationalCashPaymentResponse> {
+  return apiRequest<ConfirmOperationalCashPaymentResponse>(
+    `/api/v1/ops/payments/orders/${encodeURIComponent(orderId)}/cash`,
+    {
+      method: "POST",
+
+      headers: {
+        "X-Cashier-Key": cashierAccessKey,
+        "Idempotency-Key": idempotencyKey,
+      },
+
+      body: JSON.stringify(input),
+    },
+  );
+}
 // =========================================================
 // CONSULTAR MESAS
 // =========================================================

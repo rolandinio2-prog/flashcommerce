@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  confirmOperationalCashPayment,
   getOperationalOrders,
   updateOperationalOrderStatus,
   type OrderOrigin,
@@ -35,6 +36,14 @@ type OperationalOrderWithFulfillment = OperationalOrder & {
   fulfillment?: OperationalOrderFulfillment;
 };
 
+interface CashPaymentReceipt {
+  orderNumber: string;
+  currency: string;
+  total: number;
+  received: number;
+  change: number;
+  transactionId: string | null;
+}
 interface OpsOrdersClientProps {
   tenantCode: string;
   branchCode: string;
@@ -154,6 +163,19 @@ function isOrderPaymentVerified(order: OperationalOrder): boolean {
   );
 }
 
+function canReceiveCashPayment(order: OperationalOrder): boolean {
+  if (order.status !== "PENDING" && order.status !== "CONFIRMED") {
+    return false;
+  }
+
+  return ![
+    "NOT_REQUIRED",
+    "PAID",
+    "REFUND_PENDING",
+    "REFUNDED",
+    "REVIEW_REQUIRED",
+  ].includes(order.paymentStatus);
+}
 // =========================================================
 // 2. FORMATO DE HORAS
 //
@@ -252,7 +274,36 @@ export default function OpsOrdersClient({
 
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
 
+  const [cashOrder, setCashOrder] =
+    useState<OperationalOrderWithFulfillment | null>(null);
+
+  const [cashReceivedAmount, setCashReceivedAmount] = useState("");
+
+  const [cashierReference, setCashierReference] = useState("");
+
+  const [terminalReference, setTerminalReference] = useState("CAJA-01");
+
+  const [cashierAccessKey, setCashierAccessKey] = useState("");
+
+  const [cashIdempotencyKey, setCashIdempotencyKey] = useState("");
+
+  const [cashBusy, setCashBusy] = useState(false);
+
+  const [cashError, setCashError] = useState<string | null>(null);
+
+  const [cashReceipt, setCashReceipt] = useState<CashPaymentReceipt | null>(
+    null,
+  );
   const [activeTab, setActiveTab] = useState<OpsTab>("ORDERS");
+
+  const parsedCashReceived = Number(cashReceivedAmount.replace(",", "."));
+
+  const calculatedCashChange =
+    cashOrder &&
+    Number.isFinite(parsedCashReceived) &&
+    parsedCashReceived >= cashOrder.total
+      ? Math.round((parsedCashReceived - cashOrder.total) * 100) / 100
+      : null;
 
   // =======================================================
   // 5. CARGA DE PEDIDOS ACTIVOS
@@ -341,6 +392,130 @@ export default function OpsOrdersClient({
     }
   }
 
+  function openCashPayment(order: OperationalOrderWithFulfillment) {
+    setCashOrder(order);
+
+    setCashReceivedAmount(order.total.toFixed(2));
+
+    setCashIdempotencyKey(window.crypto.randomUUID());
+
+    setCashError(null);
+    setCashReceipt(null);
+  }
+
+  function closeCashPayment() {
+    if (cashBusy) {
+      return;
+    }
+
+    setCashOrder(null);
+    setCashReceivedAmount("");
+    setCashIdempotencyKey("");
+    setCashError(null);
+  }
+
+  async function submitCashPayment() {
+    if (!cashOrder) {
+      return;
+    }
+
+    const normalizedAmount = cashReceivedAmount.trim().replace(",", ".");
+
+    if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(normalizedAmount)) {
+      setCashError("Ingresa un importe válido con máximo dos decimales");
+
+      return;
+    }
+
+    if (Number(normalizedAmount) < cashOrder.total) {
+      setCashError("El efectivo recibido no cubre el total del pedido");
+
+      return;
+    }
+
+    if (cashierReference.trim().length < 2) {
+      setCashError("Ingresa la referencia del cajero");
+
+      return;
+    }
+
+    if (terminalReference.trim().length < 2) {
+      setCashError("Ingresa la referencia de la caja");
+
+      return;
+    }
+
+    if (!cashierAccessKey.trim()) {
+      setCashError("Ingresa la clave privada de caja");
+
+      return;
+    }
+
+    if (!cashIdempotencyKey) {
+      setCashError("No existe una clave segura para esta operación");
+
+      return;
+    }
+
+    setCashBusy(true);
+    setCashError(null);
+
+    try {
+      const result = await confirmOperationalCashPayment(
+        cashOrder.id,
+        {
+          tenantCode,
+          branchCode,
+
+          cashReceivedAmount: normalizedAmount,
+
+          cashierReference: cashierReference.trim(),
+
+          terminalReference: terminalReference.trim(),
+        },
+        cashIdempotencyKey,
+        cashierAccessKey.trim(),
+      );
+
+      const received =
+        result.payment.cashReceivedAmount ?? Number(normalizedAmount);
+
+      const change =
+        result.payment.cashChangeAmount ??
+        Math.round((received - result.order.total) * 100) / 100;
+
+      setCashReceipt({
+        orderNumber: result.order.orderNumber,
+
+        currency: result.order.currency,
+
+        total: result.order.total,
+
+        received,
+
+        change,
+
+        transactionId: result.payment.providerTransactionId,
+      });
+
+      setCashOrder(null);
+      setCashReceivedAmount("");
+      setCashIdempotencyKey("");
+
+      await loadOrders();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "No se pudo registrar el pago";
+
+      if (message === "Invalid cashier credentials") {
+        setCashierAccessKey("");
+      }
+
+      setCashError(message);
+    } finally {
+      setCashBusy(false);
+    }
+  }
   // =======================================================
   // 8. INTERFAZ KDS
   // =======================================================
@@ -435,6 +610,39 @@ export default function OpsOrdersClient({
         <div className="mx-auto max-w-[1600px] px-6 pt-5">
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
             {error}
+          </div>
+        </div>
+      )}
+
+      {cashReceipt && (
+        <div className="mx-auto max-w-[1600px] px-6 pt-5">
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-900">
+            <div>
+              <p className="font-bold">
+                Pago en efectivo registrado · Pedido #{cashReceipt.orderNumber}
+              </p>
+
+              <p className="mt-1 text-sm">
+                Total {cashReceipt.currency} {cashReceipt.total.toFixed(2)} ·
+                Recibido {cashReceipt.currency}{" "}
+                {cashReceipt.received.toFixed(2)} · Cambio{" "}
+                {cashReceipt.currency} {cashReceipt.change.toFixed(2)}
+              </p>
+
+              {cashReceipt.transactionId && (
+                <p className="mt-1 text-xs text-green-700">
+                  Transacción: {cashReceipt.transactionId}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setCashReceipt(null)}
+              className="rounded-lg border border-green-300 bg-white px-3 py-2 text-sm font-bold"
+            >
+              Cerrar
+            </button>
           </div>
         </div>
       )}
@@ -582,6 +790,19 @@ export default function OpsOrdersClient({
                               </p>
                             )}
                           </div>
+
+                          {canReceiveCashPayment(order) && (
+                            <button
+                              type="button"
+                              disabled={busyOrderId !== null || cashBusy}
+                              onClick={() => openCashPayment(order)}
+                              className="mt-3 w-full rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-900 transition hover:bg-emerald-100 disabled:opacity-50"
+                            >
+                              {order.paymentStatus === "AWAITING_CONFIRMATION"
+                                ? "Cobrar en efectivo · cancelará el QR"
+                                : "Cobrar en efectivo"}
+                            </button>
+                          )}
 
                           {order.reservation && (
                             <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-3">
@@ -751,6 +972,194 @@ export default function OpsOrdersClient({
           </div>
         )}
       </div>
+      {cashOrder && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeCashPayment();
+            }
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="cash-payment-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCashPayment();
+            }}
+            className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-zinc-500">
+                  Caja presencial
+                </p>
+
+                <h2
+                  id="cash-payment-title"
+                  className="mt-1 text-2xl font-black"
+                >
+                  Cobrar pedido #{cashOrder.orderNumber}
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                disabled={cashBusy}
+                onClick={closeCashPayment}
+                className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-bold disabled:opacity-50"
+                aria-label="Cerrar cobro"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <span className="text-sm text-zinc-600">Total del pedido</span>
+
+                <strong className="text-xl">
+                  {cashOrder.currency} {cashOrder.total.toFixed(2)}
+                </strong>
+              </div>
+
+              {cashOrder.paymentStatus === "AWAITING_CONFIRMATION" && (
+                <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                  Este pedido tiene un QR pendiente. Al confirmar el efectivo,
+                  ese QR quedará cancelado.
+                </p>
+              )}
+            </div>
+
+            <label className="mt-5 block">
+              <span className="text-sm font-bold">Efectivo recibido</span>
+
+              <input
+                autoFocus
+                type="text"
+                inputMode="decimal"
+                value={cashReceivedAmount}
+                onChange={(event) => {
+                  setCashReceivedAmount(event.target.value);
+                  setCashError(null);
+                }}
+                placeholder={cashOrder.total.toFixed(2)}
+                className="mt-2 w-full rounded-xl border border-zinc-300 px-4 py-3 text-xl font-bold outline-none focus:border-zinc-950"
+              />
+            </label>
+
+            <div
+              className={`mt-3 rounded-xl border px-4 py-3 ${
+                calculatedCashChange === null
+                  ? "border-amber-200 bg-amber-50 text-amber-900"
+                  : "border-green-200 bg-green-50 text-green-900"
+              }`}
+            >
+              {calculatedCashChange === null ? (
+                <p className="text-sm font-bold">
+                  El importe debe cubrir el total del pedido.
+                </p>
+              ) : (
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-sm font-bold">Cambio a entregar</span>
+
+                  <strong className="text-xl">
+                    {cashOrder.currency} {calculatedCashChange.toFixed(2)}
+                  </strong>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <label className="block">
+                <span className="text-sm font-bold">Referencia del cajero</span>
+
+                <input
+                  type="text"
+                  value={cashierReference}
+                  onChange={(event) => {
+                    setCashierReference(event.target.value);
+                    setCashError(null);
+                  }}
+                  maxLength={80}
+                  placeholder="Ej. CAJERO-01"
+                  className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-3 outline-none focus:border-zinc-950"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-sm font-bold">Caja o terminal</span>
+
+                <input
+                  type="text"
+                  value={terminalReference}
+                  onChange={(event) => {
+                    setTerminalReference(event.target.value);
+                    setCashError(null);
+                  }}
+                  maxLength={80}
+                  placeholder="CAJA-01"
+                  className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-3 outline-none focus:border-zinc-950"
+                />
+              </label>
+            </div>
+
+            <label className="mt-4 block">
+              <span className="text-sm font-bold">Clave privada de caja</span>
+
+              <input
+                type="password"
+                autoComplete="off"
+                value={cashierAccessKey}
+                onChange={(event) => {
+                  setCashierAccessKey(event.target.value);
+                  setCashError(null);
+                }}
+                placeholder="Pega la clave autorizada"
+                className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-3 outline-none focus:border-zinc-950"
+              />
+
+              <span className="mt-2 block text-xs text-zinc-500">
+                La clave permanece solamente en la memoria de esta página y no
+                se envía dentro del cuerpo del pago.
+              </span>
+            </label>
+
+            {cashError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                {cashError}
+              </div>
+            )}
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                disabled={cashBusy}
+                onClick={closeCashPayment}
+                className="rounded-xl border border-zinc-300 px-4 py-3 font-bold disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                disabled={
+                  cashBusy ||
+                  calculatedCashChange === null ||
+                  cashierReference.trim().length < 2 ||
+                  terminalReference.trim().length < 2 ||
+                  !cashierAccessKey.trim()
+                }
+                className="rounded-xl bg-zinc-950 px-4 py-3 font-bold text-white disabled:bg-zinc-400"
+              >
+                {cashBusy ? "Registrando..." : "Confirmar efectivo"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }
