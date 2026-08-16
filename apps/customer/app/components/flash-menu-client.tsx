@@ -1,14 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import QRCode from "react-qr-code";
 
 import {
   addCartItem,
   createCart,
   createOrder,
+  createQrPayment,
   getCart,
   getDiningTableContext,
   getDiningTables,
+  getOrderPayment,
   getOrderTracking,
   removeCartItem,
   updateCartItem,
@@ -18,6 +21,8 @@ import {
   type FlashCart,
   type FlashOrderFulfillmentInput,
   type FlashOrderType,
+  type OrderPaymentStatus,
+  type PaymentAttempt,
   type TableReservation,
 } from "../../lib/flash-api";
 
@@ -107,9 +112,19 @@ function getCustomerOrderStatusLabel(status: string): string {
   }
 }
 
-function getCustomerOrderStatusMessage(status: string): string {
+function getCustomerOrderStatusMessage(
+  status: string,
+  paymentStatus?: OrderPaymentStatus,
+): string {
   switch (status) {
     case "PENDING":
+      if (
+        paymentStatus === "PENDING" ||
+        paymentStatus === "AWAITING_CONFIRMATION"
+      ) {
+        return "Tu pedido empezará a prepararse cuando confirmemos el pago.";
+      }
+
       return "Recibimos tu pedido y estamos esperando confirmarlo.";
 
     case "CONFIRMED":
@@ -129,6 +144,40 @@ function getCustomerOrderStatusMessage(status: string): string {
 
     default:
       return "";
+  }
+}
+
+function getCustomerPaymentStatusLabel(status: OrderPaymentStatus): string {
+  switch (status) {
+    case "NOT_REQUIRED":
+      return "No requerido";
+
+    case "PENDING":
+      return "Pendiente";
+
+    case "AWAITING_CONFIRMATION":
+      return "Esperando confirmación";
+
+    case "PAID":
+      return "Pagado";
+
+    case "FAILED":
+      return "Fallido";
+
+    case "EXPIRED":
+      return "Expirado";
+
+    case "CANCELLED":
+      return "Cancelado";
+
+    case "REFUND_PENDING":
+      return "Reembolso pendiente";
+
+    case "REFUNDED":
+      return "Reembolsado";
+
+    case "REVIEW_REQUIRED":
+      return "Revisión requerida";
   }
 }
 
@@ -256,6 +305,12 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     null,
   );
 
+  const [orderPayment, setOrderPayment] = useState<PaymentAttempt | null>(null);
+
+  const [paymentBusy, setPaymentBusy] = useState(false);
+
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+
   // Controla solamente si el modal está abierto o cerrado.
   // El polling NO debe modificar este estado.
   const [orderModalOpen, setOrderModalOpen] = useState(false);
@@ -350,6 +405,34 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     }
 
     return "Ocurrió un error inesperado";
+  }
+
+  async function prepareQrPayment(trackingToken: string) {
+    setPaymentBusy(true);
+    setPaymentError(null);
+
+    try {
+      const result = await createQrPayment(trackingToken);
+
+      setOrderPayment(result.payment);
+
+      setCompletedOrder((currentOrder) => {
+        if (!currentOrder || currentOrder.trackingToken !== trackingToken) {
+          return currentOrder;
+        }
+
+        return {
+          ...currentOrder,
+          status: result.order.status,
+          paymentStatus: result.order.paymentStatus,
+          orderOrigin: result.order.orderOrigin,
+        };
+      });
+    } catch (error) {
+      setPaymentError(getErrorMessage(error));
+    } finally {
+      setPaymentBusy(false);
+    }
   }
 
   // =========================================================
@@ -634,12 +717,16 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
       setActiveTrackingToken(null);
       setCompletedOrder(null);
+      setOrderPayment(null);
+      setPaymentError(null);
       setOrderModalOpen(false);
 
       return;
     }
 
     setActiveTrackingToken(trackingToken);
+    setOrderPayment(null);
+    setPaymentError(null);
 
     // Al entrar o hacer F5 mostramos inicialmente
     // el pedido activo. El polling NO vuelve a abrirlo.
@@ -676,10 +763,33 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
     async function refreshOrder() {
       try {
-        const order = await getOrderTracking(trackingToken);
+        const [orderResult, paymentResult] = await Promise.allSettled([
+          getOrderTracking(trackingToken),
+          getOrderPayment(trackingToken),
+        ]);
 
         if (stopped) {
           return;
+        }
+
+        if (orderResult.status === "rejected") {
+          throw orderResult.reason;
+        }
+
+        let order = orderResult.value;
+
+        if (paymentResult.status === "fulfilled") {
+          order = {
+            ...order,
+            status: paymentResult.value.order.status,
+            paymentStatus: paymentResult.value.order.paymentStatus,
+            orderOrigin: paymentResult.value.order.orderOrigin,
+          };
+
+          setOrderPayment(paymentResult.value.payment);
+          setPaymentError(null);
+        } else {
+          setPaymentError(getErrorMessage(paymentResult.reason));
         }
 
         // Actualizamos los datos del pedido,
@@ -704,6 +814,8 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
           setActiveTrackingToken(null);
           setCompletedOrder(null);
+          setOrderPayment(null);
+          setPaymentError(null);
           setOrderModalOpen(false);
 
           return;
@@ -992,6 +1104,9 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     try {
       const order = await createOrder(cartToken, orderType, fulfillment);
 
+      setOrderPayment(null);
+      setPaymentError(null);
+
       // Guardamos solamente tokens válidos.
       if (
         typeof order.trackingToken === "string" &&
@@ -1000,6 +1115,8 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
         window.localStorage.setItem(orderStorageKey, order.trackingToken);
 
         setActiveTrackingToken(order.trackingToken);
+
+        void prepareQrPayment(order.trackingToken);
       } else {
         console.error("Order created without trackingToken", order);
       }
@@ -1055,6 +1172,8 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
     // Quitamos los datos del pedido de la UI.
     setCompletedOrder(null);
+    setOrderPayment(null);
+    setPaymentError(null);
 
     // Cerramos el modal.
     setOrderModalOpen(false);
@@ -1093,6 +1212,42 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
                 deliveryAddress.trim(),
               )
             : false;
+
+  const paymentExpirationTime = orderPayment?.expiresAt
+    ? new Date(orderPayment.expiresAt).getTime()
+    : null;
+
+  const paymentExpired =
+    paymentExpirationTime !== null && paymentExpirationTime <= Date.now();
+
+  const paymentPaid = Boolean(
+    completedOrder?.paymentStatus === "PAID" || orderPayment?.status === "PAID",
+  );
+
+  const activeQrAvailable = Boolean(
+    orderPayment?.status === "AWAITING_CONFIRMATION" &&
+    orderPayment.qrPayload &&
+    !paymentExpired,
+  );
+
+  const retryablePayment = Boolean(
+    !orderPayment ||
+    orderPayment.status === "CREATED" ||
+    orderPayment.status === "FAILED" ||
+    orderPayment.status === "EXPIRED" ||
+    orderPayment.status === "CANCELLED" ||
+    paymentExpired,
+  );
+
+  const canGenerateQr = Boolean(
+    completedOrder &&
+    completedOrder.status !== "COMPLETED" &&
+    completedOrder.status !== "CANCELLED" &&
+    completedOrder.paymentStatus !== "NOT_REQUIRED" &&
+    !paymentPaid &&
+    !paymentBusy &&
+    retryablePayment,
+  );
 
   // =========================================================
   // 11. UI
@@ -2153,7 +2308,7 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
       {completedOrder && orderModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-3xl bg-white p-7 text-center shadow-2xl">
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-7 text-center shadow-2xl">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-3xl">
               ✓
             </div>
@@ -2176,6 +2331,145 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
                   Estado actualizado automáticamente cada 5 s
                 </p>
               )}
+
+            {completedOrder.paymentStatus !== "NOT_REQUIRED" && (
+              <div className="mt-6 rounded-2xl border border-zinc-200 bg-zinc-50 p-5 text-left">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+                      Pago QR
+                    </p>
+
+                    <p className="mt-1 font-bold text-zinc-950">
+                      {paymentPaid
+                        ? "Pago confirmado"
+                        : "Escanea para completar tu pedido"}
+                    </p>
+                  </div>
+
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-bold ${
+                      paymentPaid
+                        ? "bg-green-100 text-green-700"
+                        : activeQrAvailable
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-zinc-200 text-zinc-700"
+                    }`}
+                  >
+                    {getCustomerPaymentStatusLabel(
+                      completedOrder.paymentStatus,
+                    )}
+                  </span>
+                </div>
+
+                {paymentBusy && (
+                  <div className="mt-4 rounded-xl border border-zinc-200 bg-white p-4 text-center text-sm font-semibold text-zinc-600">
+                    Generando un QR seguro...
+                  </div>
+                )}
+
+                {paymentPaid && (
+                  <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4 text-center">
+                    <p className="text-lg font-bold text-green-800">
+                      Pago verificado
+                    </p>
+
+                    <p className="mt-1 text-sm text-green-700">
+                      El pedido ya puede avanzar a preparación.
+                    </p>
+                  </div>
+                )}
+
+                {activeQrAvailable && orderPayment?.qrPayload && (
+                  <>
+                    <div className="mx-auto mt-4 w-fit rounded-2xl border border-zinc-200 bg-white p-4">
+                      <QRCode
+                        value={orderPayment.qrPayload}
+                        size={192}
+                        aria-label={`QR de pago del pedido ${completedOrder.orderNumber}`}
+                      />
+                    </div>
+
+                    <p className="mt-4 text-center text-sm text-zinc-600">
+                      Abre la aplicación de tu banco, escanea el código y
+                      confirma el importe exacto.
+                    </p>
+
+                    <div className="mt-4 space-y-2 rounded-xl border border-zinc-200 bg-white p-3 text-sm">
+                      <div className="flex justify-between gap-4">
+                        <span className="text-zinc-500">Importe</span>
+
+                        <span className="font-bold">
+                          {orderPayment.currency}{" "}
+                          {orderPayment.amount.toFixed(2)}
+                        </span>
+                      </div>
+
+                      {orderPayment.externalReference && (
+                        <div className="flex justify-between gap-4">
+                          <span className="text-zinc-500">Referencia</span>
+
+                          <span className="text-right font-mono text-xs font-bold">
+                            {orderPayment.externalReference}
+                          </span>
+                        </div>
+                      )}
+
+                      {orderPayment.expiresAt && (
+                        <div className="flex justify-between gap-4">
+                          <span className="text-zinc-500">Válido hasta</span>
+
+                          <span className="text-right font-semibold">
+                            {formatOrderDateTime(orderPayment.expiresAt)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="mt-3 text-center text-xs text-zinc-500">
+                      Verificaremos el pago automáticamente. No cierres esta
+                      ventana hasta recibir la confirmación.
+                    </p>
+                  </>
+                )}
+
+                {canGenerateQr && (
+                  <div className="mt-4">
+                    <p className="text-sm text-zinc-600">
+                      {paymentExpired
+                        ? "El QR anterior expiró. Genera uno nuevo para continuar."
+                        : "Genera el código QR para realizar el pago."}
+                    </p>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void prepareQrPayment(completedOrder.trackingToken)
+                      }
+                      className="mt-3 w-full rounded-xl bg-zinc-950 px-4 py-3 text-sm font-bold text-white"
+                    >
+                      {paymentExpired ? "Generar nuevo QR" : "Generar QR"}
+                    </button>
+                  </div>
+                )}
+
+                {!paymentBusy &&
+                  !paymentPaid &&
+                  !activeQrAvailable &&
+                  !canGenerateQr && (
+                    <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                      El pago requiere revisión de la sucursal antes de que el
+                      pedido pueda avanzar.
+                    </p>
+                  )}
+
+                {paymentError && (
+                  <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                    No se pudo actualizar el pago: {paymentError}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* =============================================
                   RESUMEN DEL PEDIDO
@@ -2299,12 +2593,23 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
                 </span>
               </div>
 
+              <div className="mt-3 flex justify-between gap-4">
+                <span className="text-zinc-500">Pago</span>
+
+                <span className="text-right font-semibold">
+                  {getCustomerPaymentStatusLabel(completedOrder.paymentStatus)}
+                </span>
+              </div>
+
               {/* ===========================================
                     MENSAJE AMIGABLE DEL ESTADO ACTUAL
                 ============================================ */}
 
               <p className="mt-3 text-sm text-zinc-600">
-                {getCustomerOrderStatusMessage(completedOrder.status)}
+                {getCustomerOrderStatusMessage(
+                  completedOrder.status,
+                  completedOrder.paymentStatus,
+                )}
               </p>
 
               <div className="mt-3 flex justify-between border-t pt-3">

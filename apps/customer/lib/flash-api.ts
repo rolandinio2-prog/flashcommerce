@@ -64,6 +64,41 @@ export interface CartMutationItem {
 
 export type FlashOrderType = "DINE_IN" | "TAKEAWAY" | "PICKUP" | "DELIVERY";
 
+export type FlashOrderStatus =
+  "PENDING" | "CONFIRMED" | "PREPARING" | "READY" | "COMPLETED" | "CANCELLED";
+
+export type OrderPaymentStatus =
+  | "NOT_REQUIRED"
+  | "PENDING"
+  | "AWAITING_CONFIRMATION"
+  | "PAID"
+  | "FAILED"
+  | "EXPIRED"
+  | "CANCELLED"
+  | "REFUND_PENDING"
+  | "REFUNDED"
+  | "REVIEW_REQUIRED";
+
+export type OrderOrigin =
+  | "LEGACY"
+  | "PUBLIC_MENU"
+  | "TABLE_QR"
+  | "BRANCH_QR"
+  | "OPS_STAFF"
+  | "RESERVATION_PREORDER"
+  | "RESERVATION_CHECKIN";
+
+export type PaymentAttemptStatus =
+  | "CREATED"
+  | "AWAITING_CONFIRMATION"
+  | "PAID"
+  | "FAILED"
+  | "EXPIRED"
+  | "CANCELLED"
+  | "REFUND_PENDING"
+  | "REFUNDED"
+  | "REVIEW_REQUIRED";
+
 // =========================================================
 // FULFILLMENT
 // =========================================================
@@ -126,7 +161,9 @@ export interface CreatedOrder {
   orderNumber: string;
   trackingToken: string;
   orderType: FlashOrderType;
-  status: string;
+  status: FlashOrderStatus;
+  paymentStatus: OrderPaymentStatus;
+  orderOrigin: OrderOrigin;
   currency: string;
 
   fulfillment: FlashOrderFulfillment;
@@ -310,6 +347,72 @@ export function getOrderTracking(trackingToken: string): Promise<CreatedOrder> {
 }
 
 // =========================================================
+// PAGOS QR
+// =========================================================
+
+export interface PaymentOrderSummary {
+  id: string;
+  orderNumber: string;
+  trackingToken: string;
+  status: FlashOrderStatus;
+  paymentStatus: OrderPaymentStatus;
+  orderOrigin: OrderOrigin;
+  total: number;
+  currency: string;
+  reservationId: string | null;
+  reservationStatus: string | null;
+}
+
+export interface PaymentAttempt {
+  id: string;
+  attemptNumber: number;
+  method: "QR" | "CASH";
+  provider: string;
+  status: PaymentAttemptStatus;
+  amount: number;
+  currency: string;
+  externalReference: string | null;
+  providerPaymentId: string | null;
+  providerTransactionId: string | null;
+  qrPayload: string | null;
+  expiresAt: string | null;
+  paidAt: string | null;
+  verifiedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateQrPaymentResponse {
+  reused: boolean;
+  order: PaymentOrderSummary;
+  payment: PaymentAttempt;
+}
+
+export interface OrderPaymentResponse {
+  order: PaymentOrderSummary;
+  payment: PaymentAttempt | null;
+}
+
+export function createQrPayment(
+  trackingToken: string,
+): Promise<CreateQrPaymentResponse> {
+  return apiRequest<CreateQrPaymentResponse>(
+    `/api/v1/payments/orders/${encodeURIComponent(trackingToken)}/qr`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function getOrderPayment(
+  trackingToken: string,
+): Promise<OrderPaymentResponse> {
+  return apiRequest<OrderPaymentResponse>(
+    `/api/v1/payments/orders/${encodeURIComponent(trackingToken)}`,
+  );
+}
+
+// =========================================================
 // CONSULTAR MESAS
 // =========================================================
 
@@ -343,8 +446,7 @@ export function getDiningTableContext(
 // OPERACIONES / KDS
 // =========================================================
 
-export type OperationalOrderStatus =
-  "PENDING" | "CONFIRMED" | "PREPARING" | "READY" | "COMPLETED" | "CANCELLED";
+export type OperationalOrderStatus = FlashOrderStatus;
 
 export type OperationalTableSessionStatus = "OPEN" | "CLOSED";
 
@@ -369,6 +471,8 @@ export interface OperationalOrder {
   trackingToken: string;
   orderType: FlashOrderType;
   status: OperationalOrderStatus;
+  paymentStatus: OrderPaymentStatus;
+  orderOrigin: OrderOrigin;
   currency: string;
   total: number;
 

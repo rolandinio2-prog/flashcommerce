@@ -5,6 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   getOperationalOrders,
   updateOperationalOrderStatus,
+  type OrderOrigin,
+  type OrderPaymentStatus,
   type OperationalOrder,
   type OperationalOrderStatus,
 } from "../../../lib/flash-api";
@@ -87,6 +89,71 @@ function getOrderTypeLabel(orderType: string) {
   }
 }
 
+function getPaymentStatusLabel(status: OrderPaymentStatus) {
+  switch (status) {
+    case "NOT_REQUIRED":
+      return "No requerido";
+
+    case "PENDING":
+      return "Pago pendiente";
+
+    case "AWAITING_CONFIRMATION":
+      return "Esperando confirmación";
+
+    case "PAID":
+      return "Pago verificado";
+
+    case "FAILED":
+      return "Pago fallido";
+
+    case "EXPIRED":
+      return "QR expirado";
+
+    case "CANCELLED":
+      return "Pago cancelado";
+
+    case "REFUND_PENDING":
+      return "Reembolso pendiente";
+
+    case "REFUNDED":
+      return "Reembolsado";
+
+    case "REVIEW_REQUIRED":
+      return "Revisión requerida";
+  }
+}
+
+function getOrderOriginLabel(origin: OrderOrigin) {
+  switch (origin) {
+    case "LEGACY":
+      return "Pedido anterior";
+
+    case "PUBLIC_MENU":
+      return "Menú público";
+
+    case "TABLE_QR":
+      return "QR de mesa";
+
+    case "BRANCH_QR":
+      return "QR de sucursal";
+
+    case "OPS_STAFF":
+      return "Personal de sucursal";
+
+    case "RESERVATION_PREORDER":
+      return "Prepedido de reserva";
+
+    case "RESERVATION_CHECKIN":
+      return "Check-in de reserva";
+  }
+}
+
+function isOrderPaymentVerified(order: OperationalOrder): boolean {
+  return (
+    order.paymentStatus === "PAID" || order.paymentStatus === "NOT_REQUIRED"
+  );
+}
+
 // =========================================================
 // 2. FORMATO DE HORAS
 //
@@ -145,6 +212,17 @@ function getActionLabel(status: OperationalOrderStatus) {
     default:
       return "Continuar";
   }
+}
+
+function isAdvanceOrderPaymentLocked(
+  order: OperationalOrderWithFulfillment,
+): boolean {
+  const nextStatus = getNextStatus(order.status);
+
+  return Boolean(
+    (nextStatus === "CONFIRMED" || nextStatus === "PREPARING") &&
+    !isOrderPaymentVerified(order),
+  );
 }
 
 function isAdvanceOrderPreparationLocked(
@@ -233,6 +311,15 @@ export default function OpsOrdersClient({
     const nextStatus = getNextStatus(order.status);
 
     if (!nextStatus) {
+      return;
+    }
+
+    if (
+      (nextStatus === "CONFIRMED" || nextStatus === "PREPARING") &&
+      !isOrderPaymentVerified(order)
+    ) {
+      setError("El pedido no puede avanzar hasta verificar el pago");
+
       return;
     }
 
@@ -415,6 +502,10 @@ export default function OpsOrdersClient({
                       const preparationLocked =
                         isAdvanceOrderPreparationLocked(order);
 
+                      const paymentLocked = isAdvanceOrderPaymentLocked(order);
+
+                      const paymentVerified = isOrderPaymentVerified(order);
+
                       return (
                         <article
                           key={order.id}
@@ -444,6 +535,52 @@ export default function OpsOrdersClient({
                                 Pedido: {formatBoliviaTime(order.createdAt)}
                               </p>
                             </div>
+                          </div>
+
+                          <div
+                            className={`mt-4 rounded-xl border p-3 ${
+                              paymentVerified
+                                ? "border-green-200 bg-green-50"
+                                : order.paymentStatus === "FAILED" ||
+                                    order.paymentStatus === "CANCELLED" ||
+                                    order.paymentStatus === "REVIEW_REQUIRED"
+                                  ? "border-red-200 bg-red-50"
+                                  : "border-amber-200 bg-amber-50"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">
+                                  Pago
+                                </p>
+
+                                <p
+                                  className={`mt-1 font-bold ${
+                                    paymentVerified
+                                      ? "text-green-800"
+                                      : order.paymentStatus === "FAILED" ||
+                                          order.paymentStatus === "CANCELLED" ||
+                                          order.paymentStatus ===
+                                            "REVIEW_REQUIRED"
+                                        ? "text-red-800"
+                                        : "text-amber-800"
+                                  }`}
+                                >
+                                  {getPaymentStatusLabel(order.paymentStatus)}
+                                </p>
+                              </div>
+
+                              <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-zinc-700">
+                                {getOrderOriginLabel(order.orderOrigin)}
+                              </span>
+                            </div>
+
+                            {paymentLocked && (
+                              <p className="mt-2 text-xs font-medium text-amber-800">
+                                Preparación bloqueada hasta recibir la
+                                confirmación automática de fondos.
+                              </p>
+                            )}
                           </div>
 
                           {order.reservation && (
@@ -582,23 +719,27 @@ export default function OpsOrdersClient({
                           <button
                             type="button"
                             disabled={
-                              busyOrderId === order.id || preparationLocked
+                              busyOrderId === order.id ||
+                              paymentLocked ||
+                              preparationLocked
                             }
                             onClick={() => void advanceOrder(order)}
                             className="mt-5 w-full rounded-xl bg-zinc-950 px-4 py-3 text-sm font-bold text-white disabled:bg-zinc-400"
                           >
                             {busyOrderId === order.id
                               ? "Actualizando..."
-                              : preparationLocked
-                                ? `Preparación disponible desde ${formatBoliviaTime(
-                                    new Date(
+                              : paymentLocked
+                                ? "Esperando confirmación del pago"
+                                : preparationLocked
+                                  ? `Preparación disponible desde ${formatBoliviaTime(
                                       new Date(
-                                        order.reservation!.reservedFor,
-                                      ).getTime() -
-                                        60 * 60 * 1000,
-                                    ).toISOString(),
-                                  )}`
-                                : getActionLabel(order.status)}
+                                        new Date(
+                                          order.reservation!.reservedFor,
+                                        ).getTime() -
+                                          60 * 60 * 1000,
+                                      ).toISOString(),
+                                    )}`
+                                  : getActionLabel(order.status)}
                           </button>
                         </article>
                       );
