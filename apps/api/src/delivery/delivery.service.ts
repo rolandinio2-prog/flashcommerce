@@ -480,6 +480,756 @@ export class DeliveryService {
       status: delivery.status,
     };
   }
+  async assignOperationalDelivery(
+    deliveryIdInput: unknown,
+    tenantCodeInput?: string,
+    branchCodeInput?: string,
+    driverIdInput?: unknown,
+    expectedAssignmentIdInput?: unknown,
+  ) {
+    const deliveryId = this.requireUuid(
+      deliveryIdInput,
+      'deliveryId',
+    );
+
+    const tenantCode = this.requireCode(
+      tenantCodeInput,
+      'tenant',
+    );
+
+    const branchCode = this.requireCode(
+      branchCodeInput,
+      'branch',
+    );
+
+    const driverId = this.requireUuid(
+      driverIdInput,
+      'driverId',
+    );
+
+    const expectedAssignmentId =
+      this.optionalUuid(
+        expectedAssignmentIdInput,
+        'expectedAssignmentId',
+      );
+
+    return this.databaseService.withTransaction(
+      async (client) => {
+        const branchResult =
+          await client.query<{
+            tenant_id: string;
+            branch_id: string;
+            branch_name: string;
+          }>(
+            `
+              select
+                t.id::text as tenant_id,
+                b.id::text as branch_id,
+                b.name as branch_name
+
+              from public.tenants t
+
+              inner join public.branches b
+                on b.tenant_id = t.id
+
+              where t.code = $1
+                and b.code = $2
+                and t.status = 'ACTIVE'
+                and b.status = 'ACTIVE'
+
+              limit 1
+
+              for share of t, b
+            `,
+            [
+              tenantCode,
+              branchCode,
+            ],
+          );
+
+        const branch = branchResult.rows[0];
+
+        if (!branch) {
+          throw new NotFoundException(
+            'Tenant or branch not found',
+          );
+        }
+
+        const deliveryResult =
+          await client.query<{
+            id: string;
+            status: string;
+
+            order_id: string;
+            order_number: string;
+            order_status: string;
+            payment_status: string;
+          }>(
+            `
+              select
+                d.id::text,
+                d.status,
+
+                o.id::text
+                  as order_id,
+
+                o.order_number::text
+                  as order_number,
+
+                o.status
+                  as order_status,
+
+                o.payment_status
+
+              from public.deliveries d
+
+              inner join public.orders o
+                on o.tenant_id = d.tenant_id
+               and o.branch_id = d.branch_id
+               and o.id = d.order_id
+
+              where d.tenant_id = $1::uuid
+                and d.branch_id = $2::uuid
+                and d.id = $3::uuid
+
+              for update of d
+            `,
+            [
+              branch.tenant_id,
+              branch.branch_id,
+              deliveryId,
+            ],
+          );
+
+        const delivery =
+          deliveryResult.rows[0];
+
+        if (!delivery) {
+          throw new NotFoundException(
+            'Delivery not found',
+          );
+        }
+
+        if (
+          ![
+            'CONFIRMED',
+            'PREPARING',
+            'READY',
+          ].includes(delivery.order_status)
+        ) {
+          throw new ConflictException(
+            `Order ${delivery.order_number} is not dispatchable from ${delivery.order_status}`,
+          );
+        }
+
+        if (
+          ![
+            'PAID',
+            'NOT_REQUIRED',
+          ].includes(delivery.payment_status)
+        ) {
+          throw new ConflictException(
+            'Delivery cannot be assigned until payment is verified',
+          );
+        }
+
+        if (
+          delivery.status !== 'WAITING_ASSIGNMENT' &&
+          delivery.status !== 'ASSIGNED'
+        ) {
+          throw new ConflictException(
+            `Delivery cannot be assigned from ${delivery.status}`,
+          );
+        }
+
+        const activeResult =
+          await client.query<{
+            id: string;
+            driver_id: string;
+            assignment_number: number;
+            status: string;
+
+            driver_code: string;
+            driver_name: string;
+          }>(
+            `
+              select
+                a.id::text,
+                a.driver_id::text,
+                a.assignment_number,
+                a.status,
+
+                drv.code
+                  as driver_code,
+
+                drv.display_name
+                  as driver_name
+
+              from public.delivery_assignments a
+
+              inner join public.delivery_drivers drv
+                on drv.tenant_id = a.tenant_id
+               and drv.id = a.driver_id
+
+              where a.tenant_id = $1::uuid
+                and a.branch_id = $2::uuid
+                and a.delivery_id = $3::uuid
+                and a.status in (
+                  'ASSIGNED',
+                  'ACCEPTED'
+                )
+
+              order by
+                a.assignment_number desc
+
+              limit 1
+
+              for update of a
+            `,
+            [
+              branch.tenant_id,
+              branch.branch_id,
+              delivery.id,
+            ],
+          );
+
+        const activeAssignment =
+          activeResult.rows[0] ?? null;
+
+        if (
+          delivery.status ===
+            'WAITING_ASSIGNMENT' &&
+          activeAssignment
+        ) {
+          throw new ConflictException(
+            'Delivery assignment state is inconsistent',
+          );
+        }
+
+        if (
+          delivery.status === 'ASSIGNED' &&
+          !activeAssignment
+        ) {
+          throw new ConflictException(
+            'Delivery assignment state is inconsistent',
+          );
+        }
+
+        if (
+          activeAssignment &&
+          activeAssignment.status !== 'ASSIGNED'
+        ) {
+          throw new ConflictException(
+            'Accepted assignment cannot be replaced by operations',
+          );
+        }
+
+        // ----------------------------------------------------
+        // Idempotency.
+        //
+        // A retry of the same assignment does not create
+        // another assignment or another event.
+        // ----------------------------------------------------
+
+        if (
+          activeAssignment &&
+          activeAssignment.driver_id === driverId
+        ) {
+          return {
+            tenant: tenantCode,
+
+            branch: {
+              code: branchCode,
+              name: branch.branch_name,
+            },
+
+            changed: false,
+            action: 'UNCHANGED',
+
+            delivery: {
+              id: delivery.id,
+              status: delivery.status,
+            },
+
+            assignment: {
+              id: activeAssignment.id,
+
+              number:
+                activeAssignment.assignment_number,
+
+              status:
+                activeAssignment.status,
+
+              driver: {
+                id: activeAssignment.driver_id,
+                code: activeAssignment.driver_code,
+                name: activeAssignment.driver_name,
+              },
+            },
+          };
+        }
+
+        // ----------------------------------------------------
+        // Reassignment stale-write protection.
+        //
+        // First assignment has no expectedAssignmentId.
+        // Reassignment requires the exact active assignment
+        // observed by the operator.
+        // ----------------------------------------------------
+
+        if (
+          delivery.status ===
+            'WAITING_ASSIGNMENT' &&
+          expectedAssignmentId
+        ) {
+          throw new BadRequestException(
+            'expectedAssignmentId must be omitted for initial assignment',
+          );
+        }
+
+        if (
+          delivery.status === 'ASSIGNED' &&
+          !expectedAssignmentId
+        ) {
+          throw new ConflictException(
+            'expectedAssignmentId is required for reassignment',
+          );
+        }
+
+        if (
+          activeAssignment &&
+          expectedAssignmentId !==
+            activeAssignment.id
+        ) {
+          throw new ConflictException(
+            'Delivery assignment changed concurrently',
+          );
+        }
+
+        // ----------------------------------------------------
+        // Target driver must be ACTIVE and explicitly ENABLED
+        // for this tenant + branch.
+        // ----------------------------------------------------
+
+        const driverResult =
+          await client.query<{
+            id: string;
+            code: string;
+            display_name: string;
+          }>(
+            `
+              select
+                drv.id::text,
+                drv.code,
+                drv.display_name
+
+              from public.delivery_driver_branches db
+
+              inner join public.delivery_drivers drv
+                on drv.tenant_id = db.tenant_id
+               and drv.id = db.driver_id
+
+              where db.tenant_id = $1::uuid
+                and db.branch_id = $2::uuid
+                and db.driver_id = $3::uuid
+
+                and db.status = 'ENABLED'
+                and drv.status = 'ACTIVE'
+
+              limit 1
+
+              for share of db, drv
+            `,
+            [
+              branch.tenant_id,
+              branch.branch_id,
+              driverId,
+            ],
+          );
+
+        const driver =
+          driverResult.rows[0];
+
+        if (!driver) {
+          throw new ConflictException(
+            'Driver is not active and enabled for this branch',
+          );
+        }
+
+        // ----------------------------------------------------
+        // Calculate next immutable history number while the
+        // delivery row remains locked.
+        // ----------------------------------------------------
+
+        const numberResult =
+          await client.query<{
+            next_number: number;
+          }>(
+            `
+              select
+                (
+                  coalesce(
+                    max(a.assignment_number),
+                    0
+                  ) + 1
+                )::integer as next_number
+
+              from public.delivery_assignments a
+
+              where a.tenant_id = $1::uuid
+                and a.branch_id = $2::uuid
+                and a.delivery_id = $3::uuid
+            `,
+            [
+              branch.tenant_id,
+              branch.branch_id,
+              delivery.id,
+            ],
+          );
+
+        const nextAssignmentNumber =
+          numberResult.rows[0]?.next_number;
+
+        if (
+          !nextAssignmentNumber ||
+          nextAssignmentNumber < 1
+        ) {
+          throw new Error(
+            'Could not calculate assignment number',
+          );
+        }
+
+        const isReassignment =
+          activeAssignment !== null;
+
+        // ----------------------------------------------------
+        // Release old assignment first.
+        // The partial unique index then permits the new active
+        // assignment inside this same transaction.
+        // ----------------------------------------------------
+
+        if (activeAssignment) {
+          const releasedResult =
+            await client.query(
+              `
+                update public.delivery_assignments
+
+                set
+                  status = 'RELEASED',
+                  released_at = now(),
+                  release_reason =
+                    'Reassigned by operations',
+                  updated_at = now()
+
+                where tenant_id = $1::uuid
+                  and branch_id = $2::uuid
+                  and id = $3::uuid
+                  and status = 'ASSIGNED'
+
+                returning id
+              `,
+              [
+                branch.tenant_id,
+                branch.branch_id,
+                activeAssignment.id,
+              ],
+            );
+
+          if (releasedResult.rowCount !== 1) {
+            throw new ConflictException(
+              'Delivery assignment changed concurrently',
+            );
+          }
+        }
+
+        let newAssignment: {
+          id: string;
+          assignment_number: number;
+          status: string;
+          assigned_at: string | Date;
+        };
+
+        try {
+          const insertResult =
+            await client.query<{
+              id: string;
+              assignment_number: number;
+              status: string;
+              assigned_at: string | Date;
+            }>(
+              `
+                insert into public.delivery_assignments (
+                  tenant_id,
+                  branch_id,
+                  delivery_id,
+                  driver_id,
+
+                  assignment_number,
+                  status
+                )
+                values (
+                  $1::uuid,
+                  $2::uuid,
+                  $3::uuid,
+                  $4::uuid,
+
+                  $5::integer,
+                  'ASSIGNED'
+                )
+                returning
+                  id::text,
+                  assignment_number,
+                  status,
+                  assigned_at
+              `,
+              [
+                branch.tenant_id,
+                branch.branch_id,
+                delivery.id,
+                driver.id,
+                nextAssignmentNumber,
+              ],
+            );
+
+          const inserted =
+            insertResult.rows[0];
+
+          if (!inserted) {
+            throw new Error(
+              'Assignment creation returned no row',
+            );
+          }
+
+          newAssignment = inserted;
+        } catch (error) {
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            (
+              error as {
+                code?: string;
+              }
+            ).code === '23505'
+          ) {
+            throw new ConflictException(
+              'Delivery assignment changed concurrently',
+            );
+          }
+
+          throw error;
+        }
+
+        // ----------------------------------------------------
+        // First assignment changes delivery status.
+        // Reassignment keeps ASSIGNED but refreshes updated_at.
+        // ----------------------------------------------------
+
+        if (!isReassignment) {
+          const deliveryUpdate =
+            await client.query(
+              `
+                update public.deliveries
+
+                set
+                  status = 'ASSIGNED',
+                  updated_at = now()
+
+                where tenant_id = $1::uuid
+                  and branch_id = $2::uuid
+                  and id = $3::uuid
+                  and status =
+                    'WAITING_ASSIGNMENT'
+
+                returning id
+              `,
+              [
+                branch.tenant_id,
+                branch.branch_id,
+                delivery.id,
+              ],
+            );
+
+          if (deliveryUpdate.rowCount !== 1) {
+            throw new ConflictException(
+              'Delivery changed concurrently',
+            );
+          }
+        } else {
+          const deliveryUpdate =
+            await client.query(
+              `
+                update public.deliveries
+
+                set updated_at = now()
+
+                where tenant_id = $1::uuid
+                  and branch_id = $2::uuid
+                  and id = $3::uuid
+                  and status = 'ASSIGNED'
+
+                returning id
+              `,
+              [
+                branch.tenant_id,
+                branch.branch_id,
+                delivery.id,
+              ],
+            );
+
+          if (deliveryUpdate.rowCount !== 1) {
+            throw new ConflictException(
+              'Delivery changed concurrently',
+            );
+          }
+        }
+
+        // ----------------------------------------------------
+        // Immutable delivery event.
+        // ----------------------------------------------------
+
+        await client.query(
+          `
+            insert into public.delivery_events (
+              tenant_id,
+              branch_id,
+              delivery_id,
+
+              event_type,
+              from_status,
+              to_status,
+
+              actor_type,
+              actor_reference,
+
+              payload
+            )
+            values (
+              $1::uuid,
+              $2::uuid,
+              $3::uuid,
+
+              $4,
+              $5,
+              'ASSIGNED',
+
+              'OPS',
+              'OPS_DISPATCH',
+
+              jsonb_build_object(
+                'assignmentId',
+                  $6::text,
+
+                'assignmentNumber',
+                  $7::integer,
+
+                'driverId',
+                  $8::text,
+
+                'driverCode',
+                  $9::text,
+
+                'previousAssignmentId',
+                  $10::text,
+
+                'previousDriverId',
+                  $11::text,
+
+                'previousDriverCode',
+                  $12::text
+              )
+            )
+          `,
+          [
+            branch.tenant_id,
+            branch.branch_id,
+            delivery.id,
+
+            isReassignment
+              ? 'DRIVER_REASSIGNED'
+              : 'DRIVER_ASSIGNED',
+
+            isReassignment
+              ? 'ASSIGNED'
+              : 'WAITING_ASSIGNMENT',
+
+            newAssignment.id,
+            newAssignment.assignment_number,
+
+            driver.id,
+            driver.code,
+
+            activeAssignment?.id ?? null,
+            activeAssignment?.driver_id ?? null,
+            activeAssignment?.driver_code ?? null,
+          ],
+        );
+
+        return {
+          tenant: tenantCode,
+
+          branch: {
+            code: branchCode,
+            name: branch.branch_name,
+          },
+
+          changed: true,
+
+          action:
+            isReassignment
+              ? 'REASSIGNED'
+              : 'ASSIGNED',
+
+          delivery: {
+            id: delivery.id,
+            status: 'ASSIGNED',
+          },
+
+          previousAssignment:
+            activeAssignment
+              ? {
+                  id: activeAssignment.id,
+
+                  number:
+                    activeAssignment.assignment_number,
+
+                  status: 'RELEASED',
+
+                  driver: {
+                    id:
+                      activeAssignment.driver_id,
+
+                    code:
+                      activeAssignment.driver_code,
+
+                    name:
+                      activeAssignment.driver_name,
+                  },
+                }
+              : null,
+
+          assignment: {
+            id: newAssignment.id,
+
+            number:
+              newAssignment.assignment_number,
+
+            status:
+              newAssignment.status,
+
+            assignedAt:
+              newAssignment.assigned_at,
+
+            driver: {
+              id: driver.id,
+              code: driver.code,
+              name: driver.display_name,
+            },
+          },
+        };
+      },
+    );
+  }
   async getOperationalDeliveries(
     tenantCodeInput?: string,
     branchCodeInput?: string,
@@ -975,6 +1725,49 @@ export class DeliveryService {
     };
   }
 
+  private requireUuid(
+    value: unknown,
+    field: string,
+  ): string {
+    if (typeof value !== 'string') {
+      throw new BadRequestException(
+        `${field} is required`,
+      );
+    }
+
+    const normalized =
+      value.trim().toLowerCase();
+
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        normalized,
+      )
+    ) {
+      throw new BadRequestException(
+        `${field} is invalid`,
+      );
+    }
+
+    return normalized;
+  }
+
+  private optionalUuid(
+    value: unknown,
+    field: string,
+  ): string | null {
+    if (
+      value === undefined ||
+      value === null ||
+      value === ''
+    ) {
+      return null;
+    }
+
+    return this.requireUuid(
+      value,
+      field,
+    );
+  }
   private requireCode(value: unknown, field: string): string {
     if (typeof value !== 'string') {
       throw new BadRequestException(`${field} is required`);

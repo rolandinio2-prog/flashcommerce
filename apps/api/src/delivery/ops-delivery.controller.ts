@@ -1,6 +1,9 @@
 import {
+  Body,
   Controller,
   Get,
+  Param,
+  Patch,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -44,6 +47,32 @@ export class OpsDeliveryController {
     return this.deliveryService.getOperationalDrivers(
       tenantCode,
       branchCode,
+    );
+  }
+
+  @Patch('deliveries/:deliveryId/assignment')
+  assignOperationalDelivery(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Query('tenant')
+    tenantCode?: string,
+
+    @Query('branch')
+    branchCode?: string,
+
+    @Body()
+    body?: {
+      driverId?: unknown;
+      expectedAssignmentId?: unknown;
+    },
+  ) {
+    return this.deliveryService.assignOperationalDelivery(
+      deliveryId,
+      tenantCode,
+      branchCode,
+      body?.driverId,
+      body?.expectedAssignmentId,
     );
   }
 }
