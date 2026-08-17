@@ -14,6 +14,7 @@ import { OrderModule } from './order/order.module';
 import { TablesModule } from './tables/tables.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { PaymentsModule } from './payments/payments.module';
+import { DeliveryModule } from './delivery/delivery.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { PaymentsModule } from './payments/payments.module';
     TablesModule,
     ReservationsModule,
     PaymentsModule,
+    DeliveryModule,
   ],
 
   controllers: [AppController],
