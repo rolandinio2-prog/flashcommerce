@@ -74,6 +74,24 @@ export class DriverController {
     );
   }
 
+  @Patch('deliveries/:deliveryId/pickup')
+  pickupDelivery(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      this.requireIdentity(request);
+
+    return this.deliveryService.pickupDriverDelivery(
+      deliveryId,
+      identity.tenantId,
+      identity.driverId,
+      identity.driverCode,
+    );
+  }
   private requireIdentity(
     request: DriverAuthenticatedRequest,
   ) {
