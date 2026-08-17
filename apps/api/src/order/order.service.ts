@@ -5,6 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { DeliveryService } from '../delivery/delivery.service';
+import type {
+  CreatedDelivery,
+  DeliveryCheckoutQuote,
+} from '../delivery/delivery.types';
 import {
   type TableContextPayload,
   verifyTableContextToken,
@@ -35,7 +40,11 @@ export interface CreateOrderInput {
   tableCode?: string;
   tableContextToken?: string;
   reservationTrackingToken?: string;
+
   deliveryAddress?: string;
+  deliveryLatitude?: unknown;
+  deliveryLongitude?: unknown;
+  deliveryReference?: string;
 
   customerNotes?: string;
 }
@@ -306,7 +315,10 @@ interface ClosedTableSessionRow {
 
 @Injectable()
 export class OrderService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly deliveryService: DeliveryService,
+  ) {}
 
   // =======================================================
   // 1. CREAR PEDIDO
@@ -336,6 +348,8 @@ export class OrderService {
       input.reservationTrackingToken?.trim() || null;
 
     const deliveryAddress = input.deliveryAddress?.trim() || null;
+
+    const deliveryReference = input.deliveryReference?.trim() || null;
 
     const customerNotes = input.customerNotes?.trim() || null;
 
@@ -867,7 +881,27 @@ export class OrderService {
       );
 
       const discountTotal = 0;
-      const deliveryFee = 0;
+
+      let deliveryQuote: DeliveryCheckoutQuote | null = null;
+
+      let deliveryFee = 0;
+
+      if (orderType === 'DELIVERY') {
+        deliveryQuote = await this.deliveryService.quoteDeliveryForCheckout(
+          client,
+          {
+            tenantId: cart.tenant_id,
+            branchId: cart.branch_id,
+
+            latitude: input.deliveryLatitude,
+            longitude: input.deliveryLongitude,
+
+            subtotal,
+          },
+        );
+
+        deliveryFee = deliveryQuote.deliveryFee;
+      }
 
       const total = subtotal - discountTotal + deliveryFee;
 
@@ -993,6 +1027,40 @@ export class OrderService {
 
       const order = orderResult.rows[0];
 
+      let createdDelivery: CreatedDelivery | null = null;
+
+      if (orderType === 'DELIVERY') {
+        if (
+          !deliveryQuote ||
+          !customerName ||
+          !customerPhone ||
+          !deliveryAddress
+        ) {
+          throw new Error('Delivery checkout invariant failed');
+        }
+
+        createdDelivery = await this.deliveryService.createDeliveryForOrder(
+          client,
+          {
+            tenantId: cart.tenant_id,
+            branchId: cart.branch_id,
+
+            orderId: order.id,
+
+            quote: deliveryQuote,
+
+            recipientName: customerName,
+            recipientPhone: customerPhone,
+
+            addressText: deliveryAddress,
+            addressReference: deliveryReference,
+
+            latitude: input.deliveryLatitude as number,
+            longitude: input.deliveryLongitude as number,
+          },
+        );
+      }
+
       // --------------------------------------------------
       // 1.5.6. Crear snapshot de cada item.
       // --------------------------------------------------
@@ -1095,6 +1163,27 @@ export class OrderService {
 
           customerNotes: order.customer_notes,
         },
+
+        delivery:
+          createdDelivery && deliveryQuote
+            ? {
+                id: createdDelivery.id,
+                trackingToken: createdDelivery.trackingToken,
+                status: createdDelivery.status,
+
+                zone: {
+                  code: deliveryQuote.zone.code,
+                  name: deliveryQuote.zone.name,
+                },
+
+                deliveryFee: deliveryQuote.deliveryFee,
+
+                eta: {
+                  minMinutes: deliveryQuote.eta.minMinutes,
+                  maxMinutes: deliveryQuote.eta.maxMinutes,
+                },
+              }
+            : null,
 
         reservation: reservationContext
           ? {

@@ -1,7 +1,5 @@
 export type DeliveryQuoteUnavailableReason =
-  | 'DELIVERY_DISABLED'
-  | 'OUTSIDE_DELIVERY_AREA'
-  | 'MINIMUM_ORDER_NOT_MET';
+  'DELIVERY_DISABLED' | 'OUTSIDE_DELIVERY_AREA' | 'MINIMUM_ORDER_NOT_MET';
 
 export interface DeliveryQuoteInput {
   tenantCode?: unknown;
@@ -37,4 +35,27 @@ export interface DeliveryQuoteResponse {
   minimumOrderMissing: number | null;
 
   eta: DeliveryQuoteEta | null;
+}
+
+export interface DeliveryCheckoutQuote {
+  zoneId: string;
+
+  zone: {
+    code: string;
+    name: string;
+  };
+
+  deliveryFee: number;
+  minimumOrder: number;
+
+  eta: {
+    minMinutes: number;
+    maxMinutes: number;
+  };
+}
+
+export interface CreatedDelivery {
+  id: string;
+  trackingToken: string;
+  status: 'CREATED';
 }
