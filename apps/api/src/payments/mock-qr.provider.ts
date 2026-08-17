@@ -1,11 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 
-import {
-  type CreateQrPaymentInput,
-  type CreateQrPaymentResult,
-  type PaymentProvider,
-  type ProviderPaymentStatusResult,
+import type {
+  CancelQrPaymentInput,
+  CancelQrPaymentResult,
+  CreateQrPaymentInput,
+  CreateQrPaymentResult,
+  PaymentProvider,
+  ProviderPaymentStatusResult,
 } from './payment-provider';
 
 @Injectable()
@@ -15,7 +17,7 @@ export class MockQrProvider implements PaymentProvider {
   async createQrPayment(
     input: CreateQrPaymentInput,
   ): Promise<CreateQrPaymentResult> {
-    const providerPaymentId = `MOCK-PAY-${randomUUID()}`;
+    const providerPaymentId = `MOCK-${randomUUID()}`;
 
     const qrPayload = [
       'FLASHCOMMERCE-MOCK',
@@ -25,22 +27,33 @@ export class MockQrProvider implements PaymentProvider {
       providerPaymentId,
     ].join('|');
 
-    return Promise.resolve({
+    return {
       providerPaymentId,
       status: 'PENDING',
       qrPayload,
+      qrContentType: 'TEXT',
+      qrMimeType: null,
       expiresAt: input.expiresAt,
-    });
+    };
   }
 
   async getPaymentStatus(
     providerPaymentId: string,
   ): Promise<ProviderPaymentStatusResult> {
-    return Promise.resolve({
+    return {
       providerPaymentId,
       providerTransactionId: null,
       status: 'PENDING',
       paidAt: null,
-    });
+    };
+  }
+
+  async cancelQrPayment(
+    input: CancelQrPaymentInput,
+  ): Promise<CancelQrPaymentResult> {
+    return {
+      providerPaymentId: input.providerPaymentId,
+      status: 'CANCELLED',
+    };
   }
 }

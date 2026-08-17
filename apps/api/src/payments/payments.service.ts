@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  GatewayTimeoutException,
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -11,7 +12,13 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '../database/database.service';
+import { BcpQrProvider } from './bcp-qr.provider';
 import { MockQrProvider } from './mock-qr.provider';
+import type {
+  PaymentProvider,
+  ProviderQrContentType,
+  ProviderQrMimeType,
+} from './payment-provider';
 
 type OrderStatus =
   'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'COMPLETED' | 'CANCELLED';
@@ -78,6 +85,8 @@ interface PaymentAttemptRow {
   provider_payment_id: string | null;
   provider_transaction_id: string | null;
   qr_payload: string | null;
+  qr_content_type: ProviderQrContentType | null;
+  qr_mime_type: ProviderQrMimeType | null;
   expires_at: string | Date | null;
   paid_at: string | Date | null;
   verified_at: string | Date | null;
@@ -99,6 +108,8 @@ interface PaymentTrackingRow extends PaymentOrderRow {
   payment_provider_payment_id: string | null;
   payment_provider_transaction_id: string | null;
   payment_qr_payload: string | null;
+  payment_qr_content_type: ProviderQrContentType | null;
+  payment_qr_mime_type: ProviderQrMimeType | null;
   payment_expires_at: string | Date | null;
   payment_paid_at: string | Date | null;
   payment_verified_at: string | Date | null;
@@ -127,6 +138,7 @@ export class PaymentsService {
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
     private readonly mockQrProvider: MockQrProvider,
+    private readonly bcpQrProvider: BcpQrProvider,
   ) {}
 
   // =====================================================
@@ -134,7 +146,7 @@ export class PaymentsService {
   // =====================================================
 
   async createQrPayment(trackingToken: string) {
-    const provider = this.getMockProvider();
+    const configuredProvider = this.getPaymentProvider();
 
     const expiresAt = new Date(Date.now() + this.getQrTtlSeconds() * 1000);
 
@@ -161,6 +173,8 @@ export class PaymentsService {
                   provider_payment_id,
                   provider_transaction_id,
                   qr_payload,
+                  qr_content_type,
+                  qr_mime_type,
                   expires_at,
                   paid_at,
                   verified_at,
@@ -174,7 +188,8 @@ export class PaymentsService {
                   and order_id = $3::uuid
                   and status in (
                     'CREATED',
-                    'AWAITING_CONFIRMATION'
+                    'AWAITING_CONFIRMATION',
+                    'REVIEW_REQUIRED'
                   )
 
                 order by attempt_number desc
@@ -190,7 +205,9 @@ export class PaymentsService {
           activeResult.rows[0] ?? null;
 
         if (
-          activePayment?.expires_at &&
+          activePayment &&
+          activePayment.status !== 'REVIEW_REQUIRED' &&
+          activePayment.expires_at &&
           new Date(activePayment.expires_at).getTime() <= Date.now()
         ) {
           await client.query(
@@ -293,6 +310,8 @@ export class PaymentsService {
                   provider_payment_id,
                   provider_transaction_id,
                   qr_payload,
+                  qr_content_type,
+                  qr_mime_type,
                   expires_at,
                   paid_at,
                   verified_at,
@@ -304,7 +323,7 @@ export class PaymentsService {
             order.branch_id,
             order.id,
             attemptNumber,
-            provider.name,
+            configuredProvider.name,
             order.total,
             order.currency,
             externalReference,
@@ -337,6 +356,8 @@ export class PaymentsService {
     }
 
     try {
+      const provider = this.getProviderByName(prepared.payment.provider);
+
       const providerResult = await provider.createQrPayment({
         paymentId: prepared.payment.id,
         orderId: prepared.order.id,
@@ -356,8 +377,10 @@ export class PaymentsService {
                       'AWAITING_CONFIRMATION',
                     provider_payment_id = $2,
                     qr_payload = $3,
+                    qr_content_type = $4,
+                    qr_mime_type = $5,
                     expires_at =
-                      $4::timestamptz
+                      $6::timestamptz
                   where id = $1::uuid
                     and status = 'CREATED'
                   returning
@@ -375,6 +398,8 @@ export class PaymentsService {
                     provider_payment_id,
                     provider_transaction_id,
                     qr_payload,
+                    qr_content_type,
+                    qr_mime_type,
                     expires_at,
                     paid_at,
                     verified_at,
@@ -385,6 +410,8 @@ export class PaymentsService {
               prepared.payment.id,
               providerResult.providerPaymentId,
               providerResult.qrPayload,
+              providerResult.qrContentType,
+              providerResult.qrMimeType,
               providerResult.expiresAt.toISOString(),
             ],
           );
@@ -438,38 +465,53 @@ export class PaymentsService {
       const message =
         error instanceof Error
           ? error.message.slice(0, 500)
-          : 'Unknown mock provider error';
+          : 'Unknown payment provider error';
+
+      const outcomeUnknown =
+        prepared.payment.provider === 'BCP_QR' &&
+        error instanceof GatewayTimeoutException;
+
+      const failureStatus: PaymentAttemptStatus = outcomeUnknown
+        ? 'REVIEW_REQUIRED'
+        : 'FAILED';
+
+      const orderFailureStatus: OrderPaymentStatus = outcomeUnknown
+        ? 'REVIEW_REQUIRED'
+        : 'FAILED';
 
       await this.databaseService.withTransaction(async (client) => {
         await client.query(
           `
               update public.order_payments
-              set status = 'FAILED'
+              set status = $2
               where id = $1::uuid
                 and status = 'CREATED'
             `,
-          [prepared.payment.id],
+          [prepared.payment.id, failureStatus],
         );
 
         await client.query(
           `
               update public.orders
-              set payment_status = 'FAILED'
+              set payment_status = $2
               where id = $1::uuid
                 and payment_status <> 'PAID'
             `,
-          [prepared.order.id],
+          [prepared.order.id, orderFailureStatus],
         );
 
         await this.insertPaymentEvent(client, {
           tenantId: prepared.payment.tenant_id,
           branchId: prepared.payment.branch_id,
           paymentId: prepared.payment.id,
-          eventType: 'QR_CREATION_FAILED',
+          eventType: outcomeUnknown
+            ? 'QR_CREATION_OUTCOME_UNKNOWN'
+            : 'QR_CREATION_FAILED',
           source: 'SYSTEM',
           processingStatus: 'FAILED',
           payload: {
-            provider: provider.name,
+            provider: prepared.payment.provider,
+            outcomeUnknown,
           },
           errorMessage: message,
         });
@@ -479,6 +521,12 @@ export class PaymentsService {
         throw error;
       }
 
+      if (outcomeUnknown) {
+        throw new ServiceUnavailableException(
+          'QR payment creation requires reconciliation',
+        );
+      }
+
       throw new ServiceUnavailableException(
         'QR payment provider is not available',
       );
@@ -486,7 +534,7 @@ export class PaymentsService {
   }
 
   // =====================================================
-  // CONSULTA PÚBLICA POR TRACKING TOKEN
+  // CONSULTA PÃšBLICA POR TRACKING TOKEN
   // =====================================================
 
   async getOrderPayment(trackingToken: string) {
@@ -531,6 +579,10 @@ export class PaymentsService {
               as payment_provider_transaction_id,
             p.qr_payload
               as payment_qr_payload,
+            p.qr_content_type
+              as payment_qr_content_type,
+            p.qr_mime_type
+              as payment_qr_mime_type,
             p.expires_at
               as payment_expires_at,
             p.paid_at
@@ -615,6 +667,10 @@ export class PaymentsService {
 
             qr_payload: row.payment_qr_payload,
 
+            qr_content_type: row.payment_qr_content_type,
+
+            qr_mime_type: row.payment_qr_mime_type,
+
             expires_at: row.payment_expires_at,
 
             paid_at: row.payment_paid_at,
@@ -630,7 +686,7 @@ export class PaymentsService {
   }
 
   // =====================================================
-  // CONFIRMACIÓN DE EFECTIVO - SOLO CAJA PRESENCIAL
+  // CONFIRMACIÃ“N DE EFECTIVO - SOLO CAJA PRESENCIAL
   // =====================================================
 
   async confirmCashPayment(orderId: string, input: ConfirmCashPaymentInput) {
@@ -654,7 +710,7 @@ export class PaymentsService {
 
     const idempotencyToken = this.requireIdempotencyToken(input.idempotencyKey);
 
-    return this.databaseService.withTransaction(async (client) => {
+    const cashResult = await this.databaseService.withTransaction(async (client) => {
       const orderResult = await client.query<PaymentOrderRow>(
         `
               select
@@ -723,6 +779,8 @@ export class PaymentsService {
               provider_payment_id,
               provider_transaction_id,
               qr_payload,
+              qr_content_type,
+              qr_mime_type,
               expires_at,
               paid_at,
               verified_at,
@@ -827,6 +885,7 @@ export class PaymentsService {
         branch_id: string;
         method: 'QR' | 'CASH';
         provider: string;
+        provider_payment_id: string | null;
         status: PaymentAttemptStatus;
       }>(
         `
@@ -836,6 +895,7 @@ export class PaymentsService {
                 branch_id::text,
                 method,
                 provider,
+                provider_payment_id,
                 status
 
               from public.order_payments
@@ -871,7 +931,121 @@ export class PaymentsService {
         );
       }
 
+      const bcpCreationInProgress = blockingResult.rows.find(
+        (payment) =>
+          payment.method === 'QR' &&
+          payment.provider.trim().toUpperCase() === 'BCP_QR' &&
+          payment.status === 'CREATED',
+      );
+
+      if (bcpCreationInProgress) {
+        throw new ConflictException(
+          'BCP QR creation is still in progress; cash payment is blocked',
+        );
+      }
+
+      const markCancellationReviewRequired = async (
+        activePayment: (typeof blockingResult.rows)[number],
+        message: string,
+      ) => {
+        await client.query(
+          `
+              update public.order_payments
+              set status = 'REVIEW_REQUIRED'
+              where id = $1::uuid
+                and status in (
+                  'CREATED',
+                  'AWAITING_CONFIRMATION'
+                )
+            `,
+          [activePayment.id],
+        );
+
+        await client.query(
+          `
+              update public.orders
+              set payment_status = 'REVIEW_REQUIRED'
+              where id = $1::uuid
+                and payment_status <> 'PAID'
+            `,
+          [order.id],
+        );
+
+        await this.insertPaymentEvent(client, {
+          tenantId: activePayment.tenant_id,
+          branchId: activePayment.branch_id,
+          paymentId: activePayment.id,
+          eventType: 'QR_CANCELLATION_OUTCOME_UNKNOWN',
+          source: 'CASHIER',
+          processingStatus: 'FAILED',
+          payload: {
+            reason: 'CASH_PAYMENT_REQUIRES_QR_CANCELLATION',
+            provider: activePayment.provider,
+            providerPaymentId: activePayment.provider_payment_id,
+            cashierReference,
+            terminalReference,
+          },
+          errorMessage: message.slice(0, 500),
+        });
+
+        return {
+          reconciliationRequired: true as const,
+        };
+      };
+
       for (const activePayment of blockingResult.rows) {
+        const normalizedProvider = activePayment.provider.trim().toUpperCase();
+
+        if (
+          activePayment.method === 'QR' &&
+          normalizedProvider === 'BCP_QR' &&
+          activePayment.status === 'AWAITING_CONFIRMATION'
+        ) {
+          if (!activePayment.provider_payment_id) {
+            return markCancellationReviewRequired(
+              activePayment,
+              'BCP QR provider payment identifier is missing',
+            );
+          }
+
+          try {
+            const provider = this.getProviderByName(activePayment.provider);
+
+            const cancellation = await provider.cancelQrPayment({
+              providerPaymentId: activePayment.provider_payment_id,
+              reason: 'CASH_PAYMENT_REPLACED_ACTIVE_ATTEMPT',
+            });
+
+            if (
+              cancellation.status !== 'CANCELLED' ||
+              cancellation.providerPaymentId !== activePayment.provider_payment_id
+            ) {
+              return markCancellationReviewRequired(
+                activePayment,
+                'BCP QR cancellation confirmation was inconsistent',
+              );
+            }
+          } catch (error) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : 'BCP QR cancellation outcome is unknown';
+
+            return markCancellationReviewRequired(activePayment, message);
+          }
+        }
+
+        if (
+          activePayment.method === 'QR' &&
+          normalizedProvider !== 'MOCK' &&
+          normalizedProvider !== 'BCP_QR'
+        ) {
+          return markCancellationReviewRequired(
+            activePayment,
+            'Stored QR payment provider cannot be cancelled safely',
+          );
+        }
+
         await client.query(
           `
               update public.order_payments
@@ -904,6 +1078,9 @@ export class PaymentsService {
             previousMethod: activePayment.method,
 
             previousProvider: activePayment.provider,
+
+            remoteCancellationConfirmed:
+              activePayment.method === 'QR' && normalizedProvider === 'BCP_QR',
 
             cashierReference,
 
@@ -999,6 +1176,8 @@ export class PaymentsService {
                 provider_payment_id,
                 provider_transaction_id,
                 qr_payload,
+                qr_content_type,
+                qr_mime_type,
                 expires_at,
                 paid_at,
                 verified_at,
@@ -1099,9 +1278,17 @@ export class PaymentsService {
         payment: this.mapPayment(payment),
       };
     });
+
+    if ('reconciliationRequired' in cashResult) {
+      throw new ServiceUnavailableException(
+        'QR cancellation requires reconciliation before cash payment',
+      );
+    }
+
+    return cashResult;
   }
   // =====================================================
-  // CONFIRMACIÓN MOCK - SOLO LABORATORIO
+  // CONFIRMACIÃ“N MOCK - SOLO LABORATORIO
   // =====================================================
 
   async confirmMockPayment(paymentId: string, labAccessKey?: string) {
@@ -1148,6 +1335,10 @@ export class PaymentsService {
                   as payment_provider_transaction_id,
                 p.qr_payload
                   as payment_qr_payload,
+                p.qr_content_type
+                  as payment_qr_content_type,
+                p.qr_mime_type
+                  as payment_qr_mime_type,
                 p.expires_at
                   as payment_expires_at,
                 p.paid_at
@@ -1264,6 +1455,8 @@ export class PaymentsService {
                 provider_payment_id,
                 provider_transaction_id,
                 qr_payload,
+                qr_content_type,
+                qr_mime_type,
                 expires_at,
                 paid_at,
                 verified_at,
@@ -1484,16 +1677,50 @@ export class PaymentsService {
 
     return normalized;
   }
-  private getMockProvider(): MockQrProvider {
+  private getPaymentProvider(): PaymentProvider {
     const configuredProvider = (
       this.configService.get<string>('PAYMENT_PROVIDER') || ''
     )
       .trim()
       .toUpperCase();
 
-    if (configuredProvider !== 'MOCK') {
+    switch (configuredProvider) {
+      case 'MOCK':
+        return this.mockQrProvider;
+
+      case 'BCP_QR':
+        return this.bcpQrProvider;
+
+      default:
+        throw new ServiceUnavailableException(
+          'PAYMENT_PROVIDER must be MOCK or BCP_QR',
+        );
+    }
+  }
+
+  private getProviderByName(providerName: string): PaymentProvider {
+    const normalizedProvider = providerName.trim().toUpperCase();
+
+    switch (normalizedProvider) {
+      case 'MOCK':
+        return this.mockQrProvider;
+
+      case 'BCP_QR':
+        return this.bcpQrProvider;
+
+      default:
+        throw new ServiceUnavailableException(
+          'Stored payment provider is not supported',
+        );
+    }
+  }
+
+  private getMockProvider(): MockQrProvider {
+    const provider = this.getPaymentProvider();
+
+    if (provider.name !== 'MOCK') {
       throw new ServiceUnavailableException(
-        `Payment provider ${configuredProvider} is not implemented`,
+        'MOCK payment provider is not active',
       );
     }
 
@@ -1606,6 +1833,8 @@ export class PaymentsService {
                 p.provider_payment_id,
                 p.provider_transaction_id,
                 p.qr_payload,
+                p.qr_content_type,
+                p.qr_mime_type,
                 p.expires_at,
                 p.paid_at,
                 p.verified_at,
@@ -1824,6 +2053,10 @@ export class PaymentsService {
 
       qrPayload: payment.qr_payload,
 
+      qrContentType: payment.qr_content_type,
+
+      qrMimeType: payment.qr_mime_type,
+
       expiresAt: payment.expires_at,
 
       paidAt: payment.paid_at,
@@ -1873,6 +2106,10 @@ export class PaymentsService {
       provider_transaction_id: row.payment_provider_transaction_id,
 
       qr_payload: row.payment_qr_payload,
+
+      qr_content_type: row.payment_qr_content_type,
+
+      qr_mime_type: row.payment_qr_mime_type,
 
       expires_at: row.payment_expires_at,
 
