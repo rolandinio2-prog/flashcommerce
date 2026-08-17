@@ -1104,7 +1104,8 @@ export class PaymentsService {
   // CONFIRMACIÓN MOCK - SOLO LABORATORIO
   // =====================================================
 
-  async confirmMockPayment(paymentId: string) {
+  async confirmMockPayment(paymentId: string, labAccessKey?: string) {
+    this.assertMockConfirmationAllowed(labAccessKey);
     this.getMockProvider();
 
     return this.databaseService.withTransaction(async (client) => {
@@ -1355,6 +1356,55 @@ export class PaymentsService {
   // HELPERS
   // =====================================================
 
+  private assertMockConfirmationAllowed(providedKey?: string): void {
+    const nodeEnvironment = (this.configService.get<string>('NODE_ENV') || '')
+      .trim()
+      .toLowerCase();
+
+    const configuredProvider = (
+      this.configService.get<string>('PAYMENT_PROVIDER') || ''
+    )
+      .trim()
+      .toUpperCase();
+
+    const mockConfirmationEnabled =
+      (this.configService.get<string>('ENABLE_MOCK_PAYMENT_CONFIRMATION') || '')
+        .trim()
+        .toLowerCase() === 'true';
+
+    const laboratoryEnvironment =
+      nodeEnvironment === 'development' || nodeEnvironment === 'test';
+
+    if (
+      !laboratoryEnvironment ||
+      configuredProvider !== 'MOCK' ||
+      !mockConfirmationEnabled
+    ) {
+      throw new NotFoundException('Resource not found');
+    }
+
+    const configuredKey =
+      this.configService.get<string>('PAYMENT_LAB_KEY')?.trim() || '';
+
+    if (configuredKey.length < 48) {
+      throw new ServiceUnavailableException(
+        'Payment laboratory access is not configured',
+      );
+    }
+
+    const receivedKey = providedKey?.trim() || '';
+    const configuredBuffer = Buffer.from(configuredKey, 'utf8');
+    const receivedBuffer = Buffer.from(receivedKey, 'utf8');
+
+    const validKey =
+      configuredBuffer.length === receivedBuffer.length &&
+      timingSafeEqual(configuredBuffer, receivedBuffer);
+
+    if (!validKey) {
+      throw new UnauthorizedException('Invalid payment laboratory credentials');
+    }
+  }
+
   private assertCashierAccessKey(providedKey?: string): void {
     const configuredKey =
       this.configService.get<string>('CASHIER_ACCESS_KEY')?.trim() || '';
@@ -1436,7 +1486,7 @@ export class PaymentsService {
   }
   private getMockProvider(): MockQrProvider {
     const configuredProvider = (
-      this.configService.get<string>('PAYMENT_PROVIDER') || 'MOCK'
+      this.configService.get<string>('PAYMENT_PROVIDER') || ''
     )
       .trim()
       .toUpperCase();

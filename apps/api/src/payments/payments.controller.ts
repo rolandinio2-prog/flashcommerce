@@ -7,6 +7,7 @@ import {
   ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 
 import { PaymentsService } from './payments.service';
 
@@ -23,6 +24,7 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   // POST /api/v1/payments/orders/:trackingToken/qr
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('orders/:trackingToken/qr')
   createQrPayment(
     @Param('trackingToken', new ParseUUIDPipe())
@@ -47,6 +49,7 @@ export class OpsPaymentsController {
 
   // SOLO CAJA PRESENCIAL:
   // POST /api/v1/ops/payments/orders/:orderId/cash
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('orders/:orderId/cash')
   confirmCashPayment(
     @Param('orderId', new ParseUUIDPipe())
@@ -74,11 +77,15 @@ export class OpsPaymentsController {
 
   // SOLO LABORATORIO:
   // POST /api/v1/ops/payments/:paymentId/mock-confirm
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post(':paymentId/mock-confirm')
   confirmMockPayment(
     @Param('paymentId', new ParseUUIDPipe())
     paymentId: string,
+
+    @Headers('x-payment-lab-key')
+    paymentLabKey: string | undefined,
   ) {
-    return this.paymentsService.confirmMockPayment(paymentId);
+    return this.paymentsService.confirmMockPayment(paymentId, paymentLabKey);
   }
 }
