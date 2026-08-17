@@ -50,6 +50,7 @@ async function bootstrap() {
       'Idempotency-Key',
       'X-Cashier-Key',
       'X-Payment-Lab-Key',
+      'X-Ops-Key',
     ],
     maxAge: 600,
   });

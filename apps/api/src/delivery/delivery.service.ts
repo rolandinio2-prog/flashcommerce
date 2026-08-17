@@ -480,6 +480,478 @@ export class DeliveryService {
       status: delivery.status,
     };
   }
+  async getOperationalDeliveries(
+    tenantCodeInput?: string,
+    branchCodeInput?: string,
+    statusInput?: string,
+  ) {
+    const tenantCode = this.requireCode(
+      tenantCodeInput,
+      'tenant',
+    );
+
+    const branchCode = this.requireCode(
+      branchCodeInput,
+      'branch',
+    );
+
+    const deliveryStatus = (
+      statusInput?.trim().toUpperCase() ||
+      'WAITING_ASSIGNMENT'
+    );
+
+    const allowedStatuses = new Set([
+      'CREATED',
+      'WAITING_ASSIGNMENT',
+      'ASSIGNED',
+      'ACCEPTED',
+      'PICKED_UP',
+      'EN_ROUTE',
+      'ARRIVED',
+      'DELIVERED',
+      'FAILED',
+      'CANCELLED',
+    ]);
+
+    if (!allowedStatuses.has(deliveryStatus)) {
+      throw new BadRequestException(
+        'Invalid delivery status',
+      );
+    }
+
+    const branchResult =
+      await this.databaseService.query<{
+        tenant_id: string;
+        branch_id: string;
+        branch_name: string;
+      }>(
+        `
+          select
+            t.id::text as tenant_id,
+            b.id::text as branch_id,
+            b.name as branch_name
+
+          from public.tenants t
+
+          inner join public.branches b
+            on b.tenant_id = t.id
+
+          where t.code = $1
+            and b.code = $2
+            and t.status = 'ACTIVE'
+            and b.status = 'ACTIVE'
+
+          limit 1
+        `,
+        [
+          tenantCode,
+          branchCode,
+        ],
+      );
+
+    const branch = branchResult.rows[0];
+
+    if (!branch) {
+      throw new NotFoundException(
+        'Tenant or branch not found',
+      );
+    }
+
+    const result =
+      await this.databaseService.query<{
+        delivery_id: string;
+        delivery_tracking_token: string;
+        delivery_status: string;
+
+        recipient_name: string;
+        recipient_phone: string;
+
+        address_text: string;
+        address_reference: string | null;
+
+        quoted_delivery_fee: string;
+
+        eta_min_minutes: number | null;
+        eta_max_minutes: number | null;
+
+        delivery_created_at: string | Date;
+        delivery_updated_at: string | Date;
+
+        zone_code: string;
+        zone_name: string;
+
+        order_id: string;
+        order_number: string;
+        order_status: string;
+        payment_status: string;
+        order_total: string;
+
+        assignment_id: string | null;
+        assignment_number: number | null;
+        assignment_status: string | null;
+
+        driver_id: string | null;
+        driver_code: string | null;
+        driver_name: string | null;
+      }>(
+        `
+          select
+            d.id::text
+              as delivery_id,
+
+            d.tracking_token::text
+              as delivery_tracking_token,
+
+            d.status
+              as delivery_status,
+
+            d.recipient_name,
+            d.recipient_phone,
+
+            d.address_text,
+            d.address_reference,
+
+            d.quoted_delivery_fee::text,
+
+            d.eta_min_minutes,
+            d.eta_max_minutes,
+
+            d.created_at
+              as delivery_created_at,
+
+            d.updated_at
+              as delivery_updated_at,
+
+            z.code
+              as zone_code,
+
+            z.name
+              as zone_name,
+
+            o.id::text
+              as order_id,
+
+            o.order_number::text
+              as order_number,
+
+            o.status
+              as order_status,
+
+            o.payment_status,
+
+            o.total::text
+              as order_total,
+
+            active_assignment.id::text
+              as assignment_id,
+
+            active_assignment.assignment_number,
+
+            active_assignment.status
+              as assignment_status,
+
+            drv.id::text
+              as driver_id,
+
+            drv.code
+              as driver_code,
+
+            drv.display_name
+              as driver_name
+
+          from public.deliveries d
+
+          inner join public.orders o
+            on o.tenant_id = d.tenant_id
+           and o.branch_id = d.branch_id
+           and o.id = d.order_id
+
+          inner join public.delivery_zones z
+            on z.tenant_id = d.tenant_id
+           and z.branch_id = d.branch_id
+           and z.id = d.zone_id
+
+          left join lateral (
+            select
+              a.id,
+              a.driver_id,
+              a.assignment_number,
+              a.status
+
+            from public.delivery_assignments a
+
+            where a.tenant_id = d.tenant_id
+              and a.branch_id = d.branch_id
+              and a.delivery_id = d.id
+              and a.status in (
+                'ASSIGNED',
+                'ACCEPTED'
+              )
+
+            order by
+              a.assignment_number desc
+
+            limit 1
+          ) active_assignment
+            on true
+
+          left join public.delivery_drivers drv
+            on drv.tenant_id = d.tenant_id
+           and drv.id =
+              active_assignment.driver_id
+
+          where d.tenant_id = $1::uuid
+            and d.branch_id = $2::uuid
+            and d.status = $3
+
+          order by
+            d.created_at asc,
+            d.id asc
+        `,
+        [
+          branch.tenant_id,
+          branch.branch_id,
+          deliveryStatus,
+        ],
+      );
+
+    return {
+      tenant: tenantCode,
+
+      branch: {
+        code: branchCode,
+        name: branch.branch_name,
+      },
+
+      status: deliveryStatus,
+
+      total: result.rows.length,
+
+      deliveries: result.rows.map((row) => ({
+        id: row.delivery_id,
+
+        trackingToken:
+          row.delivery_tracking_token,
+
+        status:
+          row.delivery_status,
+
+        order: {
+          id: row.order_id,
+          orderNumber: row.order_number,
+          status: row.order_status,
+          paymentStatus: row.payment_status,
+          total: Number(row.order_total),
+        },
+
+        recipient: {
+          name: row.recipient_name,
+          phone: row.recipient_phone,
+        },
+
+        destination: {
+          address: row.address_text,
+          reference: row.address_reference,
+        },
+
+        zone: {
+          code: row.zone_code,
+          name: row.zone_name,
+        },
+
+        quote: {
+          deliveryFee:
+            Number(row.quoted_delivery_fee),
+
+          eta: {
+            minMinutes:
+              row.eta_min_minutes,
+
+            maxMinutes:
+              row.eta_max_minutes,
+          },
+        },
+
+        assignment:
+          row.assignment_id
+            ? {
+                id: row.assignment_id,
+
+                number:
+                  row.assignment_number,
+
+                status:
+                  row.assignment_status,
+
+                driver: {
+                  id: row.driver_id,
+                  code: row.driver_code,
+                  name: row.driver_name,
+                },
+              }
+            : null,
+
+        createdAt:
+          row.delivery_created_at,
+
+        updatedAt:
+          row.delivery_updated_at,
+      })),
+    };
+  }
+
+  async getOperationalDrivers(
+    tenantCodeInput?: string,
+    branchCodeInput?: string,
+  ) {
+    const tenantCode = this.requireCode(
+      tenantCodeInput,
+      'tenant',
+    );
+
+    const branchCode = this.requireCode(
+      branchCodeInput,
+      'branch',
+    );
+
+    const branchResult =
+      await this.databaseService.query<{
+        tenant_id: string;
+        branch_id: string;
+        branch_name: string;
+      }>(
+        `
+          select
+            t.id::text as tenant_id,
+            b.id::text as branch_id,
+            b.name as branch_name
+
+          from public.tenants t
+
+          inner join public.branches b
+            on b.tenant_id = t.id
+
+          where t.code = $1
+            and b.code = $2
+            and t.status = 'ACTIVE'
+            and b.status = 'ACTIVE'
+
+          limit 1
+        `,
+        [
+          tenantCode,
+          branchCode,
+        ],
+      );
+
+    const branch = branchResult.rows[0];
+
+    if (!branch) {
+      throw new NotFoundException(
+        'Tenant or branch not found',
+      );
+    }
+
+    const result =
+      await this.databaseService.query<{
+        id: string;
+        code: string;
+        display_name: string;
+        phone: string;
+        driver_status: string;
+        branch_status: string;
+        active_assignments: number;
+      }>(
+        `
+          select
+            drv.id::text,
+            drv.code,
+            drv.display_name,
+            drv.phone,
+
+            drv.status
+              as driver_status,
+
+            db.status
+              as branch_status,
+
+            coalesce(
+              active_work.active_assignments,
+              0
+            )::integer
+              as active_assignments
+
+          from public.delivery_driver_branches db
+
+          inner join public.delivery_drivers drv
+            on drv.tenant_id = db.tenant_id
+           and drv.id = db.driver_id
+
+          left join lateral (
+            select
+              count(*)::integer
+                as active_assignments
+
+            from public.delivery_assignments a
+
+            where a.tenant_id = db.tenant_id
+              and a.branch_id = db.branch_id
+              and a.driver_id = drv.id
+              and a.status in (
+                'ASSIGNED',
+                'ACCEPTED'
+              )
+          ) active_work
+            on true
+
+          where db.tenant_id = $1::uuid
+            and db.branch_id = $2::uuid
+
+            and drv.status = 'ACTIVE'
+            and db.status = 'ENABLED'
+
+          order by
+            drv.display_name,
+            drv.code,
+            drv.id
+        `,
+        [
+          branch.tenant_id,
+          branch.branch_id,
+        ],
+      );
+
+    return {
+      tenant: tenantCode,
+
+      branch: {
+        code: branchCode,
+        name: branch.branch_name,
+      },
+
+      total: result.rows.length,
+
+      drivers: result.rows.map((row) => ({
+        id: row.id,
+        code: row.code,
+
+        displayName:
+          row.display_name,
+
+        phone:
+          row.phone,
+
+        status:
+          row.driver_status,
+
+        branchStatus:
+          row.branch_status,
+
+        activeAssignments:
+          row.active_assignments,
+      })),
+    };
+  }
   private buildUnavailableResponse(
     branch: DeliveryBranchRow,
     reason: 'DELIVERY_DISABLED' | 'OUTSIDE_DELIVERY_AREA',
