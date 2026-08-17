@@ -1,30 +1,31 @@
 import {
   Controller,
   Get,
+  Param,
+  Patch,
   Req,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 
+import { DeliveryService } from './delivery.service';
 import { DriverAccessGuard } from './driver-access.guard';
 import type { DriverAuthenticatedRequest } from './driver-access.guard';
 
 @Controller('driver')
 @UseGuards(DriverAccessGuard)
 export class DriverController {
+  constructor(
+    private readonly deliveryService: DeliveryService,
+  ) {}
+
   @Get('me')
   getAuthenticatedDriver(
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      request.driverAuth;
-
-    if (!identity) {
-      throw new UnauthorizedException(
-        'Invalid driver credentials',
-      );
-    }
+      this.requireIdentity(request);
 
     return {
       authenticated: true,
@@ -52,5 +53,39 @@ export class DriverController {
           identity.expiresAt,
       },
     };
+  }
+
+  @Patch('deliveries/:deliveryId/accept')
+  acceptDelivery(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      this.requireIdentity(request);
+
+    return this.deliveryService.acceptDriverDelivery(
+      deliveryId,
+      identity.tenantId,
+      identity.driverId,
+      identity.driverCode,
+    );
+  }
+
+  private requireIdentity(
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      request.driverAuth;
+
+    if (!identity) {
+      throw new UnauthorizedException(
+        'Invalid driver credentials',
+      );
+    }
+
+    return identity;
   }
 }
