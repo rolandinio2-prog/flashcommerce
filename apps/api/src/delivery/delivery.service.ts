@@ -2625,6 +2625,461 @@ export class DeliveryService {
       },
     );
   }
+  async arriveDriverDelivery(
+    deliveryIdInput: unknown,
+    tenantIdInput: unknown,
+    driverIdInput: unknown,
+    driverCode: string,
+  ) {
+    const deliveryId =
+      this.requireUuid(
+        deliveryIdInput,
+        'deliveryId',
+      );
+
+    const tenantId =
+      this.requireUuid(
+        tenantIdInput,
+        'tenantId',
+      );
+
+    const driverId =
+      this.requireUuid(
+        driverIdInput,
+        'driverId',
+      );
+
+    const safeDriverCode =
+      driverCode?.trim() || 'DRIVER';
+
+    return this.databaseService.withTransaction(
+      async (client) => {
+        const deliveryResult =
+          await client.query<{
+            id: string;
+
+            tenant_id: string;
+            branch_id: string;
+
+            order_id: string;
+            order_number: string;
+
+            delivery_status: string;
+
+            order_status: string;
+            payment_status: string;
+          }>(
+            `
+              select
+                d.id::text,
+
+                d.tenant_id::text,
+                d.branch_id::text,
+
+                d.order_id::text,
+
+                o.order_number::text,
+
+                d.status
+                  as delivery_status,
+
+                o.status
+                  as order_status,
+
+                o.payment_status
+
+              from public.deliveries d
+
+              inner join public.orders o
+                on o.tenant_id = d.tenant_id
+               and o.branch_id = d.branch_id
+               and o.id = d.order_id
+
+              where d.tenant_id = $1::uuid
+                and d.id = $2::uuid
+
+              for update of d, o
+            `,
+            [
+              tenantId,
+              deliveryId,
+            ],
+          );
+
+        const delivery =
+          deliveryResult.rows[0];
+
+        if (!delivery) {
+          throw new NotFoundException(
+            'Delivery not found',
+          );
+        }
+
+        // ----------------------------------------------------
+        // The bearer authenticates the driver globally.
+        //
+        // The driver must also still be ENABLED for the branch
+        // that owns this delivery.
+        //
+        // The branch mapping remains locked FOR SHARE until the
+        // transaction completes.
+        // ----------------------------------------------------
+
+        const branchAuthorizationResult =
+          await client.query<{
+            id: string;
+          }>(
+            `
+              select
+                db.id::text
+
+              from public.delivery_driver_branches db
+
+              where db.tenant_id = $1::uuid
+                and db.branch_id = $2::uuid
+                and db.driver_id = $3::uuid
+                and db.status = 'ENABLED'
+
+              limit 1
+
+              for share of db
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              driverId,
+            ],
+          );
+
+        if (!branchAuthorizationResult.rows[0]) {
+          throw new ConflictException(
+            'Driver is not enabled for delivery branch',
+          );
+        }
+
+        if (
+          delivery.delivery_status !== 'EN_ROUTE' &&
+          delivery.delivery_status !== 'ARRIVED'
+        ) {
+          throw new ConflictException(
+            `Delivery cannot arrive from ${delivery.delivery_status}`,
+          );
+        }
+
+        const assignmentResult =
+          await client.query<{
+            id: string;
+
+            assignment_number: number;
+
+            driver_id: string;
+
+            status: string;
+
+            assigned_at: string | Date;
+            accepted_at: string | Date | null;
+          }>(
+            `
+              select
+                a.id::text,
+
+                a.assignment_number,
+
+                a.driver_id::text,
+
+                a.status,
+
+                a.assigned_at,
+                a.accepted_at
+
+              from public.delivery_assignments a
+
+              where a.tenant_id = $1::uuid
+                and a.branch_id = $2::uuid
+                and a.delivery_id = $3::uuid
+
+                and a.status in (
+                  'ASSIGNED',
+                  'ACCEPTED'
+                )
+
+              order by
+                a.assignment_number desc
+
+              limit 1
+
+              for update of a
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              delivery.id,
+            ],
+          );
+
+        const assignment =
+          assignmentResult.rows[0];
+
+        if (!assignment) {
+          throw new ConflictException(
+            'Delivery assignment state is inconsistent',
+          );
+        }
+
+        if (
+          assignment.driver_id !== driverId
+        ) {
+          throw new ConflictException(
+            'Delivery is assigned to another driver',
+          );
+        }
+
+        // ----------------------------------------------------
+        // Same-driver retry is idempotent.
+        // ----------------------------------------------------
+
+        if (
+          delivery.delivery_status === 'ARRIVED' &&
+          assignment.status === 'ACCEPTED'
+        ) {
+          return {
+            changed: false,
+            action: 'UNCHANGED',
+
+            delivery: {
+              id: delivery.id,
+              status: 'ARRIVED',
+            },
+
+            order: {
+              id: delivery.order_id,
+              number: delivery.order_number,
+              status: delivery.order_status,
+            },
+
+            assignment: {
+              id: assignment.id,
+
+              number:
+                assignment.assignment_number,
+
+              status: 'ACCEPTED',
+
+              assignedAt:
+                assignment.assigned_at,
+
+              acceptedAt:
+                assignment.accepted_at,
+
+              driver: {
+                id: driverId,
+                code: safeDriverCode,
+              },
+            },
+          };
+        }
+
+        if (
+          delivery.delivery_status !== 'EN_ROUTE' ||
+          assignment.status !== 'ACCEPTED' ||
+          !assignment.accepted_at
+        ) {
+          throw new ConflictException(
+            'Delivery arrival state is inconsistent',
+          );
+        }
+
+        // ----------------------------------------------------
+        // ARRIVED does not complete the order.
+        //
+        // The order remains READY until proof-of-delivery /
+        // final DELIVERED confirmation is implemented.
+        // ----------------------------------------------------
+
+        if (
+          delivery.order_status !== 'READY'
+        ) {
+          throw new ConflictException(
+            `Delivery cannot arrive while order is ${delivery.order_status}`,
+          );
+        }
+
+        if (
+          ![
+            'PAID',
+            'NOT_REQUIRED',
+          ].includes(delivery.payment_status)
+        ) {
+          throw new ConflictException(
+            'Delivery cannot arrive until payment is verified',
+          );
+        }
+
+        const deliveryUpdate =
+          await client.query<{
+            id: string;
+            updated_at: string | Date;
+          }>(
+            `
+              update public.deliveries
+
+              set
+                status = 'ARRIVED',
+                updated_at = now()
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and id = $3::uuid
+
+                and status = 'EN_ROUTE'
+
+              returning
+                id::text,
+                updated_at
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              delivery.id,
+            ],
+          );
+
+        const arrivedDelivery =
+          deliveryUpdate.rows[0];
+
+        if (!arrivedDelivery) {
+          throw new ConflictException(
+            'Delivery status changed concurrently',
+          );
+        }
+
+        const eventResult =
+          await client.query<{
+            created_at: string | Date;
+          }>(
+            `
+              insert into public.delivery_events (
+                tenant_id,
+                branch_id,
+                delivery_id,
+
+                event_type,
+
+                from_status,
+                to_status,
+
+                actor_type,
+                actor_reference,
+
+                payload
+              )
+              values (
+                $1::uuid,
+                $2::uuid,
+                $3::uuid,
+
+                'DRIVER_ARRIVED',
+
+                'EN_ROUTE',
+                'ARRIVED',
+
+                'DRIVER',
+                $4,
+
+                jsonb_build_object(
+                  'driverId',
+                  $5::text,
+
+                  'driverCode',
+                  $4::text,
+
+                  'assignmentId',
+                  $6::text,
+
+                  'assignmentNumber',
+                  $7::integer,
+
+                  'orderId',
+                  $8::text,
+
+                  'orderNumber',
+                  $9::text
+                )
+              )
+
+              returning
+                created_at
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              delivery.id,
+
+              safeDriverCode,
+              driverId,
+
+              assignment.id,
+              assignment.assignment_number,
+
+              delivery.order_id,
+              delivery.order_number,
+            ],
+          );
+
+        const arrivedEvent =
+          eventResult.rows[0];
+
+        if (!arrivedEvent) {
+          throw new ConflictException(
+            'Delivery arrival event was not created',
+          );
+        }
+
+        return {
+          changed: true,
+          action: 'ARRIVED',
+
+          delivery: {
+            id: delivery.id,
+            status: 'ARRIVED',
+
+            arrivedAt:
+              arrivedEvent.created_at,
+          },
+
+          order: {
+            id: delivery.order_id,
+            number: delivery.order_number,
+
+            // Order remains READY until DELIVERED.
+            status: delivery.order_status,
+          },
+
+          assignment: {
+            id: assignment.id,
+
+            number:
+              assignment.assignment_number,
+
+            // Assignment intentionally remains ACCEPTED during
+            // PICKED_UP / EN_ROUTE / ARRIVED.
+            status: 'ACCEPTED',
+
+            assignedAt:
+              assignment.assigned_at,
+
+            acceptedAt:
+              assignment.accepted_at,
+
+            driver: {
+              id: driverId,
+              code: safeDriverCode,
+            },
+          },
+        };
+      },
+    );
+  }
   async getOperationalDeliveries(
     tenantCodeInput?: string,
     branchCodeInput?: string,

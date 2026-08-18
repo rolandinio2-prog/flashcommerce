@@ -110,6 +110,24 @@ export class DriverController {
       identity.driverCode,
     );
   }
+  @Patch('deliveries/:deliveryId/arrive')
+  arriveDelivery(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      this.requireIdentity(request);
+
+    return this.deliveryService.arriveDriverDelivery(
+      deliveryId,
+      identity.tenantId,
+      identity.driverId,
+      identity.driverCode,
+    );
+  }
   private requireIdentity(
     request: DriverAuthenticatedRequest,
   ) {
