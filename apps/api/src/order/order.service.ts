@@ -1440,6 +1440,22 @@ export class OrderService {
   }
 
   // =======================================================
+  // POD PUBLICO DE DELIVERY
+  //
+  // El trackingToken del pedido funciona como capability
+  // publica. El codigo POD se deriva server-side y nunca
+  // se almacena en PostgreSQL.
+  // =======================================================
+
+  async getDeliveryPod(
+    trackingToken: string,
+  ) {
+    return this.deliveryService
+      .getPublicDeliveryPodByOrderTrackingToken(
+        trackingToken,
+      );
+  }
+  // =======================================================
   // 3. ACTUALIZAR ESTADO OPERATIVO
   // =======================================================
 

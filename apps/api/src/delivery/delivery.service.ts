@@ -8,6 +8,7 @@ import {
 import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '../database/database.service';
+import { deriveDeliveryPod } from './delivery-pod';
 import type {
   CreatedDelivery,
   DeliveryCheckoutQuote,
@@ -2953,6 +2954,87 @@ export class DeliveryService {
           );
         }
 
+        // ----------------------------------------------------
+        // POD challenge becomes available only after ARRIVED.
+        //
+        // The raw four-digit POD is NOT stored here.
+        // PostgreSQL stores only challenge state / attempts.
+        //
+        // If a concurrent request already inserted the
+        // challenge, validate the existing row instead of
+        // creating a duplicate.
+        // ----------------------------------------------------
+
+        const podChallengeInsert =
+          await client.query<{
+            status: string;
+          }>(
+            `
+              insert into public.delivery_pod_challenges (
+                tenant_id,
+                branch_id,
+                delivery_id
+              )
+              values (
+                $1::uuid,
+                $2::uuid,
+                $3::uuid
+              )
+
+              on conflict (delivery_id)
+              do nothing
+
+              returning
+                status
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              delivery.id,
+            ],
+          );
+
+        let podChallengeStatus =
+          podChallengeInsert.rows[0]?.status;
+
+        if (!podChallengeStatus) {
+          const existingPodChallenge =
+            await client.query<{
+              status: string;
+            }>(
+              `
+                select
+                  p.status
+
+                from public.delivery_pod_challenges p
+
+                where p.tenant_id = $1::uuid
+                  and p.branch_id = $2::uuid
+                  and p.delivery_id = $3::uuid
+
+                limit 1
+
+                for update of p
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                delivery.id,
+              ],
+            );
+
+          podChallengeStatus =
+            existingPodChallenge.rows[0]?.status;
+        }
+
+        if (
+          podChallengeStatus !== 'ACTIVE'
+        ) {
+          throw new ConflictException(
+            'Delivery POD challenge state is inconsistent',
+          );
+        }
+
         const eventResult =
           await client.query<{
             created_at: string | Date;
@@ -3079,6 +3161,148 @@ export class DeliveryService {
         };
       },
     );
+  }
+  async getPublicDeliveryPodByOrderTrackingToken(
+    trackingTokenInput: unknown,
+  ) {
+    const trackingToken =
+      this.requireUuid(
+        trackingTokenInput,
+        'trackingToken',
+      );
+
+    const result =
+      await this.databaseService.query<{
+        tenant_id: string;
+        branch_id: string;
+
+        delivery_id: string;
+        delivery_tracking_token: string;
+
+        delivery_status: string;
+
+        pod_status: string | null;
+      }>(
+        `
+          select
+            d.tenant_id::text,
+            d.branch_id::text,
+
+            d.id::text
+              as delivery_id,
+
+            d.tracking_token::text
+              as delivery_tracking_token,
+
+            d.status
+              as delivery_status,
+
+            p.status
+              as pod_status
+
+          from public.orders o
+
+          inner join public.deliveries d
+            on d.tenant_id = o.tenant_id
+           and d.branch_id = o.branch_id
+           and d.order_id = o.id
+
+          left join public.delivery_pod_challenges p
+            on p.tenant_id = d.tenant_id
+           and p.branch_id = d.branch_id
+           and p.delivery_id = d.id
+
+          where o.tracking_token = $1::uuid
+            and o.order_type = 'DELIVERY'
+
+          limit 1
+        `,
+        [
+          trackingToken,
+        ],
+      );
+
+    const delivery =
+      result.rows[0];
+
+    if (!delivery) {
+      throw new NotFoundException(
+        'Delivery not found',
+      );
+    }
+
+    // POD is intentionally unavailable while the delivery
+    // is still in transit.
+    if (
+      delivery.delivery_status !== 'ARRIVED'
+    ) {
+      throw new ConflictException(
+        'Delivery POD is available only after arrival',
+      );
+    }
+
+    if (!delivery.pod_status) {
+      throw new ConflictException(
+        'Delivery POD challenge is not available',
+      );
+    }
+
+    if (
+      delivery.pod_status === 'LOCKED'
+    ) {
+      throw new ConflictException(
+        'Delivery POD challenge is locked',
+      );
+    }
+
+    if (
+      delivery.pod_status === 'VERIFIED'
+    ) {
+      throw new ConflictException(
+        'Delivery POD challenge is already verified',
+      );
+    }
+
+    if (
+      delivery.pod_status !== 'ACTIVE'
+    ) {
+      throw new ConflictException(
+        'Delivery POD challenge state is invalid',
+      );
+    }
+
+    const code =
+      deriveDeliveryPod({
+        tenantId:
+          delivery.tenant_id,
+
+        branchId:
+          delivery.branch_id,
+
+        deliveryId:
+          delivery.delivery_id,
+
+        deliveryTrackingToken:
+          delivery.delivery_tracking_token,
+      });
+
+    return {
+      delivery: {
+        id:
+          delivery.delivery_id,
+
+        status:
+          delivery.delivery_status,
+      },
+
+      pod: {
+        status:
+          'ACTIVE',
+
+        // Always a string so leading zeroes are preserved.
+        code,
+      },
+    };
   }
   async getOperationalDeliveries(
     tenantCodeInput?: string,

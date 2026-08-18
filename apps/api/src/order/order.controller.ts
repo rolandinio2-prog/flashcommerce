@@ -35,4 +35,17 @@ export class OrderController {
   ) {
     return this.orderService.getOrderTracking(trackingToken);
   }
+  // =======================================================
+  // POD PUBLICO DE DELIVERY
+  // =======================================================
+
+  @Get('track/:trackingToken/delivery-pod')
+  getDeliveryPod(
+    @Param('trackingToken', new ParseUUIDPipe())
+    trackingToken: string,
+  ) {
+    return this.orderService.getDeliveryPod(
+      trackingToken,
+    );
+  }
 }
