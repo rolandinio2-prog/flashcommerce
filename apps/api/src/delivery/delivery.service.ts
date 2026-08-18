@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,7 +10,10 @@ import {
 import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '../database/database.service';
-import { deriveDeliveryPod } from './delivery-pod';
+import {
+  deriveDeliveryPod,
+  verifyDeliveryPod,
+} from './delivery-pod';
 import type {
   CreatedDelivery,
   DeliveryCheckoutQuote,
@@ -3161,6 +3166,943 @@ export class DeliveryService {
         };
       },
     );
+  }
+  async deliverDriverDelivery(
+    deliveryIdInput: unknown,
+    tenantIdInput: unknown,
+    driverIdInput: unknown,
+    driverCode: string,
+    podInput: unknown,
+  ) {
+    const deliveryId =
+      this.requireUuid(
+        deliveryIdInput,
+        'deliveryId',
+      );
+
+    const tenantId =
+      this.requireUuid(
+        tenantIdInput,
+        'tenantId',
+      );
+
+    const driverId =
+      this.requireUuid(
+        driverIdInput,
+        'driverId',
+      );
+
+    // ------------------------------------------------------
+    // Malformed POD input is rejected before the transaction.
+    //
+    // Only a string containing exactly four decimal digits
+    // is an online verification attempt.
+    //
+    // Therefore malformed input never consumes an attempt.
+    // ------------------------------------------------------
+
+    if (
+      typeof podInput !== 'string' ||
+      !/^[0-9]{4}$/.test(podInput)
+    ) {
+      throw new BadRequestException(
+        'pod must be exactly four digits',
+      );
+    }
+
+    const submittedPod =
+      podInput;
+
+    const safeDriverCode =
+      driverCode?.trim() || 'DRIVER';
+
+    // ------------------------------------------------------
+    // IMPORTANT:
+    //
+    // Wrong but syntactically valid POD attempts must COMMIT
+    // their failed_attempts update.
+    //
+    // Therefore INVALID_POD / LOCKED are returned from the
+    // transaction as structured outcomes. HTTP exceptions are
+    // thrown only AFTER withTransaction has committed.
+    // ------------------------------------------------------
+
+    const outcome =
+      await this.databaseService.withTransaction(
+        async (client) => {
+          const deliveryResult =
+            await client.query<{
+              id: string;
+
+              tenant_id: string;
+              branch_id: string;
+
+              order_id: string;
+              order_number: string;
+
+              delivery_tracking_token: string;
+
+              delivery_status: string;
+
+              order_status: string;
+              payment_status: string;
+            }>(
+              `
+                select
+                  d.id::text,
+
+                  d.tenant_id::text,
+                  d.branch_id::text,
+
+                  d.order_id::text,
+
+                  o.order_number::text,
+
+                  d.tracking_token::text
+                    as delivery_tracking_token,
+
+                  d.status
+                    as delivery_status,
+
+                  o.status
+                    as order_status,
+
+                  o.payment_status
+
+                from public.deliveries d
+
+                inner join public.orders o
+                  on o.tenant_id = d.tenant_id
+                 and o.branch_id = d.branch_id
+                 and o.id = d.order_id
+
+                where d.tenant_id = $1::uuid
+                  and d.id = $2::uuid
+
+                for update of d, o
+              `,
+              [
+                tenantId,
+                deliveryId,
+              ],
+            );
+
+          const delivery =
+            deliveryResult.rows[0];
+
+          if (!delivery) {
+            throw new NotFoundException(
+              'Delivery not found',
+            );
+          }
+
+          // --------------------------------------------------
+          // Driver must still be ENABLED for the branch.
+          // This is intentionally checked on every mutation,
+          // including an idempotent delivered retry.
+          // --------------------------------------------------
+
+          const branchAuthorizationResult =
+            await client.query<{
+              id: string;
+            }>(
+              `
+                select
+                  db.id::text
+
+                from public.delivery_driver_branches db
+
+                where db.tenant_id = $1::uuid
+                  and db.branch_id = $2::uuid
+                  and db.driver_id = $3::uuid
+                  and db.status = 'ENABLED'
+
+                limit 1
+
+                for share of db
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                driverId,
+              ],
+            );
+
+          if (!branchAuthorizationResult.rows[0]) {
+            throw new ConflictException(
+              'Driver is not enabled for delivery branch',
+            );
+          }
+
+          if (
+            delivery.delivery_status !== 'ARRIVED' &&
+            delivery.delivery_status !== 'DELIVERED'
+          ) {
+            throw new ConflictException(
+              'Delivery cannot be delivered from ' +
+                delivery.delivery_status,
+            );
+          }
+
+          const assignmentResult =
+            await client.query<{
+              id: string;
+
+              assignment_number: number;
+
+              driver_id: string;
+
+              status: string;
+
+              assigned_at: string | Date;
+              accepted_at: string | Date | null;
+              completed_at: string | Date | null;
+            }>(
+              `
+                select
+                  a.id::text,
+
+                  a.assignment_number,
+
+                  a.driver_id::text,
+
+                  a.status,
+
+                  a.assigned_at,
+                  a.accepted_at,
+                  a.completed_at
+
+                from public.delivery_assignments a
+
+                where a.tenant_id = $1::uuid
+                  and a.branch_id = $2::uuid
+                  and a.delivery_id = $3::uuid
+
+                  and a.status in (
+                    'ACCEPTED',
+                    'COMPLETED'
+                  )
+
+                order by
+                  a.assignment_number desc
+
+                limit 1
+
+                for update of a
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                delivery.id,
+              ],
+            );
+
+          const assignment =
+            assignmentResult.rows[0];
+
+          if (!assignment) {
+            throw new ConflictException(
+              'Delivery assignment state is inconsistent',
+            );
+          }
+
+          if (
+            assignment.driver_id !==
+            driverId
+          ) {
+            throw new ConflictException(
+              'Delivery is assigned to another driver',
+            );
+          }
+
+          const challengeResult =
+            await client.query<{
+              id: string;
+
+              status: string;
+
+              failed_attempts: number;
+
+              locked_at:
+                | string
+                | Date
+                | null;
+
+              verified_at:
+                | string
+                | Date
+                | null;
+
+              verified_by_driver_id:
+                | string
+                | null;
+            }>(
+              `
+                select
+                  p.id::text,
+
+                  p.status,
+
+                  p.failed_attempts,
+
+                  p.locked_at,
+                  p.verified_at,
+
+                  p.verified_by_driver_id::text
+
+                from public.delivery_pod_challenges p
+
+                where p.tenant_id = $1::uuid
+                  and p.branch_id = $2::uuid
+                  and p.delivery_id = $3::uuid
+
+                limit 1
+
+                for update of p
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                delivery.id,
+              ],
+            );
+
+          const challenge =
+            challengeResult.rows[0];
+
+          if (!challenge) {
+            throw new ConflictException(
+              'Delivery POD challenge is not available',
+            );
+          }
+
+          if (
+            ![
+              'PAID',
+              'NOT_REQUIRED',
+            ].includes(
+              delivery.payment_status,
+            )
+          ) {
+            throw new ConflictException(
+              'Delivery cannot be completed until payment is verified',
+            );
+          }
+
+          // --------------------------------------------------
+          // Same authenticated owner may retry an already
+          // completed delivery idempotently.
+          //
+          // The POD is NOT revalidated because VERIFIED is
+          // terminal and the assignment owner is already known.
+          // --------------------------------------------------
+
+          if (
+            delivery.delivery_status ===
+            'DELIVERED'
+          ) {
+            if (
+              delivery.order_status !==
+                'COMPLETED' ||
+              assignment.status !==
+                'COMPLETED' ||
+              !assignment.completed_at ||
+              challenge.status !==
+                'VERIFIED' ||
+              !challenge.verified_at ||
+              challenge.verified_by_driver_id !==
+                driverId
+            ) {
+              throw new ConflictException(
+                'Delivered state is inconsistent',
+              );
+            }
+
+            return {
+              kind: 'SUCCESS' as const,
+
+              response: {
+                changed: false,
+                action: 'UNCHANGED',
+
+                delivery: {
+                  id: delivery.id,
+                  status: 'DELIVERED',
+                },
+
+                order: {
+                  id: delivery.order_id,
+                  number:
+                    delivery.order_number,
+
+                  status: 'COMPLETED',
+                },
+
+                assignment: {
+                  id: assignment.id,
+
+                  number:
+                    assignment.assignment_number,
+
+                  status: 'COMPLETED',
+
+                  assignedAt:
+                    assignment.assigned_at,
+
+                  acceptedAt:
+                    assignment.accepted_at,
+
+                  completedAt:
+                    assignment.completed_at,
+
+                  driver: {
+                    id: driverId,
+                    code: safeDriverCode,
+                  },
+                },
+
+                pod: {
+                  status: 'VERIFIED',
+
+                  verifiedAt:
+                    challenge.verified_at,
+                },
+              },
+            };
+          }
+
+          if (
+            delivery.order_status !==
+            'READY'
+          ) {
+            throw new ConflictException(
+              'Delivery cannot be completed while order is ' +
+                delivery.order_status,
+            );
+          }
+
+          if (
+            assignment.status !==
+              'ACCEPTED' ||
+            !assignment.accepted_at ||
+            assignment.completed_at
+          ) {
+            throw new ConflictException(
+              'Delivery assignment state is inconsistent',
+            );
+          }
+
+          // --------------------------------------------------
+          // LOCKED is terminal.
+          // Return rather than throw inside the transaction.
+          // --------------------------------------------------
+
+          if (
+            challenge.status ===
+            'LOCKED'
+          ) {
+            return {
+              kind: 'LOCKED' as const,
+
+              failedAttempts:
+                challenge.failed_attempts,
+            };
+          }
+
+          if (
+            challenge.status !==
+            'ACTIVE'
+          ) {
+            throw new ConflictException(
+              'Delivery POD challenge state is inconsistent',
+            );
+          }
+
+          const podMatches =
+            verifyDeliveryPod(
+              {
+                tenantId:
+                  delivery.tenant_id,
+
+                branchId:
+                  delivery.branch_id,
+
+                deliveryId:
+                  delivery.id,
+
+                deliveryTrackingToken:
+                  delivery.delivery_tracking_token,
+              },
+              submittedPod,
+            );
+
+          // --------------------------------------------------
+          // WRONG POD
+          //
+          // Commit failed_attempts before returning HTTP error.
+          // The fifth failed attempt becomes terminal LOCKED.
+          // --------------------------------------------------
+
+          if (!podMatches) {
+            const nextFailedAttempts =
+              challenge.failed_attempts + 1;
+
+            if (
+              nextFailedAttempts < 1 ||
+              nextFailedAttempts > 5
+            ) {
+              throw new ConflictException(
+                'Delivery POD attempt state is inconsistent',
+              );
+            }
+
+            const attemptUpdate =
+              await client.query<{
+                status: string;
+
+                failed_attempts: number;
+
+                locked_at:
+                  | string
+                  | Date
+                  | null;
+              }>(
+                `
+                  update public.delivery_pod_challenges
+
+                  set
+                    failed_attempts =
+                      $4::integer,
+
+                    status =
+                      case
+                        when $4::integer = 5
+                          then 'LOCKED'
+                        else 'ACTIVE'
+                      end,
+
+                    locked_at =
+                      case
+                        when $4::integer = 5
+                          then now()
+                        else null
+                      end,
+
+                    updated_at = now()
+
+                  where tenant_id = $1::uuid
+                    and branch_id = $2::uuid
+                    and delivery_id = $3::uuid
+
+                    and status = 'ACTIVE'
+
+                  returning
+                    status,
+                    failed_attempts,
+                    locked_at
+                `,
+                [
+                  delivery.tenant_id,
+                  delivery.branch_id,
+                  delivery.id,
+
+                  nextFailedAttempts,
+                ],
+              );
+
+            const updatedAttempt =
+              attemptUpdate.rows[0];
+
+            if (!updatedAttempt) {
+              throw new ConflictException(
+                'Delivery POD challenge changed concurrently',
+              );
+            }
+
+            return {
+              kind: 'INVALID_POD' as const,
+
+              failedAttempts:
+                updatedAttempt.failed_attempts,
+
+              locked:
+                updatedAttempt.status ===
+                'LOCKED',
+            };
+          }
+
+          // --------------------------------------------------
+          // CORRECT POD
+          //
+          // Everything below must commit or roll back together:
+          //
+          // challenge -> VERIFIED
+          // delivery  -> DELIVERED
+          // assignment -> COMPLETED
+          // order -> COMPLETED
+          // DRIVER_DELIVERED event
+          //
+          // order_status_history is generated by DB trigger.
+          // --------------------------------------------------
+
+          const challengeUpdate =
+            await client.query<{
+              verified_at:
+                | string
+                | Date;
+            }>(
+              `
+                update public.delivery_pod_challenges
+
+                set
+                  status = 'VERIFIED',
+
+                  verified_at = now(),
+
+                  verified_by_driver_id =
+                    $4::uuid,
+
+                  updated_at = now()
+
+                where tenant_id = $1::uuid
+                  and branch_id = $2::uuid
+                  and delivery_id = $3::uuid
+
+                  and status = 'ACTIVE'
+
+                returning
+                  verified_at
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                delivery.id,
+
+                driverId,
+              ],
+            );
+
+          const verifiedChallenge =
+            challengeUpdate.rows[0];
+
+          if (!verifiedChallenge) {
+            throw new ConflictException(
+              'Delivery POD challenge changed concurrently',
+            );
+          }
+
+          const deliveryUpdate =
+            await client.query<{
+              id: string;
+            }>(
+              `
+                update public.deliveries
+
+                set
+                  status = 'DELIVERED',
+                  updated_at = now()
+
+                where tenant_id = $1::uuid
+                  and branch_id = $2::uuid
+                  and id = $3::uuid
+
+                  and status = 'ARRIVED'
+
+                returning
+                  id::text
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                delivery.id,
+              ],
+            );
+
+          if (!deliveryUpdate.rows[0]) {
+            throw new ConflictException(
+              'Delivery status changed concurrently',
+            );
+          }
+
+          const assignmentUpdate =
+            await client.query<{
+              completed_at:
+                | string
+                | Date;
+            }>(
+              `
+                update public.delivery_assignments
+
+                set
+                  status = 'COMPLETED',
+
+                  completed_at = now(),
+
+                  updated_at = now()
+
+                where tenant_id = $1::uuid
+                  and branch_id = $2::uuid
+                  and id = $3::uuid
+
+                  and driver_id = $4::uuid
+                  and status = 'ACCEPTED'
+
+                returning
+                  completed_at
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                assignment.id,
+
+                driverId,
+              ],
+            );
+
+          const completedAssignment =
+            assignmentUpdate.rows[0];
+
+          if (!completedAssignment) {
+            throw new ConflictException(
+              'Delivery assignment changed concurrently',
+            );
+          }
+
+          const orderUpdate =
+            await client.query<{
+              status: string;
+            }>(
+              `
+                update public.orders
+
+                set
+                  status = 'COMPLETED',
+                  updated_at = now()
+
+                where tenant_id = $1::uuid
+                  and branch_id = $2::uuid
+                  and id = $3::uuid
+
+                  and status = 'READY'
+
+                returning
+                  status
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                delivery.order_id,
+              ],
+            );
+
+          if (!orderUpdate.rows[0]) {
+            throw new ConflictException(
+              'Order status changed concurrently',
+            );
+          }
+
+          const eventResult =
+            await client.query<{
+              created_at:
+                | string
+                | Date;
+            }>(
+              `
+                insert into public.delivery_events (
+                  tenant_id,
+                  branch_id,
+                  delivery_id,
+
+                  event_type,
+
+                  from_status,
+                  to_status,
+
+                  actor_type,
+                  actor_reference,
+
+                  payload
+                )
+                values (
+                  $1::uuid,
+                  $2::uuid,
+                  $3::uuid,
+
+                  'DRIVER_DELIVERED',
+
+                  'ARRIVED',
+                  'DELIVERED',
+
+                  'DRIVER',
+                  $4,
+
+                  jsonb_build_object(
+                    'driverId',
+                    $5::text,
+
+                    'driverCode',
+                    $4::text,
+
+                    'assignmentId',
+                    $6::text,
+
+                    'assignmentNumber',
+                    $7::integer,
+
+                    'orderId',
+                    $8::text,
+
+                    'orderNumber',
+                    $9::text
+                  )
+                )
+
+                returning
+                  created_at
+              `,
+              [
+                delivery.tenant_id,
+                delivery.branch_id,
+                delivery.id,
+
+                safeDriverCode,
+                driverId,
+
+                assignment.id,
+                assignment.assignment_number,
+
+                delivery.order_id,
+                delivery.order_number,
+              ],
+            );
+
+          const deliveredEvent =
+            eventResult.rows[0];
+
+          if (!deliveredEvent) {
+            throw new ConflictException(
+              'Delivery completion event was not created',
+            );
+          }
+
+          return {
+            kind: 'SUCCESS' as const,
+
+            response: {
+              changed: true,
+              action: 'DELIVERED',
+
+              delivery: {
+                id: delivery.id,
+                status: 'DELIVERED',
+
+                deliveredAt:
+                  deliveredEvent.created_at,
+              },
+
+              order: {
+                id: delivery.order_id,
+                number:
+                  delivery.order_number,
+
+                status: 'COMPLETED',
+              },
+
+              assignment: {
+                id: assignment.id,
+
+                number:
+                  assignment.assignment_number,
+
+                status: 'COMPLETED',
+
+                assignedAt:
+                  assignment.assigned_at,
+
+                acceptedAt:
+                  assignment.accepted_at,
+
+                completedAt:
+                  completedAssignment.completed_at,
+
+                driver: {
+                  id: driverId,
+                  code: safeDriverCode,
+                },
+              },
+
+              pod: {
+                status: 'VERIFIED',
+
+                verifiedAt:
+                  verifiedChallenge.verified_at,
+              },
+            },
+          };
+        },
+      );
+
+    // ------------------------------------------------------
+    // These exceptions are intentionally OUTSIDE the DB
+    // transaction so failed attempt updates are committed.
+    // ------------------------------------------------------
+
+    if (
+      outcome.kind ===
+      'LOCKED'
+    ) {
+      throw new HttpException(
+        {
+          statusCode:
+            HttpStatus.TOO_MANY_REQUESTS,
+
+          message:
+            'Delivery POD challenge is locked',
+
+          failedAttempts:
+            outcome.failedAttempts,
+
+          attemptsRemaining: 0,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    if (
+      outcome.kind ===
+      'INVALID_POD'
+    ) {
+      if (outcome.locked) {
+        throw new HttpException(
+          {
+            statusCode:
+              HttpStatus.TOO_MANY_REQUESTS,
+
+            message:
+              'Delivery POD challenge is locked',
+
+            failedAttempts:
+              outcome.failedAttempts,
+
+            attemptsRemaining: 0,
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
+      throw new ConflictException({
+        message:
+          'Invalid delivery POD',
+
+        failedAttempts:
+          outcome.failedAttempts,
+
+        attemptsRemaining:
+          5 - outcome.failedAttempts,
+      });
+    }
+
+    return outcome.response;
   }
   async getPublicDeliveryPodByOrderTrackingToken(
     trackingTokenInput: unknown,

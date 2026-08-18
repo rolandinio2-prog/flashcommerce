@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   Param,
@@ -126,6 +127,30 @@ export class DriverController {
       identity.tenantId,
       identity.driverId,
       identity.driverCode,
+    );
+  }
+  @Patch('deliveries/:deliveryId/deliver')
+  deliverDelivery(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Body()
+    body: {
+      pod?: unknown;
+    },
+
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      this.requireIdentity(request);
+
+    return this.deliveryService.deliverDriverDelivery(
+      deliveryId,
+      identity.tenantId,
+      identity.driverId,
+      identity.driverCode,
+      body?.pod,
     );
   }
   private requireIdentity(

@@ -1,5 +1,6 @@
 import {
   createHmac,
+  timingSafeEqual,
 } from 'node:crypto';
 
 const DELIVERY_POD_VERSION = 1;
@@ -107,5 +108,37 @@ export function deriveDeliveryPod(
   // but failing closed is preferable to biased fallback.
   throw new Error(
     'Unable to derive delivery POD',
+  );
+}
+export function verifyDeliveryPod(
+  input: DeliveryPodDerivationInput,
+  submittedPod: string,
+) {
+  if (!/^[0-9]{4}$/.test(submittedPod)) {
+    return false;
+  }
+
+  const expectedPod =
+    deriveDeliveryPod(input);
+
+  const expectedBuffer =
+    Buffer.from(
+      expectedPod,
+      'utf8',
+    );
+
+  const submittedBuffer =
+    Buffer.from(
+      submittedPod,
+      'utf8',
+    );
+
+  return (
+    submittedBuffer.length ===
+      expectedBuffer.length &&
+    timingSafeEqual(
+      submittedBuffer,
+      expectedBuffer,
+    )
   );
 }
