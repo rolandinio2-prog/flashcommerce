@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { DeliveryAddressService } from './delivery-address.service';
 import { DeliveryController } from './delivery.controller';
 import { DeliveryService } from './delivery.service';
 import { DriverAccessGuard } from './driver-access.guard';
@@ -18,6 +19,7 @@ import { OpsDeliveryController } from './ops-delivery.controller';
 
   providers: [
     DeliveryService,
+    DeliveryAddressService,
 
     GoogleGeoProvider,
     {
