@@ -1320,6 +1320,51 @@ export class DeliveryService {
           );
         }
 
+        // ----------------------------------------------------
+        // Branch authorization is evaluated inside the same
+        // transaction as the driver action.
+        //
+        // A valid bearer identifies the driver globally, but
+        // the driver must still be ENABLED for the specific
+        // branch that owns this delivery.
+        //
+        // FOR SHARE prevents the branch authorization row from
+        // being concurrently changed while this transaction
+        // advances the delivery state.
+        // ----------------------------------------------------
+
+        const branchAuthorizationResult =
+          await client.query<{
+            id: string;
+          }>(
+            `
+              select
+                db.id::text
+
+              from public.delivery_driver_branches db
+
+              where db.tenant_id = $1::uuid
+                and db.branch_id = $2::uuid
+                and db.driver_id = $3::uuid
+                and db.status = 'ENABLED'
+
+              limit 1
+
+              for share of db
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              driverId,
+            ],
+          );
+
+        if (!branchAuthorizationResult.rows[0]) {
+          throw new ConflictException(
+            'Driver is not enabled for delivery branch',
+          );
+        }
+
         if (
           ![
             'CONFIRMED',
@@ -1753,6 +1798,51 @@ export class DeliveryService {
           );
         }
 
+        // ----------------------------------------------------
+        // Branch authorization is evaluated inside the same
+        // transaction as the driver action.
+        //
+        // A valid bearer identifies the driver globally, but
+        // the driver must still be ENABLED for the specific
+        // branch that owns this delivery.
+        //
+        // FOR SHARE prevents the branch authorization row from
+        // being concurrently changed while this transaction
+        // advances the delivery state.
+        // ----------------------------------------------------
+
+        const branchAuthorizationResult =
+          await client.query<{
+            id: string;
+          }>(
+            `
+              select
+                db.id::text
+
+              from public.delivery_driver_branches db
+
+              where db.tenant_id = $1::uuid
+                and db.branch_id = $2::uuid
+                and db.driver_id = $3::uuid
+                and db.status = 'ENABLED'
+
+              limit 1
+
+              for share of db
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              driverId,
+            ],
+          );
+
+        if (!branchAuthorizationResult.rows[0]) {
+          throw new ConflictException(
+            'Driver is not enabled for delivery branch',
+          );
+        }
+
         if (
           delivery.delivery_status !== 'ACCEPTED' &&
           delivery.delivery_status !== 'PICKED_UP'
@@ -2163,6 +2253,51 @@ export class DeliveryService {
         if (!delivery) {
           throw new NotFoundException(
             'Delivery not found',
+          );
+        }
+
+        // ----------------------------------------------------
+        // Branch authorization is evaluated inside the same
+        // transaction as the driver action.
+        //
+        // A valid bearer identifies the driver globally, but
+        // the driver must still be ENABLED for the specific
+        // branch that owns this delivery.
+        //
+        // FOR SHARE prevents the branch authorization row from
+        // being concurrently changed while this transaction
+        // advances the delivery state.
+        // ----------------------------------------------------
+
+        const branchAuthorizationResult =
+          await client.query<{
+            id: string;
+          }>(
+            `
+              select
+                db.id::text
+
+              from public.delivery_driver_branches db
+
+              where db.tenant_id = $1::uuid
+                and db.branch_id = $2::uuid
+                and db.driver_id = $3::uuid
+                and db.status = 'ENABLED'
+
+              limit 1
+
+              for share of db
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              driverId,
+            ],
+          );
+
+        if (!branchAuthorizationResult.rows[0]) {
+          throw new ConflictException(
+            'Driver is not enabled for delivery branch',
           );
         }
 
