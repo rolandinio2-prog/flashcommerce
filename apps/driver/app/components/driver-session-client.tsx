@@ -7,8 +7,10 @@ import {
 } from "react";
 
 import {
+  DriverActiveDelivery,
   DriverSession,
   flashApiBase,
+  getDriverActiveDeliveries,
   getDriverMe,
 } from "@/lib/flash-api";
 
@@ -54,6 +56,15 @@ export function DriverSessionClient() {
   const [message, setMessage] =
     useState("");
 
+  const [activeDeliveries, setActiveDeliveries] =
+    useState<DriverActiveDelivery[]>([]);
+
+  const [deliveriesLoading, setDeliveriesLoading] =
+    useState(false);
+
+  const [deliveriesMessage, setDeliveriesMessage] =
+    useState("");
+
   useEffect(() => {
     const storedToken =
       window.sessionStorage.getItem(
@@ -65,6 +76,57 @@ export function DriverSessionClient() {
     }
   }, []);
 
+  async function loadActiveDeliveries(
+    accessToken: string,
+  ) {
+    const candidate =
+      accessToken.trim();
+
+    if (!candidate) {
+      setActiveDeliveries([]);
+      setDeliveriesMessage("");
+      return;
+    }
+
+    setDeliveriesLoading(true);
+    setDeliveriesMessage("");
+
+    try {
+      const result =
+        await getDriverActiveDeliveries(
+          candidate,
+        );
+
+      setActiveDeliveries(
+        result.deliveries,
+      );
+
+      if (result.total === 0) {
+        setDeliveriesMessage(
+          "No tienes entregas activas en este momento.",
+        );
+      } else {
+        const suffix =
+          result.total === 1
+            ? ""
+            : "s";
+
+        setDeliveriesMessage(
+          `${result.total} entrega${suffix} activa${suffix}.`,
+        );
+      }
+    } catch (error) {
+      setActiveDeliveries([]);
+
+      setDeliveriesMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudieron cargar las entregas activas.",
+      );
+    } finally {
+      setDeliveriesLoading(false);
+    }
+  }
   async function validateAccess(
     event?: FormEvent<HTMLFormElement>,
   ) {
@@ -75,6 +137,8 @@ export function DriverSessionClient() {
 
     if (!candidate) {
       setSession(null);
+      setActiveDeliveries([]);
+      setDeliveriesMessage("");
       setMessage(
         "Ingresa el token de acceso asignado al repartidor.",
       );
@@ -94,6 +158,11 @@ export function DriverSessionClient() {
       );
 
       setSession(driverSession);
+
+      await loadActiveDeliveries(
+        candidate,
+      );
+
       setMessage(
         "Acceso validado correctamente.",
       );
@@ -103,6 +172,8 @@ export function DriverSessionClient() {
       );
 
       setSession(null);
+      setActiveDeliveries([]);
+      setDeliveriesMessage("");
 
       setMessage(
         error instanceof Error
@@ -121,6 +192,8 @@ export function DriverSessionClient() {
 
     setToken("");
     setSession(null);
+    setActiveDeliveries([]);
+    setDeliveriesMessage("");
     setMessage("Sesion cerrada.");
   }
 
@@ -206,18 +279,90 @@ export function DriverSessionClient() {
 
             <div className="feature-placeholder">
               <p className="eyebrow">
-                Proximo paso
+                Entregas activas
               </p>
 
               <h2>
-                Entrega y ubicacion
+                {deliveriesLoading
+                  ? "Actualizando..."
+                  : `${activeDeliveries.length} activa${activeDeliveries.length === 1 ? "" : "s"}`}
               </h2>
 
-              <p>
-                La sesion ya esta preparada.
-                El seguimiento GPS se incorporara
-                en el siguiente gate.
-              </p>
+              {deliveriesLoading ? (
+                <p>
+                  Consultando tus entregas...
+                </p>
+              ) : activeDeliveries.length === 0 ? (
+                <p>
+                  No hay entregas activas para mostrar.
+                </p>
+              ) : (
+                <div>
+                  {activeDeliveries.map((item) => (
+                    <div
+                      key={item.assignment.id}
+                    >
+                      <p>
+                        <strong>
+                          Pedido #{item.order.number}
+                        </strong>
+                      </p>
+
+                      <p>
+                        Estado: {item.delivery.status}
+                      </p>
+
+                      <p>
+                        Cliente: {item.recipient.name}
+                      </p>
+
+                      <p>
+                        Telefono: {item.recipient.phone}
+                      </p>
+
+                      <p>
+                        Direccion: {item.destination.address}
+                      </p>
+
+                      {item.destination.reference ? (
+                        <p>
+                          Referencia: {item.destination.reference}
+                        </p>
+                      ) : null}
+
+                      <p>
+                        Asignacion: {item.assignment.status}
+                      </p>
+
+                      <p>
+                        ETA: {item.eta.minMinutes !== null &&
+                        item.eta.maxMinutes !== null
+                          ? `${item.eta.minMinutes}-${item.eta.maxMinutes} min`
+                          : "No disponible"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {deliveriesMessage ? (
+                <p>
+                  {deliveriesMessage}
+                </p>
+              ) : null}
+
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={deliveriesLoading}
+                onClick={() =>
+                  loadActiveDeliveries(token)
+                }
+              >
+                {deliveriesLoading
+                  ? "Actualizando..."
+                  : "Actualizar entregas"}
+              </button>
             </div>
 
             <button
