@@ -3,6 +3,7 @@
 import {
   FormEvent,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -12,10 +13,14 @@ import {
   flashApiBase,
   getDriverActiveDeliveries,
   getDriverMe,
+  postDriverLocation,
 } from "@/lib/flash-api";
 
 const SESSION_STORAGE_KEY =
   "flashdelivery.driver.accessToken";
+
+const TRACKING_SEND_INTERVAL_MS =
+  10_000;
 
 const TRACKING_ELIGIBLE_DELIVERY_STATUSES =
   new Set<string>([
@@ -87,6 +92,24 @@ export function DriverSessionClient() {
   const [selectedDeliveryId, setSelectedDeliveryId] =
     useState<string | null>(null);
 
+  const [trackingActive, setTrackingActive] =
+    useState(false);
+
+  const [trackingMessage, setTrackingMessage] =
+    useState("");
+
+  const geolocationWatchIdRef =
+    useRef<number | null>(null);
+
+  const trackingDeliveryIdRef =
+    useRef<string | null>(null);
+
+  const locationPostInFlightRef =
+    useRef(false);
+
+  const lastLocationSentAtRef =
+    useRef(0);
+
   useEffect(() => {
     const storedToken =
       window.sessionStorage.getItem(
@@ -98,6 +121,344 @@ export function DriverSessionClient() {
     }
   }, []);
 
+  function clearTrackingWatch() {
+    const watchId =
+      geolocationWatchIdRef.current;
+
+    if (
+      watchId !== null &&
+      typeof navigator !== "undefined" &&
+      "geolocation" in navigator
+    ) {
+      navigator.geolocation.clearWatch(
+        watchId,
+      );
+    }
+
+    geolocationWatchIdRef.current = null;
+    trackingDeliveryIdRef.current = null;
+    lastLocationSentAtRef.current = 0;
+  }
+
+  function stopTracking(
+    nextMessage =
+      "Seguimiento GPS detenido.",
+  ) {
+    clearTrackingWatch();
+    setTrackingActive(false);
+    setTrackingMessage(nextMessage);
+  }
+
+  useEffect(() => {
+    return () => {
+      const watchId =
+        geolocationWatchIdRef.current;
+
+      if (
+        watchId !== null &&
+        typeof navigator !== "undefined" &&
+        "geolocation" in navigator
+      ) {
+        navigator.geolocation.clearWatch(
+          watchId,
+        );
+      }
+
+      geolocationWatchIdRef.current = null;
+      trackingDeliveryIdRef.current = null;
+      lastLocationSentAtRef.current = 0;
+    };
+  }, []);
+
+  useEffect(() => {
+    const trackedDeliveryId =
+      trackingDeliveryIdRef.current;
+
+    if (!trackedDeliveryId) {
+      return;
+    }
+
+    const selectedStillEligible =
+      selectedDeliveryId ===
+        trackedDeliveryId &&
+      activeDeliveries.some(
+        (item) =>
+          item.delivery.id ===
+            trackedDeliveryId &&
+          isTrackingEligibleDelivery(
+            item,
+          ),
+      );
+
+    if (selectedStillEligible) {
+      return;
+    }
+
+    const watchId =
+      geolocationWatchIdRef.current;
+
+    if (
+      watchId !== null &&
+      typeof navigator !== "undefined" &&
+      "geolocation" in navigator
+    ) {
+      navigator.geolocation.clearWatch(
+        watchId,
+      );
+    }
+
+    geolocationWatchIdRef.current = null;
+    trackingDeliveryIdRef.current = null;
+    lastLocationSentAtRef.current = 0;
+
+    setTrackingActive(false);
+    setTrackingMessage(
+      "Seguimiento GPS detenido porque la entrega seleccionada cambio o dejo de ser elegible.",
+    );
+  }, [
+    activeDeliveries,
+    selectedDeliveryId,
+  ]);
+
+  function selectDeliveryForTracking(
+    deliveryId: string,
+  ) {
+    if (
+      trackingDeliveryIdRef.current &&
+      trackingDeliveryIdRef.current !==
+        deliveryId
+    ) {
+      stopTracking(
+        "Seguimiento GPS detenido porque cambiaste de entrega.",
+      );
+    }
+
+    setSelectedDeliveryId(
+      deliveryId,
+    );
+  }
+
+  function startTracking() {
+    const candidate =
+      token.trim();
+
+    const deliveryId =
+      selectedDeliveryId;
+
+    if (!candidate) {
+      setTrackingMessage(
+        "No hay una sesion valida para iniciar el GPS.",
+      );
+      return;
+    }
+
+    if (!deliveryId) {
+      setTrackingMessage(
+        "Selecciona una entrega antes de iniciar el GPS.",
+      );
+      return;
+    }
+
+    const selectedDelivery =
+      activeDeliveries.find(
+        (item) =>
+          item.delivery.id ===
+          deliveryId,
+      );
+
+    if (
+      !selectedDelivery ||
+      !isTrackingEligibleDelivery(
+        selectedDelivery,
+      )
+    ) {
+      stopTracking(
+        "La entrega seleccionada ya no permite seguimiento GPS.",
+      );
+      return;
+    }
+
+    if (
+      typeof navigator === "undefined" ||
+      !("geolocation" in navigator)
+    ) {
+      setTrackingMessage(
+        "Este dispositivo no ofrece geolocalizacion compatible.",
+      );
+      return;
+    }
+
+    clearTrackingWatch();
+
+    trackingDeliveryIdRef.current =
+      deliveryId;
+
+    setTrackingActive(true);
+    setTrackingMessage(
+      "Seguimiento GPS iniciado. Esperando ubicacion del dispositivo.",
+    );
+
+    const watchId =
+      navigator.geolocation.watchPosition(
+        (position) => {
+          if (
+            trackingDeliveryIdRef.current !==
+            deliveryId
+          ) {
+            return;
+          }
+
+          const now =
+            Date.now();
+
+          if (
+            locationPostInFlightRef.current
+          ) {
+            return;
+          }
+
+          if (
+            lastLocationSentAtRef.current >
+              0 &&
+            now -
+                lastLocationSentAtRef.current <
+              TRACKING_SEND_INTERVAL_MS
+          ) {
+            return;
+          }
+
+          const capturedAt =
+            new Date(
+              position.timestamp,
+            );
+
+          if (
+            !Number.isFinite(
+              capturedAt.getTime(),
+            )
+          ) {
+            setTrackingMessage(
+              "El dispositivo entrego una fecha de ubicacion invalida.",
+            );
+            return;
+          }
+
+          const headingDegrees =
+            typeof position.coords
+              .heading === "number" &&
+            Number.isFinite(
+              position.coords.heading,
+            )
+              ? position.coords.heading
+              : null;
+
+          const speedMps =
+            typeof position.coords
+              .speed === "number" &&
+            Number.isFinite(
+              position.coords.speed,
+            )
+              ? position.coords.speed
+              : null;
+
+          const accuracyMeters =
+            Number.isFinite(
+              position.coords.accuracy,
+            )
+              ? position.coords.accuracy
+              : null;
+
+          locationPostInFlightRef.current =
+            true;
+
+          lastLocationSentAtRef.current =
+            now;
+
+          void postDriverLocation(
+            candidate,
+            deliveryId,
+            {
+              latitude:
+                position.coords.latitude,
+
+              longitude:
+                position.coords.longitude,
+
+              accuracyMeters,
+              headingDegrees,
+              speedMps,
+
+              capturedAt:
+                capturedAt.toISOString(),
+            },
+          )
+            .then(() => {
+              if (
+                trackingDeliveryIdRef.current ===
+                deliveryId
+              ) {
+                setTrackingMessage(
+                  "Seguimiento GPS activo. Ubicacion enviada correctamente.",
+                );
+              }
+            })
+            .catch((error) => {
+              if (
+                trackingDeliveryIdRef.current ===
+                deliveryId
+              ) {
+                setTrackingMessage(
+                  error instanceof Error
+                    ? error.message
+                    : "No se pudo enviar la ubicacion.",
+                );
+              }
+            })
+            .finally(() => {
+              locationPostInFlightRef.current =
+                false;
+            });
+        },
+        (error) => {
+          if (
+            trackingDeliveryIdRef.current !==
+            deliveryId
+          ) {
+            return;
+          }
+
+          let nextMessage =
+            "No se pudo obtener la ubicacion del dispositivo.";
+
+          if (error.code === 1) {
+            nextMessage =
+              "Permiso de ubicacion denegado.";
+
+            clearTrackingWatch();
+            setTrackingActive(false);
+          } else if (error.code === 2) {
+            nextMessage =
+              "La ubicacion del dispositivo no esta disponible.";
+          } else if (error.code === 3) {
+            nextMessage =
+              "La ubicacion tardo demasiado en responder.";
+          }
+
+          setTrackingMessage(
+            nextMessage,
+          );
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 5_000,
+          timeout: 15_000,
+        },
+      );
+
+    geolocationWatchIdRef.current =
+      watchId;
+  }
+
   async function loadActiveDeliveries(
     accessToken: string,
   ) {
@@ -105,6 +466,7 @@ export function DriverSessionClient() {
       accessToken.trim();
 
     if (!candidate) {
+      stopTracking("");
       setActiveDeliveries([]);
       setSelectedDeliveryId(null);
       setDeliveriesMessage("");
@@ -131,6 +493,22 @@ export function DriverSessionClient() {
         nextDeliveries.filter(
           isTrackingEligibleDelivery,
         );
+
+      const trackedDeliveryId =
+        trackingDeliveryIdRef.current;
+
+      if (
+        trackedDeliveryId &&
+        !eligibleDeliveries.some(
+          (item) =>
+            item.delivery.id ===
+            trackedDeliveryId,
+        )
+      ) {
+        stopTracking(
+          "Seguimiento GPS detenido porque la entrega dejo de ser elegible.",
+        );
+      }
 
       setSelectedDeliveryId(
         (currentSelectedDeliveryId) => {
@@ -171,6 +549,7 @@ export function DriverSessionClient() {
         );
       }
     } catch (error) {
+      stopTracking("");
       setActiveDeliveries([]);
       setSelectedDeliveryId(null);
 
@@ -192,6 +571,7 @@ export function DriverSessionClient() {
       token.trim();
 
     if (!candidate) {
+      stopTracking("");
       setSession(null);
       setActiveDeliveries([]);
       setSelectedDeliveryId(null);
@@ -224,6 +604,8 @@ export function DriverSessionClient() {
         "Acceso validado correctamente.",
       );
     } catch (error) {
+      stopTracking("");
+
       window.sessionStorage.removeItem(
         SESSION_STORAGE_KEY,
       );
@@ -244,6 +626,8 @@ export function DriverSessionClient() {
   }
 
   function closeSession() {
+    stopTracking("");
+
     window.sessionStorage.removeItem(
       SESSION_STORAGE_KEY,
     );
@@ -409,7 +793,7 @@ export function DriverSessionClient() {
                             item.delivery.id
                           }
                           onClick={() =>
-                            setSelectedDeliveryId(
+                            selectDeliveryForTracking(
                               item.delivery.id,
                             )
                           }
@@ -430,10 +814,34 @@ export function DriverSessionClient() {
               )}
 
               {selectedDeliveryId ? (
-                <p>
-                  Entrega seleccionada para seguimiento.
-                  El GPS aun no se ha iniciado.
-                </p>
+                <div>
+                  <p>
+                    Entrega seleccionada para seguimiento.
+                    {trackingActive
+                      ? " GPS activo."
+                      : " El GPS aun no se ha iniciado."}
+                  </p>
+
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={
+                      trackingActive
+                        ? () => stopTracking()
+                        : startTracking
+                    }
+                  >
+                    {trackingActive
+                      ? "Detener GPS"
+                      : "Iniciar GPS"}
+                  </button>
+
+                  {trackingMessage ? (
+                    <p>
+                      {trackingMessage}
+                    </p>
+                  ) : null}
+                </div>
               ) : activeDeliveries.filter(
                   isTrackingEligibleDelivery,
                 ).length > 1 ? (
