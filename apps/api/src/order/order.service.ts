@@ -1619,6 +1619,14 @@ export class OrderService {
         subtotal,
       });
   }
+  async getDeliveryLocation(
+    trackingToken: string,
+  ) {
+    return this.deliveryService
+      .getPublicDeliveryLocationByOrderTrackingToken(
+        trackingToken,
+      );
+  }
   async getDeliveryPod(
     trackingToken: string,
   ) {

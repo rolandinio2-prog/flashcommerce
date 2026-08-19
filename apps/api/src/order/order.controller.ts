@@ -6,6 +6,7 @@ import {
   ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { OrderService, type CreateOrderInput } from './order.service';
 
 @Controller('orders')
@@ -39,6 +40,24 @@ export class OrderController {
   // POD PUBLICO DE DELIVERY
   // =======================================================
 
+  // =======================================================
+  // UBICACION PUBLICA DE DELIVERY
+  //
+  // orders.tracking_token actua como capability publica.
+  // No se exponen driver_id, credenciales ni el
+  // deliveries.tracking_token.
+  // =======================================================
+
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('track/:trackingToken/delivery-location')
+  getDeliveryLocation(
+    @Param('trackingToken', new ParseUUIDPipe())
+    trackingToken: string,
+  ) {
+    return this.orderService.getDeliveryLocation(
+      trackingToken,
+    );
+  }
   @Get('track/:trackingToken/delivery-pod')
   getDeliveryPod(
     @Param('trackingToken', new ParseUUIDPipe())

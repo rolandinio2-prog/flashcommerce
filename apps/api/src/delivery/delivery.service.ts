@@ -4876,6 +4876,146 @@ export class DeliveryService {
 
     return outcome.response;
   }
+  async getPublicDeliveryLocationByOrderTrackingToken(
+    trackingToken: string,
+  ) {
+    const result =
+      await this.databaseService.query<{
+        delivery_status: string;
+
+        latitude: number | null;
+        longitude: number | null;
+
+        accuracy_meters: string | null;
+        heading_degrees: string | null;
+        speed_mps: string | null;
+
+        captured_at: string | Date | null;
+      }>(
+        `
+          select
+            d.status
+              as delivery_status,
+
+            loc.latitude,
+            loc.longitude,
+
+            loc.accuracy_meters,
+            loc.heading_degrees,
+            loc.speed_mps,
+
+            loc.captured_at
+
+          from public.orders o
+
+          inner join public.deliveries d
+            on d.tenant_id = o.tenant_id
+           and d.branch_id = o.branch_id
+           and d.order_id = o.id
+
+          left join lateral (
+            select
+              gis.ST_Y(
+                l.position::gis.geometry
+              )::double precision
+                as latitude,
+
+              gis.ST_X(
+                l.position::gis.geometry
+              )::double precision
+                as longitude,
+
+              l.accuracy_meters::text,
+              l.heading_degrees::text,
+              l.speed_mps::text,
+
+              l.captured_at
+
+            from public.delivery_driver_locations l
+
+            where l.tenant_id = d.tenant_id
+              and l.branch_id = d.branch_id
+              and l.delivery_id = d.id
+
+            order by
+              l.captured_at desc,
+              l.received_at desc
+
+            limit 1
+          ) loc
+            on d.status in (
+              'ACCEPTED',
+              'PICKED_UP',
+              'EN_ROUTE',
+              'ARRIVED'
+            )
+
+          where o.tracking_token = $1::uuid
+            and o.order_type = 'DELIVERY'
+
+          limit 1
+        `,
+        [
+          trackingToken,
+        ],
+      );
+
+    const row =
+      result.rows[0];
+
+    if (!row) {
+      throw new NotFoundException(
+        'Delivery not found',
+      );
+    }
+
+    const hasLocation =
+      row.latitude !== null &&
+      row.longitude !== null &&
+      row.captured_at !== null;
+
+    return {
+      delivery: {
+        status:
+          row.delivery_status,
+      },
+
+      location:
+        !hasLocation
+          ? null
+          : {
+              latitude:
+                row.latitude,
+
+              longitude:
+                row.longitude,
+
+              accuracyMeters:
+                row.accuracy_meters === null
+                  ? null
+                  : Number(
+                      row.accuracy_meters,
+                    ),
+
+              headingDegrees:
+                row.heading_degrees === null
+                  ? null
+                  : Number(
+                      row.heading_degrees,
+                    ),
+
+              speedMps:
+                row.speed_mps === null
+                  ? null
+                  : Number(
+                      row.speed_mps,
+                    ),
+
+              capturedAt:
+                row.captured_at,
+            },
+    };
+  }
   async getPublicDeliveryPodByOrderTrackingToken(
     trackingTokenInput: unknown,
   ) {
