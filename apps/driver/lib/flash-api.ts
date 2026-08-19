@@ -1,9 +1,4 @@
-const configuredApiBase =
-  process.env.NEXT_PUBLIC_FLASH_API_URL?.trim();
-
-export const flashApiBase = (
-  configuredApiBase || "http://localhost:3001"
-).replace(/\/+$/, "");
+export const flashApiBase = "/api/v1";
 
 export type DriverSession = Record<string, unknown>;
 
@@ -30,7 +25,7 @@ export async function getDriverMe(
   }
 
   const response = await fetch(
-    `${flashApiBase}/api/v1/driver/me`,
+    `${flashApiBase}/driver/me`,
     {
       method: "GET",
       headers: {
