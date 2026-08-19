@@ -43,6 +43,24 @@ export interface DeliveryQuoteResponse {
   route: DeliveryQuoteRoute | null;
 }
 
+export interface DeliveryCheckoutRouteSnapshot {
+  tenantId: string;
+  branchId: string;
+
+  origin: {
+    latitude: number;
+    longitude: number;
+  };
+
+  destination: {
+    latitude: number;
+    longitude: number;
+  };
+
+  distanceMeters: number;
+  durationSeconds: number;
+}
+
 export interface DeliveryCheckoutQuote {
   zoneId: string;
 
@@ -53,6 +71,11 @@ export interface DeliveryCheckoutQuote {
 
   deliveryFee: number;
   minimumOrder: number;
+
+  route: {
+    distanceMeters: number;
+    durationSeconds: number;
+  };
 
   eta: {
     minMinutes: number;

@@ -9,6 +9,7 @@ import { DeliveryService } from '../delivery/delivery.service';
 import type {
   CreatedDelivery,
   DeliveryCheckoutQuote,
+  DeliveryCheckoutRouteSnapshot,
 } from '../delivery/delivery.types';
 import {
   type TableContextPayload,
@@ -511,6 +512,18 @@ export class OrderService {
     // 1.5. Transacción de checkout.
     // ----------------------------------------------------
 
+    let deliveryRouteSnapshot:
+      DeliveryCheckoutRouteSnapshot | null =
+      null;
+
+    if (orderType === 'DELIVERY') {
+      deliveryRouteSnapshot =
+        await this.prepareDeliveryRouteSnapshotForCheckout(
+          cartToken.trim(),
+          input.deliveryLatitude,
+          input.deliveryLongitude,
+        );
+    }
     return this.databaseService.withTransaction(async (client) => {
       // --------------------------------------------------
       // 1.5.1. Recuperar y bloquear el carrito.
@@ -887,6 +900,12 @@ export class OrderService {
       let deliveryFee = 0;
 
       if (orderType === 'DELIVERY') {
+        if (!deliveryRouteSnapshot) {
+          throw new Error(
+            'Delivery route snapshot invariant failed',
+          );
+        }
+
         deliveryQuote = await this.deliveryService.quoteDeliveryForCheckout(
           client,
           {
@@ -897,6 +916,7 @@ export class OrderService {
             longitude: input.deliveryLongitude,
 
             subtotal,
+            routeSnapshot: deliveryRouteSnapshot,
           },
         );
 
@@ -1447,6 +1467,158 @@ export class OrderService {
   // se almacena en PostgreSQL.
   // =======================================================
 
+  private async prepareDeliveryRouteSnapshotForCheckout(
+    cartToken: string,
+    latitude: unknown,
+    longitude: unknown,
+  ): Promise<DeliveryCheckoutRouteSnapshot> {
+    const cartResult =
+      await this.databaseService.query<CartRow>(
+        `
+          select
+            c.id::text,
+            c.tenant_id::text,
+            c.branch_id::text,
+            c.status,
+            c.currency,
+            c.expires_at,
+
+            t.code as tenant_code,
+            b.code as branch_code
+          from public.carts c
+          inner join public.tenants t
+            on t.id = c.tenant_id
+          inner join public.branches b
+            on b.tenant_id = c.tenant_id
+           and b.id = c.branch_id
+          where c.cart_token = $1::uuid
+          limit 1
+        `,
+        [
+          cartToken,
+        ],
+      );
+
+    const cart =
+      cartResult.rows[0];
+
+    if (!cart) {
+      throw new NotFoundException(
+        'Cart not found',
+      );
+    }
+
+    if (cart.status !== 'OPEN') {
+      throw new ConflictException(
+        `Cart is not open: ${cart.status}`,
+      );
+    }
+
+    if (
+      new Date(
+        cart.expires_at,
+      ).getTime() <= Date.now()
+    ) {
+      throw new ConflictException(
+        'Cart has expired',
+      );
+    }
+
+    const itemsResult =
+      await this.databaseService.query<CheckoutItemRow>(
+        `
+          select
+            ci.product_id::text,
+            p.sku,
+            p.name,
+
+            ci.quantity,
+
+            bp.price::text as price,
+            bp.currency,
+            bp.is_available,
+            bp.available_quantity
+          from public.cart_items ci
+          inner join public.products p
+            on p.tenant_id = ci.tenant_id
+           and p.id = ci.product_id
+          left join public.branch_products bp
+            on bp.tenant_id = ci.tenant_id
+           and bp.branch_id = $3::uuid
+           and bp.product_id = ci.product_id
+          where ci.tenant_id = $1::uuid
+            and ci.cart_id = $2::uuid
+          order by ci.created_at
+        `,
+        [
+          cart.tenant_id,
+          cart.id,
+          cart.branch_id,
+        ],
+      );
+
+    const items =
+      itemsResult.rows;
+
+    if (items.length === 0) {
+      throw new BadRequestException(
+        'Cart is empty',
+      );
+    }
+
+    for (const item of items) {
+      if (
+        !item.is_available ||
+        item.price === null ||
+        item.currency === null
+      ) {
+        throw new ConflictException(
+          `${item.name} is no longer available`,
+        );
+      }
+
+      if (
+        item.available_quantity !== null &&
+        item.quantity >
+          item.available_quantity
+      ) {
+        throw new ConflictException(
+          `${item.name}: only ${item.available_quantity} units are available`,
+        );
+      }
+
+      if (
+        item.currency !== cart.currency
+      ) {
+        throw new ConflictException(
+          `${item.name} has a different currency`,
+        );
+      }
+    }
+
+    const subtotal =
+      items.reduce(
+        (total, item) =>
+          total +
+          Number(item.price) *
+            item.quantity,
+        0,
+      );
+
+    return this.deliveryService
+      .prepareDeliveryCheckoutRoute({
+        tenantId:
+          cart.tenant_id,
+
+        branchId:
+          cart.branch_id,
+
+        latitude,
+        longitude,
+
+        subtotal,
+      });
+  }
   async getDeliveryPod(
     trackingToken: string,
   ) {

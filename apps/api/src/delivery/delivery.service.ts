@@ -21,6 +21,7 @@ import {
 import type {
   CreatedDelivery,
   DeliveryCheckoutQuote,
+  DeliveryCheckoutRouteSnapshot,
   DeliveryQuoteInput,
   DeliveryQuoteResponse,
 } from './delivery.types';
@@ -231,6 +232,194 @@ export class DeliveryService {
     };
   }
 
+  async prepareDeliveryCheckoutRoute(
+    input: {
+      tenantId: string;
+      branchId: string;
+      latitude: unknown;
+      longitude: unknown;
+      subtotal: number;
+    },
+  ): Promise<DeliveryCheckoutRouteSnapshot> {
+    const tenantId =
+      this.requireUuid(
+        input.tenantId,
+        'tenantId',
+      );
+
+    const branchId =
+      this.requireUuid(
+        input.branchId,
+        'branchId',
+      );
+
+    const latitude =
+      this.requireCoordinate(
+        input.latitude,
+        'deliveryLatitude',
+        -90,
+        90,
+      );
+
+    const longitude =
+      this.requireCoordinate(
+        input.longitude,
+        'deliveryLongitude',
+        -180,
+        180,
+      );
+
+    const subtotal =
+      this.requireSubtotal(
+        input.subtotal,
+      );
+
+    const branchResult =
+      await this.databaseService.query<DeliveryBranchRow>(
+        `
+          select
+            b.tenant_id::text as tenant_id,
+            b.id::text as branch_id,
+            b.code as branch_code,
+            b.name as branch_name,
+            b.delivery_enabled,
+            b.delivery_origin_latitude::text,
+            b.delivery_origin_longitude::text,
+            b.delivery_default_prep_minutes
+          from public.branches b
+          where b.tenant_id = $1::uuid
+            and b.id = $2::uuid
+            and b.status = 'ACTIVE'
+          limit 1
+        `,
+        [
+          tenantId,
+          branchId,
+        ],
+      );
+
+    const branch =
+      branchResult.rows[0];
+
+    if (!branch) {
+      throw new NotFoundException(
+        'Branch not found for delivery checkout',
+      );
+    }
+
+    if (!branch.delivery_enabled) {
+      throw new ConflictException(
+        'Delivery is disabled for this branch',
+      );
+    }
+
+    const zoneResult =
+      await this.databaseService.query<DeliveryZoneRow>(
+        `
+          select
+            z.id::text,
+            z.code,
+            z.name,
+            z.delivery_fee::text,
+            z.minimum_order::text,
+            z.eta_min_minutes,
+            z.eta_max_minutes
+          from public.delivery_zones z
+          where z.tenant_id = $1::uuid
+            and z.branch_id = $2::uuid
+            and z.status = 'ACTIVE'
+            and gis.ST_Covers(
+              z.area,
+              gis.ST_SetSRID(
+                gis.ST_MakePoint(
+                  $3::double precision,
+                  $4::double precision
+                ),
+                4326
+              )
+            )
+          order by
+            z.priority asc,
+            z.code asc,
+            z.id asc
+          limit 1
+        `,
+        [
+          tenantId,
+          branchId,
+          longitude,
+          latitude,
+        ],
+      );
+
+    const zone =
+      zoneResult.rows[0];
+
+    if (!zone) {
+      throw new ConflictException(
+        'Delivery address is outside the delivery area',
+      );
+    }
+
+    const minimumOrder =
+      this.databaseMoneyToNumber(
+        zone.minimum_order,
+        'minimum_order',
+      );
+
+    const minimumOrderMissing =
+      this.roundMoney(
+        minimumOrder -
+        subtotal,
+      );
+
+    if (minimumOrderMissing > 0) {
+      throw new ConflictException(
+        `Minimum delivery order not met: ${minimumOrderMissing.toFixed(2)} BOB missing`,
+      );
+    }
+
+    const origin =
+      this.requireDeliveryBranchOrigin(
+        branch,
+      );
+
+    const destination = {
+      latitude,
+      longitude,
+    };
+
+    const route =
+      await this.geoProvider.calculateRoute({
+        origin,
+        destination,
+      });
+
+    this.validateDeliveryRouteMetrics(
+      route.distanceMeters,
+      route.durationSeconds,
+    );
+
+    this.buildRouteAwareEta(
+      branch,
+      zone,
+      route.durationSeconds,
+    );
+
+    return {
+      tenantId,
+      branchId,
+
+      origin,
+      destination,
+
+      distanceMeters:
+        route.distanceMeters,
+
+      durationSeconds:
+        route.durationSeconds,
+    };
+  }
   async quoteDeliveryForCheckout(
     client: PoolClient,
     input: {
@@ -239,6 +428,7 @@ export class DeliveryService {
       latitude: unknown;
       longitude: unknown;
       subtotal: number;
+      routeSnapshot: DeliveryCheckoutRouteSnapshot;
     },
   ): Promise<DeliveryCheckoutQuote> {
     const latitude = this.requireCoordinate(
@@ -257,12 +447,17 @@ export class DeliveryService {
 
     const subtotal = this.requireSubtotal(input.subtotal);
 
-    const branchResult = await client.query<{
-      delivery_enabled: boolean;
-    }>(
+    const branchResult = await client.query<DeliveryBranchRow>(
       `
         select
-          b.delivery_enabled
+          b.tenant_id::text as tenant_id,
+          b.id::text as branch_id,
+          b.code as branch_code,
+          b.name as branch_name,
+          b.delivery_enabled,
+          b.delivery_origin_latitude::text,
+          b.delivery_origin_longitude::text,
+          b.delivery_default_prep_minutes
         from public.branches b
         where b.tenant_id = $1::uuid
           and b.id = $2::uuid
@@ -281,6 +476,14 @@ export class DeliveryService {
     if (!branch.delivery_enabled) {
       throw new ConflictException('Delivery is disabled for this branch');
     }
+
+    const routeSnapshot =
+      this.requireCurrentDeliveryRouteSnapshot(
+        input.routeSnapshot,
+        branch,
+        latitude,
+        longitude,
+      );
 
     const zoneResult = await client.query<DeliveryZoneRow>(
       `
@@ -342,6 +545,13 @@ export class DeliveryService {
       );
     }
 
+    const routeAwareEta =
+      this.buildRouteAwareEta(
+        branch,
+        zone,
+        routeSnapshot.durationSeconds,
+      );
+
     return {
       zoneId: zone.id,
 
@@ -353,10 +563,15 @@ export class DeliveryService {
       deliveryFee,
       minimumOrder,
 
-      eta: {
-        minMinutes: zone.eta_min_minutes,
-        maxMinutes: zone.eta_max_minutes,
+      route: {
+        distanceMeters:
+          routeSnapshot.distanceMeters,
+
+        durationSeconds:
+          routeSnapshot.durationSeconds,
       },
+
+      eta: routeAwareEta,
     };
   }
 
@@ -402,6 +617,7 @@ export class DeliveryService {
           destination,
 
           quoted_delivery_fee,
+          distance_meters,
 
           eta_min_minutes,
           eta_max_minutes
@@ -429,9 +645,10 @@ export class DeliveryService {
           )::gis.geography,
 
           $11,
+          $12::integer,
 
-          $12,
-          $13
+          $13,
+          $14
         )
         returning
           id::text,
@@ -454,6 +671,7 @@ export class DeliveryService {
         input.latitude,
 
         input.quote.deliveryFee,
+        input.quote.route.distanceMeters,
 
         input.quote.eta.minMinutes,
         input.quote.eta.maxMinutes,
@@ -499,10 +717,14 @@ export class DeliveryService {
             $4::text,
             'deliveryFee',
             $5::numeric,
-            'etaMinMinutes',
+            'routeDistanceMeters',
             $6::integer,
+            'routeDurationSeconds',
+            $7::integer,
+            'etaMinMinutes',
+            $8::integer,
             'etaMaxMinutes',
-            $7::integer
+            $9::integer
           )
         )
       `,
@@ -513,6 +735,8 @@ export class DeliveryService {
 
         input.quote.zone.code,
         input.quote.deliveryFee,
+        input.quote.route.distanceMeters,
+        input.quote.route.durationSeconds,
         input.quote.eta.minMinutes,
         input.quote.eta.maxMinutes,
       ],
@@ -4814,6 +5038,84 @@ export class DeliveryService {
     };
   }
 
+  private validateDeliveryRouteMetrics(
+    distanceMeters: number,
+    durationSeconds: number,
+  ): void {
+    if (
+      !Number.isSafeInteger(distanceMeters) ||
+      distanceMeters < 0 ||
+      distanceMeters > 2147483647
+    ) {
+      throw new ServiceUnavailableException(
+        'Delivery route distance is invalid',
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(durationSeconds) ||
+      durationSeconds < 0
+    ) {
+      throw new ServiceUnavailableException(
+        'Delivery route duration is invalid',
+      );
+    }
+  }
+
+  private requireCurrentDeliveryRouteSnapshot(
+    snapshot: DeliveryCheckoutRouteSnapshot,
+    branch: DeliveryBranchRow,
+    latitude: number,
+    longitude: number,
+  ): DeliveryCheckoutRouteSnapshot {
+    if (
+      !snapshot ||
+      typeof snapshot !== 'object'
+    ) {
+      throw new ConflictException(
+        'Delivery route snapshot is missing',
+      );
+    }
+
+    if (
+      snapshot.tenantId !== branch.tenant_id ||
+      snapshot.branchId !== branch.branch_id
+    ) {
+      throw new ConflictException(
+        'Delivery route snapshot belongs to another branch',
+      );
+    }
+
+    const origin =
+      this.requireDeliveryBranchOrigin(
+        branch,
+      );
+
+    if (
+      snapshot.origin.latitude !== origin.latitude ||
+      snapshot.origin.longitude !== origin.longitude
+    ) {
+      throw new ConflictException(
+        'Delivery route snapshot is stale; branch origin changed',
+      );
+    }
+
+    if (
+      snapshot.destination.latitude !== latitude ||
+      snapshot.destination.longitude !== longitude
+    ) {
+      throw new ConflictException(
+        'Delivery route snapshot destination changed',
+      );
+    }
+
+    this.validateDeliveryRouteMetrics(
+      snapshot.distanceMeters,
+      snapshot.durationSeconds,
+    );
+
+    return snapshot;
+  }
   private buildRouteAwareEta(
     branch: DeliveryBranchRow,
     zone: DeliveryZoneRow,
