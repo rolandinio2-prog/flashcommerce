@@ -1498,6 +1498,180 @@ export class DeliveryService {
       },
     );
   }
+  async getDriverActiveDeliveries(
+    tenantIdInput: unknown,
+    driverIdInput: unknown,
+  ) {
+    const tenantId =
+      this.requireUuid(
+        tenantIdInput,
+        'tenantId',
+      );
+
+    const driverId =
+      this.requireUuid(
+        driverIdInput,
+        'driverId',
+      );
+
+    const result =
+      await this.databaseService.query<{
+        delivery_id: string;
+        delivery_status: string;
+
+        order_number: string;
+        order_status: string;
+
+        assignment_id: string;
+        assignment_number: number;
+        assignment_status: string;
+
+        recipient_name: string;
+        recipient_phone: string;
+
+        address_text: string;
+        address_reference: string | null;
+
+        eta_min_minutes: number | null;
+        eta_max_minutes: number | null;
+      }>(
+        `
+          select
+            d.id::text
+              as delivery_id,
+
+            d.status
+              as delivery_status,
+
+            o.order_number::text
+              as order_number,
+
+            o.status
+              as order_status,
+
+            a.id::text
+              as assignment_id,
+
+            a.assignment_number,
+
+            a.status
+              as assignment_status,
+
+            d.recipient_name,
+            d.recipient_phone,
+
+            d.address_text,
+            d.address_reference,
+
+            d.eta_min_minutes,
+            d.eta_max_minutes
+
+          from public.delivery_assignments a
+
+          inner join public.deliveries d
+            on d.tenant_id = a.tenant_id
+           and d.branch_id = a.branch_id
+           and d.id = a.delivery_id
+
+          inner join public.orders o
+            on o.tenant_id = d.tenant_id
+           and o.branch_id = d.branch_id
+           and o.id = d.order_id
+
+          inner join public.delivery_driver_branches db
+            on db.tenant_id = a.tenant_id
+           and db.branch_id = a.branch_id
+           and db.driver_id = a.driver_id
+
+          where a.tenant_id = $1::uuid
+            and a.driver_id = $2::uuid
+
+            and a.status in (
+              'ASSIGNED',
+              'ACCEPTED'
+            )
+
+            and d.status in (
+              'ASSIGNED',
+              'ACCEPTED',
+              'PICKED_UP',
+              'EN_ROUTE',
+              'ARRIVED'
+            )
+
+            and db.status = 'ENABLED'
+
+          order by
+            a.assigned_at asc,
+            a.assignment_number asc,
+            d.id asc
+        `,
+        [
+          tenantId,
+          driverId,
+        ],
+      );
+
+    for (const row of result.rows) {
+      const assignmentMatchesDelivery =
+        (
+          row.delivery_status === 'ASSIGNED' &&
+          row.assignment_status === 'ASSIGNED'
+        ) ||
+        (
+          [
+            'ACCEPTED',
+            'PICKED_UP',
+            'EN_ROUTE',
+            'ARRIVED',
+          ].includes(row.delivery_status) &&
+          row.assignment_status === 'ACCEPTED'
+        );
+
+      if (!assignmentMatchesDelivery) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
+    }
+
+    return {
+      total: result.rows.length,
+
+      deliveries: result.rows.map((row) => ({
+        delivery: {
+          id: row.delivery_id,
+          status: row.delivery_status,
+        },
+
+        order: {
+          number: row.order_number,
+          status: row.order_status,
+        },
+
+        assignment: {
+          id: row.assignment_id,
+          number: row.assignment_number,
+          status: row.assignment_status,
+        },
+
+        recipient: {
+          name: row.recipient_name,
+          phone: row.recipient_phone,
+        },
+
+        destination: {
+          address: row.address_text,
+          reference: row.address_reference,
+        },
+
+        eta: {
+          minMinutes: row.eta_min_minutes,
+          maxMinutes: row.eta_max_minutes,
+        },
+      })),
+    };
+  }
   async acceptDriverDelivery(
     deliveryIdInput: unknown,
     tenantIdInput: unknown,

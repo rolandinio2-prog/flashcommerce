@@ -58,6 +58,19 @@ export class DriverController {
     };
   }
 
+  @Get('deliveries/active')
+  getActiveDeliveries(
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      this.requireIdentity(request);
+
+    return this.deliveryService.getDriverActiveDeliveries(
+      identity.tenantId,
+      identity.driverId,
+    );
+  }
   @Patch('deliveries/:deliveryId/accept')
   acceptDelivery(
     @Param('deliveryId')
