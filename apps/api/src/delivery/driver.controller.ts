@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -131,7 +132,7 @@ export class DriverController {
     );
   }
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  @Patch('deliveries/:deliveryId/location')
+  @Post('deliveries/:deliveryId/location')
   recordLocation(
     @Param('deliveryId')
     deliveryId: string,
