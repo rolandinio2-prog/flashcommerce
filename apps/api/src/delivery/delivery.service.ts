@@ -3,13 +3,17 @@ import {
   ConflictException,
   HttpException,
   HttpStatus,
+  Inject,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 
 import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '../database/database.service';
+import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
+import type { GeoPoint, GeoRouteResult } from './geo.types';
 import {
   deriveDeliveryPod,
   verifyDeliveryPod,
@@ -27,6 +31,9 @@ interface DeliveryBranchRow {
   branch_code: string;
   branch_name: string;
   delivery_enabled: boolean;
+  delivery_origin_latitude: string | null;
+  delivery_origin_longitude: string | null;
+  delivery_default_prep_minutes: number;
 }
 
 interface DeliveryZoneRow {
@@ -41,7 +48,12 @@ interface DeliveryZoneRow {
 
 @Injectable()
 export class DeliveryService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+
+    @Inject(GEO_PROVIDER)
+    private readonly geoProvider: GeoProvider,
+  ) {}
 
   async quoteDelivery(
     input: DeliveryQuoteInput,
@@ -73,7 +85,10 @@ export class DeliveryService {
             b.id::text as branch_id,
             b.code as branch_code,
             b.name as branch_name,
-            b.delivery_enabled
+            b.delivery_enabled,
+            b.delivery_origin_latitude::text,
+            b.delivery_origin_longitude::text,
+            b.delivery_default_prep_minutes
           from public.tenants t
           inner join public.branches b
             on b.tenant_id = t.id
@@ -170,6 +185,8 @@ export class DeliveryService {
         minMinutes: zone.eta_min_minutes,
         maxMinutes: zone.eta_max_minutes,
       },
+
+      route: null,
     };
 
     if (minimumOrderMissing > 0) {
@@ -183,11 +200,32 @@ export class DeliveryService {
       };
     }
 
+    const route = await this.calculatePublicDeliveryRoute(
+      branch,
+      {
+        latitude,
+        longitude,
+      },
+    );
+
+    const routeAwareEta = this.buildRouteAwareEta(
+      branch,
+      zone,
+      route.durationSeconds,
+    );
+
     return {
       available: true,
       reason: null,
 
       ...commonResponse,
+
+      eta: routeAwareEta,
+
+      route: {
+        distanceMeters: route.distanceMeters,
+        durationSeconds: route.durationSeconds,
+      },
 
       minimumOrderMissing: 0,
     };
@@ -4718,6 +4756,146 @@ export class DeliveryService {
       })),
     };
   }
+  private async calculatePublicDeliveryRoute(
+    branch: DeliveryBranchRow,
+    destination: GeoPoint,
+  ): Promise<GeoRouteResult> {
+    const origin =
+      this.requireDeliveryBranchOrigin(
+        branch,
+      );
+
+    return this.geoProvider.calculateRoute({
+      origin,
+      destination,
+    });
+  }
+
+  private requireDeliveryBranchOrigin(
+    branch: DeliveryBranchRow,
+  ): GeoPoint {
+    const latitudeValue =
+      branch.delivery_origin_latitude;
+
+    const longitudeValue =
+      branch.delivery_origin_longitude;
+
+    if (
+      latitudeValue === null ||
+      longitudeValue === null
+    ) {
+      throw new ServiceUnavailableException(
+        'Delivery branch origin coordinates are not configured',
+      );
+    }
+
+    const latitude =
+      Number(latitudeValue);
+
+    const longitude =
+      Number(longitudeValue);
+
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new ServiceUnavailableException(
+        'Delivery branch origin coordinates are invalid',
+      );
+    }
+
+    return {
+      latitude,
+      longitude,
+    };
+  }
+
+  private buildRouteAwareEta(
+    branch: DeliveryBranchRow,
+    zone: DeliveryZoneRow,
+    durationSeconds: number,
+  ): {
+    minMinutes: number;
+    maxMinutes: number;
+  } {
+    const prepMinutes =
+      branch.delivery_default_prep_minutes;
+
+    if (
+      !Number.isSafeInteger(prepMinutes) ||
+      prepMinutes < 0 ||
+      prepMinutes > 480
+    ) {
+      throw new ServiceUnavailableException(
+        'Delivery branch preparation time is invalid',
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(durationSeconds) ||
+      durationSeconds < 0
+    ) {
+      throw new ServiceUnavailableException(
+        'Delivery route duration is invalid',
+      );
+    }
+
+    if (
+      !Number.isSafeInteger(zone.eta_min_minutes) ||
+      !Number.isSafeInteger(zone.eta_max_minutes) ||
+      zone.eta_min_minutes < 1 ||
+      zone.eta_max_minutes < zone.eta_min_minutes ||
+      zone.eta_max_minutes > 480
+    ) {
+      throw new ServiceUnavailableException(
+        'Delivery zone ETA configuration is invalid',
+      );
+    }
+
+    const travelMinutes =
+      Math.max(
+        1,
+        Math.ceil(
+          durationSeconds / 60,
+        ),
+      );
+
+    const routeReadyMinutes =
+      prepMinutes +
+      travelMinutes;
+
+    const minMinutes =
+      Math.max(
+        zone.eta_min_minutes,
+        routeReadyMinutes,
+      );
+
+    const maxMinutes =
+      Math.max(
+        zone.eta_max_minutes,
+        minMinutes,
+      );
+
+    if (
+      !Number.isSafeInteger(minMinutes) ||
+      !Number.isSafeInteger(maxMinutes) ||
+      minMinutes > 480 ||
+      maxMinutes > 480
+    ) {
+      throw new ServiceUnavailableException(
+        'Calculated delivery ETA exceeds supported range',
+      );
+    }
+
+    return {
+      minMinutes,
+      maxMinutes,
+    };
+  }
   private buildUnavailableResponse(
     branch: DeliveryBranchRow,
     reason: 'DELIVERY_DISABLED' | 'OUTSIDE_DELIVERY_AREA',
@@ -4738,6 +4916,7 @@ export class DeliveryService {
       minimumOrderMissing: null,
 
       eta: null,
+      route: null,
     };
   }
 

@@ -19,6 +19,11 @@ export interface DeliveryQuoteEta {
   maxMinutes: number;
 }
 
+export interface DeliveryQuoteRoute {
+  distanceMeters: number;
+  durationSeconds: number;
+}
+
 export interface DeliveryQuoteResponse {
   available: boolean;
   reason: DeliveryQuoteUnavailableReason | null;
@@ -35,6 +40,7 @@ export interface DeliveryQuoteResponse {
   minimumOrderMissing: number | null;
 
   eta: DeliveryQuoteEta | null;
+  route: DeliveryQuoteRoute | null;
 }
 
 export interface DeliveryCheckoutQuote {
