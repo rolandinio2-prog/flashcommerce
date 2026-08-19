@@ -3429,6 +3429,516 @@ export class DeliveryService {
       },
     );
   }
+  async recordDriverLocation(
+    deliveryIdInput: unknown,
+    tenantIdInput: unknown,
+    driverIdInput: unknown,
+    locationInput:
+      | {
+          latitude?: unknown;
+          longitude?: unknown;
+
+          accuracyMeters?: unknown;
+          headingDegrees?: unknown;
+          speedMps?: unknown;
+
+          capturedAt?: unknown;
+        }
+      | undefined,
+  ) {
+    const deliveryId =
+      this.requireUuid(
+        deliveryIdInput,
+        'deliveryId',
+      );
+
+    const tenantId =
+      this.requireUuid(
+        tenantIdInput,
+        'tenantId',
+      );
+
+    const driverId =
+      this.requireUuid(
+        driverIdInput,
+        'driverId',
+      );
+
+    if (
+      !locationInput ||
+      typeof locationInput !== 'object' ||
+      Array.isArray(locationInput)
+    ) {
+      throw new BadRequestException(
+        'location body is required',
+      );
+    }
+
+    const requireFiniteNumber = (
+      value: unknown,
+      field: string,
+    ): number => {
+      if (
+        typeof value !== 'number' ||
+        !Number.isFinite(value)
+      ) {
+        throw new BadRequestException(
+          `${field} must be a finite number`,
+        );
+      }
+
+      return value;
+    };
+
+    const optionalFiniteNumber = (
+      value: unknown,
+      field: string,
+    ): number | null => {
+      if (
+        value === undefined ||
+        value === null
+      ) {
+        return null;
+      }
+
+      return requireFiniteNumber(
+        value,
+        field,
+      );
+    };
+
+    const latitude =
+      requireFiniteNumber(
+        locationInput.latitude,
+        'latitude',
+      );
+
+    const longitude =
+      requireFiniteNumber(
+        locationInput.longitude,
+        'longitude',
+      );
+
+    if (
+      latitude < -90 ||
+      latitude > 90
+    ) {
+      throw new BadRequestException(
+        'latitude must be between -90 and 90',
+      );
+    }
+
+    if (
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new BadRequestException(
+        'longitude must be between -180 and 180',
+      );
+    }
+
+    const accuracyMeters =
+      optionalFiniteNumber(
+        locationInput.accuracyMeters,
+        'accuracyMeters',
+      );
+
+    if (
+      accuracyMeters !== null &&
+      (
+        accuracyMeters < 0 ||
+        accuracyMeters > 999999.99
+      )
+    ) {
+      throw new BadRequestException(
+        'accuracyMeters is outside the supported range',
+      );
+    }
+
+    const headingDegrees =
+      optionalFiniteNumber(
+        locationInput.headingDegrees,
+        'headingDegrees',
+      );
+
+    if (
+      headingDegrees !== null &&
+      (
+        headingDegrees < 0 ||
+        headingDegrees >= 360
+      )
+    ) {
+      throw new BadRequestException(
+        'headingDegrees must be between 0 and less than 360',
+      );
+    }
+
+    const speedMps =
+      optionalFiniteNumber(
+        locationInput.speedMps,
+        'speedMps',
+      );
+
+    if (
+      speedMps !== null &&
+      (
+        speedMps < 0 ||
+        speedMps > 99999.999
+      )
+    ) {
+      throw new BadRequestException(
+        'speedMps is outside the supported range',
+      );
+    }
+
+    let capturedAt =
+      new Date().toISOString();
+
+    if (
+      locationInput.capturedAt !== undefined &&
+      locationInput.capturedAt !== null
+    ) {
+      if (
+        typeof locationInput.capturedAt !== 'string' ||
+        !locationInput.capturedAt.trim()
+      ) {
+        throw new BadRequestException(
+          'capturedAt must be a valid timestamp',
+        );
+      }
+
+      const parsedCapturedAt =
+        new Date(
+          locationInput.capturedAt,
+        );
+
+      if (
+        !Number.isFinite(
+          parsedCapturedAt.getTime(),
+        )
+      ) {
+        throw new BadRequestException(
+          'capturedAt must be a valid timestamp',
+        );
+      }
+
+      capturedAt =
+        parsedCapturedAt.toISOString();
+    }
+
+    return this.databaseService.withTransaction(
+      async (client) => {
+        // ----------------------------------------------------
+        // Lock order intentionally follows existing driver
+        // mutations:
+        //
+        // 1. delivery
+        // 2. driver-branch authorization
+        // 3. active assignment
+        //
+        // GPS does not mutate delivery/assignment state, so
+        // SHARE locks are sufficient while authorization and
+        // the append-only insert occur atomically.
+        // ----------------------------------------------------
+
+        const deliveryResult =
+          await client.query<{
+            id: string;
+            tenant_id: string;
+            branch_id: string;
+            status: string;
+          }>(
+            `
+              select
+                d.id::text,
+                d.tenant_id::text,
+                d.branch_id::text,
+                d.status
+
+              from public.deliveries d
+
+              where d.tenant_id = $1::uuid
+                and d.id = $2::uuid
+
+              for share of d
+            `,
+            [
+              tenantId,
+              deliveryId,
+            ],
+          );
+
+        const delivery =
+          deliveryResult.rows[0];
+
+        if (!delivery) {
+          throw new NotFoundException(
+            'Delivery not found',
+          );
+        }
+
+        const branchAuthorizationResult =
+          await client.query<{
+            id: string;
+          }>(
+            `
+              select
+                db.id::text
+
+              from public.delivery_driver_branches db
+
+              where db.tenant_id = $1::uuid
+                and db.branch_id = $2::uuid
+                and db.driver_id = $3::uuid
+                and db.status = 'ENABLED'
+
+              limit 1
+
+              for share of db
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              driverId,
+            ],
+          );
+
+        if (
+          !branchAuthorizationResult.rows[0]
+        ) {
+          throw new ConflictException(
+            'Driver is not enabled for delivery branch',
+          );
+        }
+
+        if (
+          ![
+            'ACCEPTED',
+            'PICKED_UP',
+            'EN_ROUTE',
+            'ARRIVED',
+          ].includes(delivery.status)
+        ) {
+          throw new ConflictException(
+            `Delivery location cannot be recorded from ${delivery.status}`,
+          );
+        }
+
+        const assignmentResult =
+          await client.query<{
+            id: string;
+            assignment_number: number;
+            driver_id: string;
+            status: string;
+          }>(
+            `
+              select
+                a.id::text,
+                a.assignment_number,
+                a.driver_id::text,
+                a.status
+
+              from public.delivery_assignments a
+
+              where a.tenant_id = $1::uuid
+                and a.branch_id = $2::uuid
+                and a.delivery_id = $3::uuid
+
+                and a.status in (
+                  'ASSIGNED',
+                  'ACCEPTED'
+                )
+
+              order by
+                a.assignment_number desc
+
+              limit 1
+
+              for share of a
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              delivery.id,
+            ],
+          );
+
+        const assignment =
+          assignmentResult.rows[0];
+
+        if (!assignment) {
+          throw new ConflictException(
+            'Delivery assignment state is inconsistent',
+          );
+        }
+
+        if (
+          assignment.driver_id !== driverId
+        ) {
+          throw new ConflictException(
+            'Delivery is assigned to another driver',
+          );
+        }
+
+        if (
+          assignment.status !== 'ACCEPTED'
+        ) {
+          throw new ConflictException(
+            'Delivery location requires accepted assignment',
+          );
+        }
+
+        const locationResult =
+          await client.query<{
+            id: string;
+
+            latitude: number;
+            longitude: number;
+
+            accuracy_meters: string | null;
+            heading_degrees: string | null;
+            speed_mps: string | null;
+
+            captured_at: string | Date;
+            received_at: string | Date;
+          }>(
+            `
+              insert into public.delivery_driver_locations (
+                tenant_id,
+                branch_id,
+
+                delivery_id,
+                driver_id,
+
+                position,
+
+                accuracy_meters,
+                heading_degrees,
+                speed_mps,
+
+                captured_at
+              )
+              values (
+                $1::uuid,
+                $2::uuid,
+
+                $3::uuid,
+                $4::uuid,
+
+                gis.ST_SetSRID(
+                  gis.ST_MakePoint(
+                    $5::double precision,
+                    $6::double precision
+                  ),
+                  4326
+                )::gis.geography,
+
+                $7::numeric,
+                $8::numeric,
+                $9::numeric,
+
+                $10::timestamptz
+              )
+              returning
+                id::text,
+
+                gis.ST_Y(
+                  position::gis.geometry
+                )::double precision
+                  as latitude,
+
+                gis.ST_X(
+                  position::gis.geometry
+                )::double precision
+                  as longitude,
+
+                accuracy_meters::text,
+                heading_degrees::text,
+                speed_mps::text,
+
+                captured_at,
+                received_at
+            `,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+
+              delivery.id,
+              driverId,
+
+              longitude,
+              latitude,
+
+              accuracyMeters,
+              headingDegrees,
+              speedMps,
+
+              capturedAt,
+            ],
+          );
+
+        const location =
+          locationResult.rows[0];
+
+        return {
+          recorded: true,
+
+          delivery: {
+            id: delivery.id,
+            status: delivery.status,
+          },
+
+          assignment: {
+            id: assignment.id,
+            number:
+              assignment.assignment_number,
+            status: assignment.status,
+
+            driver: {
+              id: driverId,
+            },
+          },
+
+          location: {
+            id: location.id,
+
+            latitude:
+              location.latitude,
+
+            longitude:
+              location.longitude,
+
+            accuracyMeters:
+              location.accuracy_meters === null
+                ? null
+                : Number(
+                    location.accuracy_meters,
+                  ),
+
+            headingDegrees:
+              location.heading_degrees === null
+                ? null
+                : Number(
+                    location.heading_degrees,
+                  ),
+
+            speedMps:
+              location.speed_mps === null
+                ? null
+                : Number(
+                    location.speed_mps,
+                  ),
+
+            capturedAt:
+              location.captured_at,
+
+            receivedAt:
+              location.received_at,
+          },
+        };
+      },
+    );
+  }
   async deliverDriverDelivery(
     deliveryIdInput: unknown,
     tenantIdInput: unknown,

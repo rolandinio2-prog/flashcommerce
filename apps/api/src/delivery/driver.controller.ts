@@ -8,6 +8,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 
 import { DeliveryService } from './delivery.service';
 import { DriverAccessGuard } from './driver-access.guard';
@@ -127,6 +128,37 @@ export class DriverController {
       identity.tenantId,
       identity.driverId,
       identity.driverCode,
+    );
+  }
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Patch('deliveries/:deliveryId/location')
+  recordLocation(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Body()
+    body: {
+      latitude?: unknown;
+      longitude?: unknown;
+
+      accuracyMeters?: unknown;
+      headingDegrees?: unknown;
+      speedMps?: unknown;
+
+      capturedAt?: unknown;
+    },
+
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      this.requireIdentity(request);
+
+    return this.deliveryService.recordDriverLocation(
+      deliveryId,
+      identity.tenantId,
+      identity.driverId,
+      body,
     );
   }
   @Patch('deliveries/:deliveryId/deliver')
