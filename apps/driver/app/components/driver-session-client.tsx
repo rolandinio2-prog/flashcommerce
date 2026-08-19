@@ -17,6 +17,25 @@ import {
 const SESSION_STORAGE_KEY =
   "flashdelivery.driver.accessToken";
 
+const TRACKING_ELIGIBLE_DELIVERY_STATUSES =
+  new Set<string>([
+    "ACCEPTED",
+    "PICKED_UP",
+    "EN_ROUTE",
+    "ARRIVED",
+  ]);
+
+function isTrackingEligibleDelivery(
+  item: DriverActiveDelivery,
+): boolean {
+  return (
+    item.assignment.status === "ACCEPTED" &&
+    TRACKING_ELIGIBLE_DELIVERY_STATUSES.has(
+      item.delivery.status,
+    )
+  );
+}
+
 function getDriverLabel(
   session: DriverSession | null,
 ): string {
@@ -65,6 +84,9 @@ export function DriverSessionClient() {
   const [deliveriesMessage, setDeliveriesMessage] =
     useState("");
 
+  const [selectedDeliveryId, setSelectedDeliveryId] =
+    useState<string | null>(null);
+
   useEffect(() => {
     const storedToken =
       window.sessionStorage.getItem(
@@ -84,6 +106,7 @@ export function DriverSessionClient() {
 
     if (!candidate) {
       setActiveDeliveries([]);
+      setSelectedDeliveryId(null);
       setDeliveriesMessage("");
       return;
     }
@@ -97,8 +120,40 @@ export function DriverSessionClient() {
           candidate,
         );
 
+      const nextDeliveries =
+        result.deliveries;
+
       setActiveDeliveries(
-        result.deliveries,
+        nextDeliveries,
+      );
+
+      const eligibleDeliveries =
+        nextDeliveries.filter(
+          isTrackingEligibleDelivery,
+        );
+
+      setSelectedDeliveryId(
+        (currentSelectedDeliveryId) => {
+          if (
+            currentSelectedDeliveryId &&
+            eligibleDeliveries.some(
+              (item) =>
+                item.delivery.id ===
+                currentSelectedDeliveryId,
+            )
+          ) {
+            return currentSelectedDeliveryId;
+          }
+
+          if (eligibleDeliveries.length === 1) {
+            return (
+              eligibleDeliveries[0]?.delivery.id ??
+              null
+            );
+          }
+
+          return null;
+        },
       );
 
       if (result.total === 0) {
@@ -117,6 +172,7 @@ export function DriverSessionClient() {
       }
     } catch (error) {
       setActiveDeliveries([]);
+      setSelectedDeliveryId(null);
 
       setDeliveriesMessage(
         error instanceof Error
@@ -138,6 +194,7 @@ export function DriverSessionClient() {
     if (!candidate) {
       setSession(null);
       setActiveDeliveries([]);
+      setSelectedDeliveryId(null);
       setDeliveriesMessage("");
       setMessage(
         "Ingresa el token de acceso asignado al repartidor.",
@@ -173,6 +230,7 @@ export function DriverSessionClient() {
 
       setSession(null);
       setActiveDeliveries([]);
+      setSelectedDeliveryId(null);
       setDeliveriesMessage("");
 
       setMessage(
@@ -193,6 +251,7 @@ export function DriverSessionClient() {
     setToken("");
     setSession(null);
     setActiveDeliveries([]);
+    setSelectedDeliveryId(null);
     setDeliveriesMessage("");
     setMessage("Sesion cerrada.");
   }
@@ -340,10 +399,48 @@ export function DriverSessionClient() {
                           ? `${item.eta.minMinutes}-${item.eta.maxMinutes} min`
                           : "No disponible"}
                       </p>
+
+                      {isTrackingEligibleDelivery(item) ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={
+                            selectedDeliveryId ===
+                            item.delivery.id
+                          }
+                          onClick={() =>
+                            setSelectedDeliveryId(
+                              item.delivery.id,
+                            )
+                          }
+                        >
+                          {selectedDeliveryId ===
+                          item.delivery.id
+                            ? "Seleccionada para seguimiento"
+                            : "Seleccionar para seguimiento"}
+                        </button>
+                      ) : (
+                        <p>
+                          Seguimiento no disponible hasta aceptar la entrega.
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
               )}
+
+              {selectedDeliveryId ? (
+                <p>
+                  Entrega seleccionada para seguimiento.
+                  El GPS aun no se ha iniciado.
+                </p>
+              ) : activeDeliveries.filter(
+                  isTrackingEligibleDelivery,
+                ).length > 1 ? (
+                <p>
+                  Selecciona una entrega para el seguimiento.
+                </p>
+              ) : null}
 
               {deliveriesMessage ? (
                 <p>
