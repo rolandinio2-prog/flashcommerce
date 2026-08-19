@@ -4936,10 +4936,12 @@ export class DeliveryService {
             where l.tenant_id = d.tenant_id
               and l.branch_id = d.branch_id
               and l.delivery_id = d.id
+              and l.captured_at <= l.received_at + interval '5 minutes'
+              and l.captured_at >= l.received_at - interval '24 hours'
 
             order by
-              l.captured_at desc,
-              l.received_at desc
+              l.received_at desc,
+              l.captured_at desc
 
             limit 1
           ) loc
