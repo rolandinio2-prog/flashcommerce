@@ -120,6 +120,9 @@ export interface FlashOrderFulfillmentInput {
   tableContextToken?: string;
   reservationTrackingToken?: string;
   deliveryAddress?: string;
+  deliveryLatitude?: number;
+  deliveryLongitude?: number;
+  deliveryReference?: string;
   customerNotes?: string;
 }
 
@@ -332,6 +335,107 @@ export function removeCartItem(
   });
 }
 
+// =========================================================
+// DIRECCIONES DE DELIVERY
+// =========================================================
+
+export interface DeliveryAddressSuggestion {
+  placeId: string;
+  text: string;
+  mainText: string | null;
+  secondaryText: string | null;
+}
+
+export interface DeliveryAddressLocation {
+  placeId: string;
+  formattedAddress: string;
+
+  location: {
+    latitude: number;
+    longitude: number;
+  };
+}
+
+export interface DeliveryAddressAutocompleteResponse {
+  tenant: string;
+  branch: string;
+  suggestions: DeliveryAddressSuggestion[];
+}
+
+export interface DeliveryAddressResolveResponse {
+  tenant: string;
+  branch: string;
+  location: DeliveryAddressLocation;
+}
+
+export interface DeliveryAddressGeocodeResponse {
+  tenant: string;
+  branch: string;
+  location: DeliveryAddressLocation | null;
+}
+
+export function autocompleteDeliveryAddress(
+  tenantCode: string,
+  branchCode: string,
+  input: string,
+  signal?: AbortSignal,
+): Promise<DeliveryAddressAutocompleteResponse> {
+  return apiRequest<DeliveryAddressAutocompleteResponse>(
+    "/api/v1/delivery/address/autocomplete",
+    {
+      method: "POST",
+      signal,
+
+      body: JSON.stringify({
+        tenantCode,
+        branchCode,
+        input,
+      }),
+    },
+  );
+}
+
+export function resolveDeliveryAddress(
+  tenantCode: string,
+  branchCode: string,
+  placeId: string,
+  signal?: AbortSignal,
+): Promise<DeliveryAddressResolveResponse> {
+  return apiRequest<DeliveryAddressResolveResponse>(
+    "/api/v1/delivery/address/resolve",
+    {
+      method: "POST",
+      signal,
+
+      body: JSON.stringify({
+        tenantCode,
+        branchCode,
+        placeId,
+      }),
+    },
+  );
+}
+
+export function geocodeDeliveryAddress(
+  tenantCode: string,
+  branchCode: string,
+  address: string,
+  signal?: AbortSignal,
+): Promise<DeliveryAddressGeocodeResponse> {
+  return apiRequest<DeliveryAddressGeocodeResponse>(
+    "/api/v1/delivery/address/geocode",
+    {
+      method: "POST",
+      signal,
+
+      body: JSON.stringify({
+        tenantCode,
+        branchCode,
+        address,
+      }),
+    },
+  );
+}
 // =========================================================
 // CREAR PEDIDO
 // =========================================================

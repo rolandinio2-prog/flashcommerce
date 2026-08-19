@@ -5,6 +5,7 @@ import QRCode from "react-qr-code";
 
 import {
   addCartItem,
+  autocompleteDeliveryAddress,
   createCart,
   createOrder,
   createQrPayment,
@@ -14,8 +15,11 @@ import {
   getOrderPayment,
   getOrderTracking,
   removeCartItem,
+  resolveDeliveryAddress,
   updateCartItem,
   type CreatedOrder,
+  type DeliveryAddressLocation,
+  type DeliveryAddressSuggestion,
   type DiningTable,
   type DiningTableContextResponse,
   type FlashCart,
@@ -296,6 +300,21 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
   const [deliveryAddress, setDeliveryAddress] = useState("");
 
+  const [deliveryAddressSuggestions, setDeliveryAddressSuggestions] =
+    useState<DeliveryAddressSuggestion[]>([]);
+
+  const [deliveryAddressSearching, setDeliveryAddressSearching] =
+    useState(false);
+
+  const [deliveryAddressResolving, setDeliveryAddressResolving] =
+    useState(false);
+
+  const [deliveryAddressError, setDeliveryAddressError] =
+    useState<string | null>(null);
+
+  const [selectedDeliveryAddress, setSelectedDeliveryAddress] =
+    useState<DeliveryAddressLocation | null>(null);
+
   const [customerNotes, setCustomerNotes] = useState("");
 
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -539,6 +558,11 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     setCustomerPhone("");
     setTableCode(tableContext?.table.code ?? "");
     setDeliveryAddress("");
+    setDeliveryAddressSuggestions([]);
+    setDeliveryAddressSearching(false);
+    setDeliveryAddressResolving(false);
+    setDeliveryAddressError(null);
+    setSelectedDeliveryAddress(null);
     setCustomerNotes("");
     setCheckoutError(null);
 
@@ -546,6 +570,136 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     setTablesError(null);
   }
 
+  // =========================================================
+  // 4.4 DIRECCION DE DELIVERY
+  //
+  // Buscamos sugerencias solamente a partir de 3 caracteres.
+  // Una direccion queda valida para checkout solo despues de
+  // resolver una sugerencia y conservar su placeId + lat/lng.
+  // =========================================================
+
+  useEffect(() => {
+    if (orderType !== "DELIVERY") {
+      setDeliveryAddressSuggestions([]);
+      setDeliveryAddressSearching(false);
+      setDeliveryAddressError(null);
+
+      return;
+    }
+
+    const normalizedInput = deliveryAddress.trim();
+
+    if (
+      selectedDeliveryAddress &&
+      selectedDeliveryAddress.formattedAddress.trim() === normalizedInput
+    ) {
+      setDeliveryAddressSuggestions([]);
+      setDeliveryAddressSearching(false);
+      setDeliveryAddressError(null);
+
+      return;
+    }
+
+    if (normalizedInput.length < 3) {
+      setDeliveryAddressSuggestions([]);
+      setDeliveryAddressSearching(false);
+      setDeliveryAddressError(null);
+
+      return;
+    }
+
+    setDeliveryAddressSearching(false);
+
+    const controller = new AbortController();
+
+    const timerId = window.setTimeout(() => {
+      setDeliveryAddressSearching(true);
+      setDeliveryAddressError(null);
+
+      void autocompleteDeliveryAddress(
+        catalog.tenant.code,
+        catalog.branch.code,
+        normalizedInput,
+        controller.signal,
+      )
+        .then((response) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          setDeliveryAddressSuggestions(response.suggestions);
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          const message = getErrorMessage(error);
+
+          setDeliveryAddressSuggestions([]);
+
+          setDeliveryAddressError(
+            message === "Delivery is not enabled for this branch"
+              ? "Delivery todavía no está disponible en esta sucursal."
+              : "No pudimos buscar direcciones en este momento.",
+          );
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) {
+            setDeliveryAddressSearching(false);
+          }
+        });
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timerId);
+      controller.abort();
+    };
+  }, [
+    orderType,
+    deliveryAddress,
+    selectedDeliveryAddress,
+    catalog.tenant.code,
+    catalog.branch.code,
+  ]);
+
+  function handleDeliveryAddressChange(value: string) {
+    setDeliveryAddress(value);
+    setSelectedDeliveryAddress(null);
+    setDeliveryAddressSuggestions([]);
+    setDeliveryAddressError(null);
+  }
+
+  async function selectDeliveryAddressSuggestion(
+    suggestion: DeliveryAddressSuggestion,
+  ) {
+    setDeliveryAddressResolving(true);
+    setDeliveryAddressError(null);
+
+    try {
+      const response = await resolveDeliveryAddress(
+        catalog.tenant.code,
+        catalog.branch.code,
+        suggestion.placeId,
+      );
+
+      setDeliveryAddress(response.location.formattedAddress);
+      setSelectedDeliveryAddress(response.location);
+      setDeliveryAddressSuggestions([]);
+    } catch (error) {
+      const message = getErrorMessage(error);
+
+      setSelectedDeliveryAddress(null);
+
+      setDeliveryAddressError(
+        message === "Delivery is not enabled for this branch"
+          ? "Delivery todavía no está disponible en esta sucursal."
+          : "No pudimos verificar esa dirección. Intenta nuevamente.",
+      );
+    } finally {
+      setDeliveryAddressResolving(false);
+    }
+  }
   function startReservationPreorder(reservation: TableReservation) {
     setReservationPreorder(reservation);
     setOrderType("DINE_IN");
@@ -1070,6 +1224,8 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
       const normalizedAddress = deliveryAddress.trim();
 
+      const resolvedAddress = selectedDeliveryAddress;
+
       if (!normalizedName) {
         setCheckoutError("Ingresa el nombre de quien recibirá el pedido.");
 
@@ -1087,13 +1243,29 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
         return;
       }
+      if (
+        !resolvedAddress ||
+        resolvedAddress.formattedAddress.trim() !== normalizedAddress
+      ) {
+        setCheckoutError(
+          "Selecciona una dirección de la lista para validar la ubicación.",
+        );
+
+        return;
+      }
 
       fulfillment = {
         customerName: normalizedName,
 
         customerPhone: normalizedPhone,
 
-        deliveryAddress: normalizedAddress,
+        deliveryAddress: resolvedAddress.formattedAddress,
+
+        deliveryLatitude: resolvedAddress.location.latitude,
+
+        deliveryLongitude: resolvedAddress.location.longitude,
+
+        deliveryReference: resolvedAddress.placeId,
 
         customerNotes: customerNotes.trim() || undefined,
       };
@@ -1209,7 +1381,10 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
             ? Boolean(
                 customerName.trim() &&
                 customerPhone.trim() &&
-                deliveryAddress.trim(),
+                deliveryAddress.trim() &&
+                selectedDeliveryAddress !== null &&
+                selectedDeliveryAddress.formattedAddress.trim() ===
+                  deliveryAddress.trim(),
               )
             : false;
 
@@ -2033,7 +2208,7 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
                       />
                     </div>
 
-                    <div>
+                    <div className="relative">
                       <label
                         htmlFor="deliveryAddress"
                         className="text-sm font-semibold"
@@ -2041,16 +2216,103 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
                         Dirección de entrega
                       </label>
 
-                      <textarea
+                      <input
                         id="deliveryAddress"
+                        type="text"
                         value={deliveryAddress}
                         onChange={(event) =>
-                          setDeliveryAddress(event.target.value)
+                          handleDeliveryAddressChange(event.target.value)
                         }
-                        placeholder="Calle, avenida, número y referencia"
-                        rows={3}
-                        className="mt-2 w-full resize-none rounded-xl border border-zinc-300 bg-white px-4 py-3 outline-none focus:border-zinc-950"
+                        placeholder="Ej.: Av. Banzer 100"
+                        autoComplete="off"
+                        aria-autocomplete="list"
+                        aria-controls="deliveryAddressSuggestions"
+                        aria-expanded={
+                          deliveryAddressSuggestions.length > 0 &&
+                          selectedDeliveryAddress === null
+                        }
+                        disabled={deliveryAddressResolving || orderBusy}
+                        className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-4 py-3 outline-none focus:border-zinc-950 disabled:cursor-wait disabled:bg-zinc-100"
                       />
+
+                      {deliveryAddressSearching && (
+                        <p className="mt-2 text-xs text-zinc-500">
+                          Buscando direcciones...
+                        </p>
+                      )}
+
+                      {deliveryAddressError && (
+                        <p
+                          role="alert"
+                          className="mt-2 text-sm text-red-700"
+                        >
+                          {deliveryAddressError}
+                        </p>
+                      )}
+
+                      {deliveryAddressSuggestions.length > 0 &&
+                        selectedDeliveryAddress === null && (
+                          <div
+                            id="deliveryAddressSuggestions"
+                            role="listbox"
+                            className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-xl"
+                          >
+                            <div className="max-h-64 overflow-y-auto">
+                              {deliveryAddressSuggestions.map((suggestion) => (
+                                <button
+                                  key={suggestion.placeId}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={false}
+                                  disabled={deliveryAddressResolving}
+                                  onClick={() =>
+                                    void selectDeliveryAddressSuggestion(
+                                      suggestion,
+                                    )
+                                  }
+                                  className="block w-full border-b border-zinc-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-zinc-50 disabled:cursor-wait disabled:opacity-60"
+                                >
+                                  <span className="block text-sm font-semibold text-zinc-950">
+                                    {suggestion.mainText || suggestion.text}
+                                  </span>
+
+                                  {suggestion.secondaryText && (
+                                    <span className="mt-1 block text-xs text-zinc-500">
+                                      {suggestion.secondaryText}
+                                    </span>
+                                  )}
+                                </button>
+                              ))}
+                            </div>
+
+                            <div className="flex justify-end border-t border-zinc-100 bg-white px-3 py-2">
+                              <span
+                                translate="no"
+                                className="whitespace-nowrap text-xs font-normal text-[#5E5E5E]"
+                              >
+                                Google Maps
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                      {deliveryAddressResolving && (
+                        <p className="mt-2 text-xs text-zinc-500">
+                          Verificando ubicación...
+                        </p>
+                      )}
+
+                      {selectedDeliveryAddress && (
+                        <div className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                          <p className="text-xs font-semibold text-emerald-800">
+                            Dirección verificada
+                          </p>
+
+                          <p className="mt-1 text-xs text-emerald-900">
+                            {selectedDeliveryAddress.formattedAddress}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
