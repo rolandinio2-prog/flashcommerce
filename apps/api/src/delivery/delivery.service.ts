@@ -3591,8 +3591,13 @@ export class DeliveryService {
       );
     }
 
+    const serverNowMs =
+      Date.now();
+
     let capturedAt =
-      new Date().toISOString();
+      new Date(
+        serverNowMs,
+      ).toISOString();
 
     if (
       locationInput.capturedAt !== undefined &&
@@ -3612,13 +3617,42 @@ export class DeliveryService {
           locationInput.capturedAt,
         );
 
+      const parsedCapturedAtMs =
+        parsedCapturedAt.getTime();
+
       if (
         !Number.isFinite(
-          parsedCapturedAt.getTime(),
+          parsedCapturedAtMs,
         )
       ) {
         throw new BadRequestException(
           'capturedAt must be a valid timestamp',
+        );
+      }
+
+      const maxFutureCapturedAtMs =
+        serverNowMs +
+        5 * 60 * 1000;
+
+      if (
+        parsedCapturedAtMs >
+        maxFutureCapturedAtMs
+      ) {
+        throw new BadRequestException(
+          'capturedAt must not be more than 5 minutes in the future',
+        );
+      }
+
+      const minCapturedAtMs =
+        serverNowMs -
+        24 * 60 * 60 * 1000;
+
+      if (
+        parsedCapturedAtMs <
+        minCapturedAtMs
+      ) {
+        throw new BadRequestException(
+          'capturedAt must not be older than 24 hours',
         );
       }
 
