@@ -1373,6 +1373,62 @@ export class PaymentsService {
         );
       }
 
+      const activeDriverCod =
+        blockingResult.rows.find(
+          (payment) =>
+            payment.method === 'CASH' &&
+            payment.provider
+              .trim()
+              .toUpperCase() ===
+              'DRIVER_COD' &&
+            payment.status ===
+              'AWAITING_CONFIRMATION',
+        );
+
+      if (activeDriverCod) {
+        const deliveryResult =
+          await client.query<{
+            status: string;
+          }>(
+            `
+              select
+                d.status
+
+              from public.deliveries d
+
+              where d.tenant_id = $1::uuid
+                and d.branch_id = $2::uuid
+                and d.order_id = $3::uuid
+
+              limit 1
+
+              for update of d
+            `,
+            [
+              order.tenant_id,
+              order.branch_id,
+              order.id,
+            ],
+          );
+
+        const delivery =
+          deliveryResult.rows[0] ??
+          null;
+
+        if (!delivery) {
+          throw new ConflictException(
+            'Cash on delivery state is inconsistent',
+          );
+        }
+
+        if (
+          delivery.status !== 'CREATED'
+        ) {
+          throw new ConflictException(
+            'Payment method is locked after delivery dispatch',
+          );
+        }
+      }
       const bcpCreationInProgress = blockingResult.rows.find(
         (payment) =>
           payment.method === 'QR' &&

@@ -1663,6 +1663,9 @@ export class OrderService {
         id: string;
         order_number: string;
         tracking_token: string;
+        tenant_id: string;
+        branch_id: string;
+        order_type: OrderType;
         status: OrderStatus;
         payment_status: OrderPaymentStatus;
         reservation_id: string | null;
@@ -1673,6 +1676,9 @@ export class OrderService {
                 id::text,
                 order_number::text,
                 tracking_token::text,
+                tenant_id::text,
+                branch_id::text,
+                order_type,
                 status,
                 payment_status,
                 reservation_id::text,
@@ -1720,9 +1726,64 @@ export class OrderService {
         );
       }
 
+      const paymentVerified =
+        ['PAID', 'NOT_REQUIRED'].includes(
+          order.payment_status,
+        );
+
+      let explicitDriverCod = false;
+
       if (
-        (nextStatus === 'CONFIRMED' || nextStatus === 'PREPARING') &&
-        !['PAID', 'NOT_REQUIRED'].includes(order.payment_status)
+        nextStatus === 'CONFIRMED' &&
+        !paymentVerified &&
+        order.order_type === 'DELIVERY' &&
+        order.payment_status ===
+          'AWAITING_CONFIRMATION'
+      ) {
+        const codResult =
+          await client.query<{
+            eligible: boolean;
+          }>(
+            `
+              select exists (
+                select 1
+
+                from public.order_payments p
+
+                where p.tenant_id = $1::uuid
+                  and p.branch_id = $2::uuid
+                  and p.order_id = $3::uuid
+                  and p.method = 'CASH'
+                  and p.provider = 'DRIVER_COD'
+                  and p.status =
+                    'AWAITING_CONFIRMATION'
+              ) as eligible
+            `,
+            [
+              order.tenant_id,
+              order.branch_id,
+              order.id,
+            ],
+          );
+
+        explicitDriverCod =
+          codResult.rows[0]?.eligible ??
+          false;
+      }
+
+      if (
+        nextStatus === 'CONFIRMED' &&
+        !paymentVerified &&
+        !explicitDriverCod
+      ) {
+        throw new ConflictException(
+          'Order cannot advance until payment is verified or explicit cash on delivery is selected',
+        );
+      }
+
+      if (
+        nextStatus === 'PREPARING' &&
+        !paymentVerified
       ) {
         throw new ConflictException(
           'Order cannot advance until payment is verified',

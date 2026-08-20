@@ -890,14 +890,58 @@ export class DeliveryService {
           );
         }
 
-        if (
-          ![
+        const paymentVerified =
+          [
             'PAID',
             'NOT_REQUIRED',
-          ].includes(delivery.payment_status)
+          ].includes(
+            delivery.payment_status,
+          );
+
+        let explicitDriverCod = false;
+
+        if (
+          !paymentVerified &&
+          delivery.payment_status ===
+            'AWAITING_CONFIRMATION'
+        ) {
+          const codResult =
+            await client.query<{
+              eligible: boolean;
+            }>(
+              `
+                select exists (
+                  select 1
+
+                  from public.order_payments p
+
+                  where p.tenant_id = $1::uuid
+                    and p.branch_id = $2::uuid
+                    and p.order_id = $3::uuid
+                    and p.method = 'CASH'
+                    and p.provider = 'DRIVER_COD'
+                    and p.status =
+                      'AWAITING_CONFIRMATION'
+                ) as eligible
+              `,
+              [
+                branch.tenant_id,
+                branch.branch_id,
+                delivery.order_id,
+              ],
+            );
+
+          explicitDriverCod =
+            codResult.rows[0]?.eligible ??
+            false;
+        }
+
+        if (
+          !paymentVerified &&
+          !explicitDriverCod
         ) {
           throw new ConflictException(
-            'Delivery cannot be assigned until payment is verified',
+            'Delivery cannot be assigned until payment is verified or explicit cash on delivery is selected',
           );
         }
 
