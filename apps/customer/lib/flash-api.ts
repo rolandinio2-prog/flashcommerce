@@ -221,6 +221,21 @@ export interface CreatedOrder {
   createdAt: string;
 }
 
+export interface PublicDeliveryLocation {
+  delivery: {
+    status: string;
+  };
+
+  location: {
+    latitude: number;
+    longitude: number;
+    accuracyMeters: number | null;
+    headingDegrees: number | null;
+    speedMps: number | null;
+    capturedAt: string;
+  } | null;
+}
+
 function getApiUrl(): string {
   const apiUrl = process.env.NEXT_PUBLIC_FLASH_API_URL;
 
@@ -458,6 +473,19 @@ export function createOrder(
 
 export function getOrderTracking(trackingToken: string): Promise<CreatedOrder> {
   return apiRequest<CreatedOrder>(`/api/v1/orders/track/${trackingToken}`);
+}
+
+export function getOrderDeliveryLocation(
+  trackingToken: string,
+): Promise<PublicDeliveryLocation> {
+  return apiRequest<PublicDeliveryLocation>(
+    `/api/v1/orders/track/${encodeURIComponent(
+      trackingToken,
+    )}/delivery-location`,
+    {
+      cache: "no-store",
+    },
+  );
 }
 
 // =========================================================

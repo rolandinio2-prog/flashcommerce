@@ -12,6 +12,7 @@ import {
   getCart,
   getDiningTableContext,
   getDiningTables,
+  getOrderDeliveryLocation,
   getOrderPayment,
   getOrderTracking,
   removeCartItem,
@@ -27,6 +28,7 @@ import {
   type FlashOrderType,
   type OrderPaymentStatus,
   type PaymentAttempt,
+  type PublicDeliveryLocation,
   type TableReservation,
 } from "../../lib/flash-api";
 
@@ -330,6 +332,12 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
+  const [deliveryLocation, setDeliveryLocation] =
+    useState<PublicDeliveryLocation | null>(null);
+
+  const [deliveryLocationError, setDeliveryLocationError] =
+    useState<string | null>(null);
+
   // Controla solamente si el modal está abierto o cerrado.
   // El polling NO debe modificar este estado.
   const [orderModalOpen, setOrderModalOpen] = useState(false);
@@ -424,6 +432,45 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     }
 
     return "Ocurrió un error inesperado";
+  }
+
+  function getCustomerDeliveryStatusLabel(
+    status: string,
+  ): string {
+    switch (status) {
+      case "CREATED":
+        return "Delivery creado";
+
+      case "WAITING_ASSIGNMENT":
+        return "Esperando repartidor";
+
+      case "ASSIGNED":
+        return "Repartidor asignado";
+
+      case "ACCEPTED":
+        return "Repartidor confirmado";
+
+      case "PICKED_UP":
+        return "Pedido recogido";
+
+      case "EN_ROUTE":
+        return "Repartidor en camino";
+
+      case "ARRIVED":
+        return "Repartidor en destino";
+
+      case "DELIVERED":
+        return "Pedido entregado";
+
+      case "FAILED":
+        return "Entrega con incidencia";
+
+      case "CANCELLED":
+        return "Delivery cancelado";
+
+      default:
+        return status;
+    }
   }
 
   async function prepareQrPayment(trackingToken: string) {
@@ -994,6 +1041,82 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
   }, [activeTrackingToken, orderStorageKey]);
 
   // =========================================================
+  // 7.1 POLLING DE UBICACION DEL REPARTIDOR CADA 10 SEGUNDOS
+  //
+  // Es independiente del polling del pedido y del pago.
+  // Un fallo de ubicacion no detiene el seguimiento principal.
+  // =========================================================
+
+  useEffect(() => {
+    if (
+      !activeTrackingToken ||
+      completedOrder?.orderType !== "DELIVERY"
+    ) {
+      setDeliveryLocation(null);
+      setDeliveryLocationError(null);
+
+      return;
+    }
+
+    const trackingToken: string =
+      activeTrackingToken;
+
+    let stopped = false;
+    let locationTimerId:
+      | number
+      | undefined;
+
+    async function refreshDeliveryLocation() {
+      try {
+        const result =
+          await getOrderDeliveryLocation(
+            trackingToken,
+          );
+
+        if (stopped) {
+          return;
+        }
+
+        setDeliveryLocation(result);
+        setDeliveryLocationError(null);
+      } catch (error) {
+        if (stopped) {
+          return;
+        }
+
+        setDeliveryLocationError(
+          getErrorMessage(error),
+        );
+      }
+
+      if (!stopped) {
+        locationTimerId =
+          window.setTimeout(
+            refreshDeliveryLocation,
+            10000,
+          );
+      }
+    }
+
+    void refreshDeliveryLocation();
+
+    return () => {
+      stopped = true;
+
+      if (
+        locationTimerId !== undefined
+      ) {
+        window.clearTimeout(
+          locationTimerId,
+        );
+      }
+    };
+  }, [
+    activeTrackingToken,
+    completedOrder?.orderType,
+  ]);
+
+  // =========================================================
   // 8. OPERACIONES DEL CARRITO
   // =========================================================
 
@@ -1346,6 +1469,8 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     setCompletedOrder(null);
     setOrderPayment(null);
     setPaymentError(null);
+    setDeliveryLocation(null);
+    setDeliveryLocationError(null);
 
     // Cerramos el modal.
     setOrderModalOpen(false);
@@ -2836,6 +2961,96 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
                     </p>
                   </div>
                 )}
+
+              {completedOrder.orderType === "DELIVERY" && (
+                <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-sky-700">
+                        Seguimiento del repartidor
+                      </p>
+
+                      <p className="mt-1 font-bold text-sky-950">
+                        {deliveryLocation
+                          ? getCustomerDeliveryStatusLabel(
+                              deliveryLocation.delivery.status,
+                            )
+                          : "Consultando delivery..."}
+                      </p>
+                    </div>
+
+                    <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-sky-800">
+                      Cada 10 s
+                    </span>
+                  </div>
+
+                  {deliveryLocation?.location ? (
+                    <div className="mt-4 space-y-2 rounded-xl bg-white p-3 text-sm">
+                      <div className="flex justify-between gap-4">
+                        <span className="text-zinc-500">
+                          Latitud
+                        </span>
+
+                        <span className="font-mono font-semibold">
+                          {deliveryLocation.location.latitude.toFixed(
+                            6,
+                          )}
+                        </span>
+                      </div>
+
+                      <div className="flex justify-between gap-4">
+                        <span className="text-zinc-500">
+                          Longitud
+                        </span>
+
+                        <span className="font-mono font-semibold">
+                          {deliveryLocation.location.longitude.toFixed(
+                            6,
+                          )}
+                        </span>
+                      </div>
+
+                      {deliveryLocation.location.accuracyMeters !==
+                        null && (
+                        <div className="flex justify-between gap-4">
+                          <span className="text-zinc-500">
+                            Precision
+                          </span>
+
+                          <span className="font-semibold">
+                            {deliveryLocation.location.accuracyMeters.toFixed(
+                              1,
+                            )}{" "}
+                            m
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="border-t pt-2">
+                        <p className="text-xs text-zinc-500">
+                          Ultima ubicacion:{" "}
+                          {formatOrderDateTime(
+                            deliveryLocation.location.capturedAt,
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-sky-800">
+                      {deliveryLocation
+                        ? "La ubicacion del repartidor aun no esta disponible."
+                        : "Consultando la ubicacion del repartidor..."}
+                    </p>
+                  )}
+
+                  {deliveryLocationError && (
+                    <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+                      No se pudo actualizar la ubicacion:{" "}
+                      {deliveryLocationError}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {completedOrder.fulfillment.customerNotes && (
                 <div className="mt-3">
