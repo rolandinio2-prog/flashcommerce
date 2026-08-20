@@ -1734,7 +1734,10 @@ export class OrderService {
       let explicitDriverCod = false;
 
       if (
-        nextStatus === 'CONFIRMED' &&
+        (
+          nextStatus === 'CONFIRMED' ||
+          nextStatus === 'PREPARING'
+        ) &&
         !paymentVerified &&
         order.order_type === 'DELIVERY' &&
         order.payment_status ===
@@ -1783,10 +1786,11 @@ export class OrderService {
 
       if (
         nextStatus === 'PREPARING' &&
-        !paymentVerified
+        !paymentVerified &&
+        !explicitDriverCod
       ) {
         throw new ConflictException(
-          'Order cannot advance until payment is verified',
+          'Order cannot advance until payment is verified or explicit cash on delivery is selected',
         );
       }
 
