@@ -136,6 +136,65 @@ export interface DriverCodCashCollectionInput {
   cashReceivedAmount: unknown;
   idempotencyKey?: string;
 }
+interface OpenDriverCodCashSettlementInput {
+  tenantCode?: string;
+  branchCode?: string;
+  driverId?: string;
+  currency?: string;
+  cashierReference?: string;
+  notes?: string;
+  idempotencyKey?: string;
+  cashierAccessKey?: string;
+}
+
+interface SettleDriverCodCashSettlementInput {
+  tenantCode?: string;
+  branchCode?: string;
+  receivedAmount?: string | number;
+  cashierReference?: string;
+  idempotencyKey?: string;
+  cashierAccessKey?: string;
+}
+
+interface CancelDriverCodCashSettlementInput {
+  tenantCode?: string;
+  branchCode?: string;
+  cashierReference?: string;
+  idempotencyKey?: string;
+  cashierAccessKey?: string;
+}
+
+type DriverCodCashSettlementStatus =
+  | 'OPEN'
+  | 'SETTLED'
+  | 'CANCELLED';
+
+interface DriverCodCashSettlementRow {
+  id: string;
+  tenant_id: string;
+  branch_id: string;
+  driver_id: string;
+  status: DriverCodCashSettlementStatus;
+  currency: string;
+  expected_amount: string;
+  received_amount: string | null;
+  difference_amount: string | null;
+  idempotency_key: string;
+  opened_at: string | Date;
+  settled_at: string | Date | null;
+  cancelled_at: string | Date | null;
+  notes: string | null;
+  created_at: string | Date;
+  updated_at: string | Date;
+}
+
+interface DriverCodCashSettlementItemPaymentRow {
+  id: string;
+  collection_id: string;
+  payment_id: string;
+  amount: string;
+  currency: string;
+}
 interface PreparedQrPayment {
   order: PaymentOrderRow;
   payment: PaymentAttemptRow;
@@ -1670,6 +1729,1181 @@ export class PaymentsService {
       },
     };
   }
+  // =====================================================
+  // FLASHDELIVERY COD - ABRIR LIQUIDACION DE EFECTIVO
+  // =====================================================
+
+  async openDriverCodCashSettlement(
+    input: OpenDriverCodCashSettlementInput,
+  ) {
+    this.assertCashierAccessKey(input.cashierAccessKey);
+
+    const tenantCode =
+      this.requireCashCode(input.tenantCode, 'tenantCode');
+
+    const branchCode =
+      this.requireCashCode(input.branchCode, 'branchCode');
+
+    const driverId =
+      this.requireSettlementUuid(input.driverId, 'driverId');
+
+    const currency =
+      this.requireSettlementCurrency(input.currency);
+
+    const cashierReference =
+      this.requireAuditReference(
+        input.cashierReference,
+        'cashierReference',
+      );
+
+    const notes =
+      this.requireOptionalSettlementNotes(input.notes);
+
+    const idempotencyToken =
+      this.requireIdempotencyToken(input.idempotencyKey);
+
+    const storedIdempotencyKey =
+      `driver-cod-settlement-open:${idempotencyToken}`;
+
+    return this.databaseService.withTransaction(
+      async (client) => {
+        await client.query(
+          `
+            select pg_advisory_xact_lock(
+              hashtextextended($1, 0)
+            )
+          `,
+          [storedIdempotencyKey],
+        );
+
+        const scopeResult = await client.query<{
+          tenant_id: string;
+          branch_id: string;
+        }>(
+          `
+            select
+              t.id::text as tenant_id,
+              b.id::text as branch_id
+
+            from public.tenants t
+
+            inner join public.branches b
+              on b.tenant_id = t.id
+
+            where t.code = $1
+              and b.code = $2
+
+            limit 1
+          `,
+          [tenantCode, branchCode],
+        );
+
+        const scope = scopeResult.rows[0];
+
+        if (!scope) {
+          throw new NotFoundException(
+            'Tenant/branch payment scope not found',
+          );
+        }
+
+        const driverBranchResult = await client.query<{
+          driver_id: string;
+          status: string;
+        }>(
+          `
+            select
+              db.driver_id::text,
+              db.status
+
+            from public.delivery_driver_branches db
+
+            where db.tenant_id = $1::uuid
+              and db.branch_id = $2::uuid
+              and db.driver_id = $3::uuid
+
+            for update
+          `,
+          [
+            scope.tenant_id,
+            scope.branch_id,
+            driverId,
+          ],
+        );
+
+        if (!driverBranchResult.rows[0]) {
+          throw new NotFoundException(
+            'Driver is not assigned to this branch',
+          );
+        }
+
+        const existingByKeyResult =
+          await client.query<DriverCodCashSettlementRow>(
+            `
+              select
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                driver_id::text,
+                status,
+                currency,
+                expected_amount::text,
+                received_amount::text,
+                difference_amount::text,
+                idempotency_key,
+                opened_at,
+                settled_at,
+                cancelled_at,
+                notes,
+                created_at,
+                updated_at
+
+              from public.delivery_cash_settlements
+
+              where idempotency_key = $1
+
+              for update
+            `,
+            [storedIdempotencyKey],
+          );
+
+        const existingByKey =
+          existingByKeyResult.rows[0];
+
+        if (existingByKey) {
+          const sameRequest =
+            existingByKey.tenant_id === scope.tenant_id &&
+            existingByKey.branch_id === scope.branch_id &&
+            existingByKey.driver_id === driverId &&
+            existingByKey.currency === currency &&
+            (existingByKey.notes ?? '') === (notes ?? '');
+
+          if (!sameRequest) {
+            throw new ConflictException(
+              'Idempotency-Key was already used for another cash settlement request',
+            );
+          }
+
+          const eventKey =
+            `driver-cod-settlement-open:${existingByKey.id}:${idempotencyToken}`;
+
+          const replayEventResult =
+            await client.query<{
+              event_count: string;
+              reference_count: string;
+            }>(
+              `
+                select
+                  count(*)::text as event_count,
+
+                  count(*) filter (
+                    where pe.payload ->> 'cashierReference' = $5
+                  )::text as reference_count
+
+                from public.payment_events pe
+
+                where pe.tenant_id = $1::uuid
+                  and pe.branch_id = $2::uuid
+                  and pe.provider_event_id = $3
+                  and pe.event_type =
+                    'DRIVER_COD_CASH_SETTLEMENT_OPENED'
+                  and pe.source = 'RECONCILIATION'
+                  and pe.processing_status = 'PROCESSED'
+                  and pe.payload ->> 'settlementId' = $4
+              `,
+              [
+                scope.tenant_id,
+                scope.branch_id,
+                eventKey,
+                existingByKey.id,
+                cashierReference,
+              ],
+            );
+
+          const replayEvent =
+            replayEventResult.rows[0];
+
+          const eventCount =
+            Number(replayEvent?.event_count ?? 0);
+
+          const referenceCount =
+            Number(replayEvent?.reference_count ?? 0);
+
+          if (
+            eventCount <= 0 ||
+            referenceCount !== eventCount
+          ) {
+            throw new ConflictException(
+              'Stored cash settlement idempotency state is inconsistent',
+            );
+          }
+
+          const currentItems =
+            await this.loadDriverCodCashSettlementItems(
+              client,
+              existingByKey.id,
+            );
+
+          if (
+            existingByKey.status !== 'CANCELLED' &&
+            currentItems.length !== eventCount
+          ) {
+            throw new ConflictException(
+              'Stored cash settlement snapshot is inconsistent',
+            );
+          }
+
+          return {
+            changed: false,
+            action: 'UNCHANGED' as const,
+
+            settlement:
+              this.mapDriverCodCashSettlement(
+                existingByKey,
+                currentItems.length,
+                eventCount,
+              ),
+          };
+        }
+
+        const openResult =
+          await client.query<{
+            id: string;
+          }>(
+            `
+              select
+                id::text
+
+              from public.delivery_cash_settlements
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and driver_id = $3::uuid
+                and currency = $4
+                and status = 'OPEN'
+
+              limit 1
+
+              for update
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              driverId,
+              currency,
+            ],
+          );
+
+        if (openResult.rows[0]) {
+          throw new ConflictException(
+            'Driver already has an open cash settlement for this currency',
+          );
+        }
+
+        const collectionsResult =
+          await client.query<{
+            id: string;
+            payment_id: string;
+            amount: string;
+            currency: string;
+            collected_at: string | Date;
+          }>(
+            `
+              select
+                c.id::text,
+                c.payment_id::text,
+                c.amount::text,
+                c.currency,
+                c.collected_at
+
+              from public.delivery_cash_collections c
+
+              inner join public.order_payments p
+                on p.tenant_id = c.tenant_id
+               and p.branch_id = c.branch_id
+               and p.id = c.payment_id
+
+              left join public.delivery_cash_settlement_items si
+                on si.tenant_id = c.tenant_id
+               and si.branch_id = c.branch_id
+               and si.collection_id = c.id
+
+              where c.tenant_id = $1::uuid
+                and c.branch_id = $2::uuid
+                and c.driver_id = $3::uuid
+                and c.currency = $4
+                and si.id is null
+
+                and p.method = 'CASH'
+                and p.provider = 'DRIVER_COD'
+                and p.status = 'PAID'
+
+              order by
+                c.collected_at,
+                c.id
+
+              for update of c
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              driverId,
+              currency,
+            ],
+          );
+
+        const collections =
+          collectionsResult.rows;
+
+        if (collections.length === 0) {
+          throw new ConflictException(
+            'Driver has no unsettled COD cash collections for this currency',
+          );
+        }
+
+        const collectionIds =
+          collections.map(
+            (collection) => collection.id,
+          );
+
+        const totalResult =
+          await client.query<{
+            expected_amount: string;
+          }>(
+            `
+              select
+                coalesce(
+                  sum(c.amount),
+                  0
+                )::text as expected_amount
+
+              from public.delivery_cash_collections c
+
+              where c.tenant_id = $1::uuid
+                and c.branch_id = $2::uuid
+                and c.id = any($3::uuid[])
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              collectionIds,
+            ],
+          );
+
+        const expectedAmount =
+          totalResult.rows[0]?.expected_amount;
+
+        if (
+          !expectedAmount ||
+          Number(expectedAmount) <= 0
+        ) {
+          throw new ConflictException(
+            'Cash settlement expected amount is invalid',
+          );
+        }
+
+        const settlementResult =
+          await client.query<DriverCodCashSettlementRow>(
+            `
+              insert into public.delivery_cash_settlements (
+                tenant_id,
+                branch_id,
+                driver_id,
+                status,
+                currency,
+                expected_amount,
+                idempotency_key,
+                notes
+              )
+              values (
+                $1::uuid,
+                $2::uuid,
+                $3::uuid,
+                'OPEN',
+                $4,
+                $5::numeric,
+                $6,
+                $7
+              )
+              returning
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                driver_id::text,
+                status,
+                currency,
+                expected_amount::text,
+                received_amount::text,
+                difference_amount::text,
+                idempotency_key,
+                opened_at,
+                settled_at,
+                cancelled_at,
+                notes,
+                created_at,
+                updated_at
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              driverId,
+              currency,
+              expectedAmount,
+              storedIdempotencyKey,
+              notes,
+            ],
+          );
+
+        const settlement =
+          settlementResult.rows[0];
+
+        if (!settlement) {
+          throw new ConflictException(
+            'Cash settlement was not created',
+          );
+        }
+
+        const itemsResult =
+          await client.query(
+            `
+              insert into public.delivery_cash_settlement_items (
+                tenant_id,
+                branch_id,
+                settlement_id,
+                collection_id,
+                driver_id,
+                amount,
+                currency
+              )
+
+              select
+                c.tenant_id,
+                c.branch_id,
+                $3::uuid,
+                c.id,
+                c.driver_id,
+                c.amount,
+                c.currency
+
+              from public.delivery_cash_collections c
+
+              where c.tenant_id = $1::uuid
+                and c.branch_id = $2::uuid
+                and c.id = any($4::uuid[])
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              settlement.id,
+              collectionIds,
+            ],
+          );
+
+        if (
+          (itemsResult.rowCount ?? 0) !==
+          collections.length
+        ) {
+          throw new ConflictException(
+            'Cash settlement snapshot was not created completely',
+          );
+        }
+
+        const eventKey =
+          `driver-cod-settlement-open:${settlement.id}:${idempotencyToken}`;
+
+        for (const collection of collections) {
+          await this.insertPaymentEvent(client, {
+            tenantId: scope.tenant_id,
+            branchId: scope.branch_id,
+            paymentId: collection.payment_id,
+            eventType:
+              'DRIVER_COD_CASH_SETTLEMENT_OPENED',
+            providerEventId: eventKey,
+            source: 'RECONCILIATION',
+            processingStatus: 'PROCESSED',
+            payload: {
+              settlementId: settlement.id,
+              driverId,
+              collectionId: collection.id,
+              amount: Number(collection.amount),
+              currency,
+              expectedAmount:
+                Number(expectedAmount),
+              cashierReference,
+              snapshotItemCount:
+                collections.length,
+            },
+          });
+        }
+
+        return {
+          changed: true,
+          action: 'SETTLEMENT_OPENED' as const,
+
+          settlement:
+            this.mapDriverCodCashSettlement(
+              settlement,
+              collections.length,
+              collections.length,
+            ),
+        };
+      },
+    );
+  }
+
+  // =====================================================
+  // FLASHDELIVERY COD - CERRAR LIQUIDACION
+  // =====================================================
+
+  async settleDriverCodCashSettlement(
+    settlementId: string,
+    input: SettleDriverCodCashSettlementInput,
+  ) {
+    this.assertCashierAccessKey(input.cashierAccessKey);
+
+    const tenantCode =
+      this.requireCashCode(input.tenantCode, 'tenantCode');
+
+    const branchCode =
+      this.requireCashCode(input.branchCode, 'branchCode');
+
+    const receivedAmount =
+      this.requireSettlementReceivedAmount(
+        input.receivedAmount,
+      );
+
+    const cashierReference =
+      this.requireAuditReference(
+        input.cashierReference,
+        'cashierReference',
+      );
+
+    const idempotencyToken =
+      this.requireIdempotencyToken(input.idempotencyKey);
+
+    const eventKey =
+      `driver-cod-settlement-settle:${settlementId}:${idempotencyToken}`;
+
+    return this.databaseService.withTransaction(
+      async (client) => {
+        await client.query(
+          `
+            select pg_advisory_xact_lock(
+              hashtextextended($1, 0)
+            )
+          `,
+          [eventKey],
+        );
+
+        const scopeResult = await client.query<{
+          tenant_id: string;
+          branch_id: string;
+        }>(
+          `
+            select
+              t.id::text as tenant_id,
+              b.id::text as branch_id
+
+            from public.tenants t
+
+            inner join public.branches b
+              on b.tenant_id = t.id
+
+            where t.code = $1
+              and b.code = $2
+
+            limit 1
+          `,
+          [tenantCode, branchCode],
+        );
+
+        const scope = scopeResult.rows[0];
+
+        if (!scope) {
+          throw new NotFoundException(
+            'Tenant/branch payment scope not found',
+          );
+        }
+
+        const settlementResult =
+          await client.query<DriverCodCashSettlementRow>(
+            `
+              select
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                driver_id::text,
+                status,
+                currency,
+                expected_amount::text,
+                received_amount::text,
+                difference_amount::text,
+                idempotency_key,
+                opened_at,
+                settled_at,
+                cancelled_at,
+                notes,
+                created_at,
+                updated_at
+
+              from public.delivery_cash_settlements
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and id = $3::uuid
+
+              for update
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              settlementId,
+            ],
+          );
+
+        const settlement =
+          settlementResult.rows[0];
+
+        if (!settlement) {
+          throw new NotFoundException(
+            'Cash settlement not found',
+          );
+        }
+
+        const items =
+          await this.loadDriverCodCashSettlementItems(
+            client,
+            settlement.id,
+          );
+
+        if (settlement.status === 'SETTLED') {
+          const replayEventResult =
+            await client.query<{
+              event_count: string;
+              reference_count: string;
+            }>(
+              `
+                select
+                  count(*)::text as event_count,
+
+                  count(*) filter (
+                    where pe.payload ->> 'cashierReference' = $5
+                  )::text as reference_count
+
+                from public.payment_events pe
+
+                where pe.tenant_id = $1::uuid
+                  and pe.branch_id = $2::uuid
+                  and pe.provider_event_id = $3
+                  and pe.event_type =
+                    'DRIVER_COD_CASH_SETTLEMENT_SETTLED'
+                  and pe.source = 'RECONCILIATION'
+                  and pe.processing_status = 'PROCESSED'
+                  and pe.payload ->> 'settlementId' = $4
+              `,
+              [
+                scope.tenant_id,
+                scope.branch_id,
+                eventKey,
+                settlement.id,
+                cashierReference,
+              ],
+            );
+
+          const replayEvent =
+            replayEventResult.rows[0];
+
+          const eventCount =
+            Number(replayEvent?.event_count ?? 0);
+
+          const referenceCount =
+            Number(replayEvent?.reference_count ?? 0);
+
+          const sameAmount =
+            settlement.received_amount !== null &&
+            Number(settlement.received_amount) ===
+              Number(receivedAmount);
+
+          if (
+            sameAmount &&
+            items.length > 0 &&
+            eventCount === items.length &&
+            referenceCount === eventCount
+          ) {
+            return {
+              changed: false,
+              action: 'UNCHANGED' as const,
+
+              settlement:
+                this.mapDriverCodCashSettlement(
+                  settlement,
+                  items.length,
+                  items.length,
+                ),
+            };
+          }
+
+          throw new ConflictException(
+            'Cash settlement has already been settled',
+          );
+        }
+
+        if (settlement.status === 'CANCELLED') {
+          throw new ConflictException(
+            'Cancelled cash settlement cannot be settled',
+          );
+        }
+
+        if (items.length === 0) {
+          throw new ConflictException(
+            'Open cash settlement has no snapshot items',
+          );
+        }
+
+        const itemTotalResult =
+          await client.query<{
+            item_total: string;
+          }>(
+            `
+              select
+                coalesce(
+                  sum(si.amount),
+                  0
+                )::text as item_total
+
+              from public.delivery_cash_settlement_items si
+
+              where si.tenant_id = $1::uuid
+                and si.branch_id = $2::uuid
+                and si.settlement_id = $3::uuid
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              settlement.id,
+            ],
+          );
+
+        const itemTotal =
+          itemTotalResult.rows[0]?.item_total ?? '0';
+
+        if (
+          Number(itemTotal) !==
+          Number(settlement.expected_amount)
+        ) {
+          throw new ConflictException(
+            'Cash settlement expected amount does not match its snapshot',
+          );
+        }
+
+        const updatedResult =
+          await client.query<DriverCodCashSettlementRow>(
+            `
+              update public.delivery_cash_settlements
+
+              set
+                status = 'SETTLED',
+                received_amount = $4::numeric,
+                difference_amount =
+                  $4::numeric - expected_amount,
+                settled_at = now(),
+                cancelled_at = null,
+                updated_at = now()
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and id = $3::uuid
+                and status = 'OPEN'
+
+              returning
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                driver_id::text,
+                status,
+                currency,
+                expected_amount::text,
+                received_amount::text,
+                difference_amount::text,
+                idempotency_key,
+                opened_at,
+                settled_at,
+                cancelled_at,
+                notes,
+                created_at,
+                updated_at
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              settlement.id,
+              receivedAmount,
+            ],
+          );
+
+        const updated =
+          updatedResult.rows[0];
+
+        if (!updated) {
+          throw new ConflictException(
+            'Cash settlement could not be settled',
+          );
+        }
+
+        for (const item of items) {
+          await this.insertPaymentEvent(client, {
+            tenantId: scope.tenant_id,
+            branchId: scope.branch_id,
+            paymentId: item.payment_id,
+            eventType:
+              'DRIVER_COD_CASH_SETTLEMENT_SETTLED',
+            providerEventId: eventKey,
+            source: 'RECONCILIATION',
+            processingStatus: 'PROCESSED',
+            payload: {
+              settlementId: updated.id,
+              driverId: updated.driver_id,
+              collectionId: item.collection_id,
+              amount: Number(item.amount),
+              currency: updated.currency,
+              expectedAmount:
+                Number(updated.expected_amount),
+              receivedAmount:
+                Number(updated.received_amount),
+              differenceAmount:
+                Number(updated.difference_amount),
+              cashierReference,
+            },
+          });
+        }
+
+        return {
+          changed: true,
+          action: 'SETTLEMENT_SETTLED' as const,
+
+          settlement:
+            this.mapDriverCodCashSettlement(
+              updated,
+              items.length,
+              items.length,
+            ),
+        };
+      },
+    );
+  }
+
+  // =====================================================
+  // FLASHDELIVERY COD - CANCELAR LIQUIDACION ABIERTA
+  // =====================================================
+
+  async cancelDriverCodCashSettlement(
+    settlementId: string,
+    input: CancelDriverCodCashSettlementInput,
+  ) {
+    this.assertCashierAccessKey(input.cashierAccessKey);
+
+    const tenantCode =
+      this.requireCashCode(input.tenantCode, 'tenantCode');
+
+    const branchCode =
+      this.requireCashCode(input.branchCode, 'branchCode');
+
+    const cashierReference =
+      this.requireAuditReference(
+        input.cashierReference,
+        'cashierReference',
+      );
+
+    const idempotencyToken =
+      this.requireIdempotencyToken(input.idempotencyKey);
+
+    const eventKey =
+      `driver-cod-settlement-cancel:${settlementId}:${idempotencyToken}`;
+
+    return this.databaseService.withTransaction(
+      async (client) => {
+        await client.query(
+          `
+            select pg_advisory_xact_lock(
+              hashtextextended($1, 0)
+            )
+          `,
+          [eventKey],
+        );
+
+        const scopeResult = await client.query<{
+          tenant_id: string;
+          branch_id: string;
+        }>(
+          `
+            select
+              t.id::text as tenant_id,
+              b.id::text as branch_id
+
+            from public.tenants t
+
+            inner join public.branches b
+              on b.tenant_id = t.id
+
+            where t.code = $1
+              and b.code = $2
+
+            limit 1
+          `,
+          [tenantCode, branchCode],
+        );
+
+        const scope = scopeResult.rows[0];
+
+        if (!scope) {
+          throw new NotFoundException(
+            'Tenant/branch payment scope not found',
+          );
+        }
+
+        const settlementResult =
+          await client.query<DriverCodCashSettlementRow>(
+            `
+              select
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                driver_id::text,
+                status,
+                currency,
+                expected_amount::text,
+                received_amount::text,
+                difference_amount::text,
+                idempotency_key,
+                opened_at,
+                settled_at,
+                cancelled_at,
+                notes,
+                created_at,
+                updated_at
+
+              from public.delivery_cash_settlements
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and id = $3::uuid
+
+              for update
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              settlementId,
+            ],
+          );
+
+        const settlement =
+          settlementResult.rows[0];
+
+        if (!settlement) {
+          throw new NotFoundException(
+            'Cash settlement not found',
+          );
+        }
+
+        if (settlement.status === 'CANCELLED') {
+          const replayEventResult =
+            await client.query<{
+              event_count: string;
+              reference_count: string;
+            }>(
+              `
+                select
+                  count(*)::text as event_count,
+
+                  count(*) filter (
+                    where pe.payload ->> 'cashierReference' = $5
+                  )::text as reference_count
+
+                from public.payment_events pe
+
+                where pe.tenant_id = $1::uuid
+                  and pe.branch_id = $2::uuid
+                  and pe.provider_event_id = $3
+                  and pe.event_type =
+                    'DRIVER_COD_CASH_SETTLEMENT_CANCELLED'
+                  and pe.source = 'RECONCILIATION'
+                  and pe.processing_status = 'PROCESSED'
+                  and pe.payload ->> 'settlementId' = $4
+              `,
+              [
+                scope.tenant_id,
+                scope.branch_id,
+                eventKey,
+                settlement.id,
+                cashierReference,
+              ],
+            );
+
+          const replayEvent =
+            replayEventResult.rows[0];
+
+          const eventCount =
+            Number(replayEvent?.event_count ?? 0);
+
+          const referenceCount =
+            Number(replayEvent?.reference_count ?? 0);
+
+          if (
+            eventCount > 0 &&
+            referenceCount === eventCount
+          ) {
+            return {
+              changed: false,
+              action: 'UNCHANGED' as const,
+              releasedItemCount: eventCount,
+
+              settlement:
+                this.mapDriverCodCashSettlement(
+                  settlement,
+                  0,
+                  eventCount,
+                ),
+            };
+          }
+
+          throw new ConflictException(
+            'Cash settlement has already been cancelled',
+          );
+        }
+
+        if (settlement.status === 'SETTLED') {
+          throw new ConflictException(
+            'Settled cash settlement cannot be cancelled',
+          );
+        }
+
+        const items =
+          await this.loadDriverCodCashSettlementItems(
+            client,
+            settlement.id,
+          );
+
+        if (items.length === 0) {
+          throw new ConflictException(
+            'Open cash settlement has no snapshot items',
+          );
+        }
+
+        for (const item of items) {
+          await this.insertPaymentEvent(client, {
+            tenantId: scope.tenant_id,
+            branchId: scope.branch_id,
+            paymentId: item.payment_id,
+            eventType:
+              'DRIVER_COD_CASH_SETTLEMENT_CANCELLED',
+            providerEventId: eventKey,
+            source: 'RECONCILIATION',
+            processingStatus: 'PROCESSED',
+            payload: {
+              settlementId: settlement.id,
+              driverId: settlement.driver_id,
+              collectionId: item.collection_id,
+              amount: Number(item.amount),
+              currency: settlement.currency,
+              expectedAmount:
+                Number(settlement.expected_amount),
+              cashierReference,
+            },
+          });
+        }
+
+        const deleteItemsResult =
+          await client.query(
+            `
+              delete from public.delivery_cash_settlement_items
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and settlement_id = $3::uuid
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              settlement.id,
+            ],
+          );
+
+        if (
+          (deleteItemsResult.rowCount ?? 0) !==
+          items.length
+        ) {
+          throw new ConflictException(
+            'Cash settlement items were not released completely',
+          );
+        }
+
+        const updatedResult =
+          await client.query<DriverCodCashSettlementRow>(
+            `
+              update public.delivery_cash_settlements
+
+              set
+                status = 'CANCELLED',
+                received_amount = null,
+                difference_amount = null,
+                settled_at = null,
+                cancelled_at = now(),
+                updated_at = now()
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and id = $3::uuid
+                and status = 'OPEN'
+
+              returning
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                driver_id::text,
+                status,
+                currency,
+                expected_amount::text,
+                received_amount::text,
+                difference_amount::text,
+                idempotency_key,
+                opened_at,
+                settled_at,
+                cancelled_at,
+                notes,
+                created_at,
+                updated_at
+            `,
+            [
+              scope.tenant_id,
+              scope.branch_id,
+              settlement.id,
+            ],
+          );
+
+        const updated =
+          updatedResult.rows[0];
+
+        if (!updated) {
+          throw new ConflictException(
+            'Cash settlement could not be cancelled',
+          );
+        }
+
+        return {
+          changed: true,
+          action: 'SETTLEMENT_CANCELLED' as const,
+          releasedItemCount: items.length,
+
+          settlement:
+            this.mapDriverCodCashSettlement(
+              updated,
+              0,
+              items.length,
+            ),
+        };
+      },
+    );
+  }
   async confirmCashPayment(orderId: string, input: ConfirmCashPaymentInput) {
     this.assertCashierAccessKey(input.cashierAccessKey);
 
@@ -2635,6 +3869,170 @@ export class PaymentsService {
     }
   }
 
+  private requireSettlementUuid(
+    value: string | undefined,
+    field: string,
+  ): string {
+    const normalized =
+      value?.trim().toLowerCase() || '';
+
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+        normalized,
+      )
+    ) {
+      throw new BadRequestException(
+        `${field} must be a valid UUID`,
+      );
+    }
+
+    return normalized;
+  }
+
+  private requireSettlementCurrency(
+    value: string | undefined,
+  ): string {
+    const normalized =
+      value?.trim().toUpperCase() || '';
+
+    if (!/^[A-Z]{3}$/.test(normalized)) {
+      throw new BadRequestException(
+        'currency must be a three-letter ISO code',
+      );
+    }
+
+    return normalized;
+  }
+
+  private requireSettlementReceivedAmount(
+    value: unknown,
+  ): string {
+    const normalized =
+      String(value ?? '').trim();
+
+    if (
+      !/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(
+        normalized,
+      )
+    ) {
+      throw new BadRequestException(
+        'receivedAmount is invalid',
+      );
+    }
+
+    return normalized;
+  }
+
+  private requireOptionalSettlementNotes(
+    value: string | undefined,
+  ): string | null {
+    const normalized =
+      value?.trim() || '';
+
+    if (!normalized) {
+      return null;
+    }
+
+    if (
+      normalized.length > 500 ||
+      /[\u0000-\u001f\u007f]/.test(
+        normalized,
+      )
+    ) {
+      throw new BadRequestException(
+        'notes is invalid',
+      );
+    }
+
+    return normalized;
+  }
+
+  private async loadDriverCodCashSettlementItems(
+    client: PoolClient,
+    settlementId: string,
+  ): Promise<
+    DriverCodCashSettlementItemPaymentRow[]
+  > {
+    const result =
+      await client.query<DriverCodCashSettlementItemPaymentRow>(
+        `
+          select
+            si.id::text,
+            si.collection_id::text,
+            c.payment_id::text,
+            si.amount::text,
+            si.currency
+
+          from public.delivery_cash_settlement_items si
+
+          inner join public.delivery_cash_collections c
+            on c.tenant_id = si.tenant_id
+           and c.branch_id = si.branch_id
+           and c.id = si.collection_id
+
+          where si.settlement_id = $1::uuid
+
+          order by
+            si.created_at,
+            si.id
+        `,
+        [settlementId],
+      );
+
+    return result.rows;
+  }
+
+  private mapDriverCodCashSettlement(
+    settlement: DriverCodCashSettlementRow,
+    itemCount: number,
+    snapshotItemCount: number = itemCount,
+  ) {
+    return {
+      id: settlement.id,
+      status: settlement.status,
+
+      driverId:
+        settlement.driver_id,
+
+      currency:
+        settlement.currency,
+
+      expectedAmount:
+        Number(settlement.expected_amount),
+
+      receivedAmount:
+        settlement.received_amount === null
+          ? null
+          : Number(
+              settlement.received_amount,
+            ),
+
+      differenceAmount:
+        settlement.difference_amount === null
+          ? null
+          : Number(
+              settlement.difference_amount,
+            ),
+
+      itemCount,
+      snapshotItemCount,
+
+      openedAt:
+        settlement.opened_at,
+
+      settledAt:
+        settlement.settled_at,
+
+      cancelledAt:
+        settlement.cancelled_at,
+
+      notes:
+        settlement.notes,
+
+      updatedAt:
+        settlement.updated_at,
+    };
+  }
   private assertCashierAccessKey(providedKey?: string): void {
     const configuredKey =
       this.configService.get<string>('CASHIER_ACCESS_KEY')?.trim() || '';

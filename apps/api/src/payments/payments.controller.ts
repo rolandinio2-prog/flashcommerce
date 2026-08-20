@@ -19,6 +19,28 @@ interface ConfirmCashPaymentBody {
   terminalReference?: string;
 }
 
+
+interface OpenDriverCodCashSettlementBody {
+  tenantCode?: string;
+  branchCode?: string;
+  driverId?: string;
+  currency?: string;
+  cashierReference?: string;
+  notes?: string;
+}
+
+interface SettleDriverCodCashSettlementBody {
+  tenantCode?: string;
+  branchCode?: string;
+  receivedAmount?: string | number;
+  cashierReference?: string;
+}
+
+interface CancelDriverCodCashSettlementBody {
+  tenantCode?: string;
+  branchCode?: string;
+  cashierReference?: string;
+}
 @Controller('payments')
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
@@ -91,6 +113,88 @@ export class OpsPaymentsController {
     });
   }
 
+  // =====================================================
+  // FLASHDELIVERY COD - LIQUIDACION DE EFECTIVO
+  // =====================================================
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('cash-settlements/open')
+  openDriverCodCashSettlement(
+    @Headers('x-cashier-key')
+    cashierAccessKey: string | undefined,
+
+    @Headers('idempotency-key')
+    idempotencyKey: string | undefined,
+
+    @Body()
+    body: OpenDriverCodCashSettlementBody,
+  ) {
+    return this.paymentsService.openDriverCodCashSettlement({
+      tenantCode: body?.tenantCode,
+      branchCode: body?.branchCode,
+      driverId: body?.driverId,
+      currency: body?.currency,
+      cashierReference: body?.cashierReference,
+      notes: body?.notes,
+      idempotencyKey,
+      cashierAccessKey,
+    });
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('cash-settlements/:settlementId/settle')
+  settleDriverCodCashSettlement(
+    @Param('settlementId', new ParseUUIDPipe())
+    settlementId: string,
+
+    @Headers('x-cashier-key')
+    cashierAccessKey: string | undefined,
+
+    @Headers('idempotency-key')
+    idempotencyKey: string | undefined,
+
+    @Body()
+    body: SettleDriverCodCashSettlementBody,
+  ) {
+    return this.paymentsService.settleDriverCodCashSettlement(
+      settlementId,
+      {
+        tenantCode: body?.tenantCode,
+        branchCode: body?.branchCode,
+        receivedAmount: body?.receivedAmount,
+        cashierReference: body?.cashierReference,
+        idempotencyKey,
+        cashierAccessKey,
+      },
+    );
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('cash-settlements/:settlementId/cancel')
+  cancelDriverCodCashSettlement(
+    @Param('settlementId', new ParseUUIDPipe())
+    settlementId: string,
+
+    @Headers('x-cashier-key')
+    cashierAccessKey: string | undefined,
+
+    @Headers('idempotency-key')
+    idempotencyKey: string | undefined,
+
+    @Body()
+    body: CancelDriverCodCashSettlementBody,
+  ) {
+    return this.paymentsService.cancelDriverCodCashSettlement(
+      settlementId,
+      {
+        tenantCode: body?.tenantCode,
+        branchCode: body?.branchCode,
+        cashierReference: body?.cashierReference,
+        idempotencyKey,
+        cashierAccessKey,
+      },
+    );
+  }
   // SOLO LABORATORIO:
   // POST /api/v1/ops/payments/:paymentId/mock-confirm
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
