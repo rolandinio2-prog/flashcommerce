@@ -234,6 +234,12 @@ export class PaymentsService {
           activePayment = null;
         }
 
+        if (activePayment && activePayment.method !== 'QR') {
+          throw new ConflictException(
+            'Order already has a non-QR payment selection',
+          );
+        }
+
         if (activePayment) {
           return {
             order,
@@ -536,6 +542,442 @@ export class PaymentsService {
   // =====================================================
   // CONSULTA PÃšBLICA POR TRACKING TOKEN
   // =====================================================
+
+  // =====================================================
+  // SELECCIONAR EFECTIVO CONTRA ENTREGA - CLIENTE
+  //
+  // V1:
+  // - solo para pedidos con Delivery en estado CREATED
+  // - crea CASH / DRIVER_COD / AWAITING_CONFIRMATION
+  // - no confirma el pedido
+  // - no despacha el Delivery
+  // - no registra efectivo cobrado
+  // - no utiliza CASHIER_ACCESS_KEY
+  // =====================================================
+
+  async createDriverCodPayment(
+    trackingToken: string,
+    idempotencyKeyInput?: string,
+  ) {
+    const idempotencyToken =
+      this.requireIdempotencyToken(idempotencyKeyInput);
+
+    return this.databaseService.withTransaction(
+      async (client) => {
+        const order =
+          await this.loadOrderForPayment(
+            client,
+            trackingToken,
+          );
+
+        const idempotencyKey =
+          `cod:${order.id}:${idempotencyToken}`;
+
+        // -------------------------------------------------
+        // Idempotencia fuerte:
+        // una repeticion de la misma operacion puede
+        // recuperar el intento aun si el flujo avanzo
+        // posteriormente.
+        // -------------------------------------------------
+
+        const replayResult =
+          await client.query<PaymentAttemptRow>(
+            `
+              select
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                order_id::text,
+                attempt_number,
+                method,
+                provider,
+                status,
+                amount::text,
+                currency,
+                external_reference,
+                provider_payment_id,
+                provider_transaction_id,
+                qr_payload,
+                qr_content_type,
+                qr_mime_type,
+                expires_at,
+                paid_at,
+                verified_at,
+                cash_received_amount::text,
+                cash_change_amount::text,
+                created_at,
+                updated_at
+
+              from public.order_payments
+
+              where idempotency_key = $1
+
+              limit 1
+
+              for update
+            `,
+            [
+              idempotencyKey,
+            ],
+          );
+
+        const existingPayment =
+          replayResult.rows[0] ?? null;
+
+        if (existingPayment) {
+          const sameOperation =
+            existingPayment.tenant_id ===
+              order.tenant_id &&
+            existingPayment.branch_id ===
+              order.branch_id &&
+            existingPayment.order_id ===
+              order.id &&
+            existingPayment.method === 'CASH' &&
+            existingPayment.provider ===
+              'DRIVER_COD';
+
+          if (!sameOperation) {
+            throw new ConflictException(
+              'Idempotency key was already used by another payment operation',
+            );
+          }
+
+          if (
+            existingPayment.status !==
+              'AWAITING_CONFIRMATION' &&
+            existingPayment.status !== 'PAID'
+          ) {
+            throw new ConflictException(
+              `Cash on delivery cannot be replayed from ${existingPayment.status}`,
+            );
+          }
+
+          return this.mapPaymentResponse(
+            order,
+            existingPayment,
+            true,
+          );
+        }
+
+        this.assertOrderCanReceivePayment(order);
+
+        // -------------------------------------------------
+        // COD solamente pertenece a un pedido DELIVERY que
+        // aun no entro al flujo de dispatch.
+        // -------------------------------------------------
+
+        const deliveryResult =
+          await client.query<{
+            id: string;
+            status: string;
+          }>(
+            `
+              select
+                d.id::text,
+                d.status
+
+              from public.deliveries d
+
+              where d.tenant_id = $1::uuid
+                and d.branch_id = $2::uuid
+                and d.order_id = $3::uuid
+
+              limit 1
+
+              for update of d
+            `,
+            [
+              order.tenant_id,
+              order.branch_id,
+              order.id,
+            ],
+          );
+
+        const delivery =
+          deliveryResult.rows[0] ?? null;
+
+        if (!delivery) {
+          throw new ConflictException(
+            'Cash on delivery is only available for DELIVERY orders',
+          );
+        }
+
+        if (delivery.status !== 'CREATED') {
+          throw new ConflictException(
+            'Payment method is locked after delivery dispatch',
+          );
+        }
+
+        // -------------------------------------------------
+        // No hacemos switching automatico desde QR,
+        // REVIEW_REQUIRED u otro intento activo.
+        // Un DRIVER_COD ya activo puede reutilizarse.
+        // -------------------------------------------------
+
+        const activeResult =
+          await client.query<PaymentAttemptRow>(
+            `
+              select
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                order_id::text,
+                attempt_number,
+                method,
+                provider,
+                status,
+                amount::text,
+                currency,
+                external_reference,
+                provider_payment_id,
+                provider_transaction_id,
+                qr_payload,
+                qr_content_type,
+                qr_mime_type,
+                expires_at,
+                paid_at,
+                verified_at,
+                cash_received_amount::text,
+                cash_change_amount::text,
+                created_at,
+                updated_at
+
+              from public.order_payments
+
+              where tenant_id = $1::uuid
+                and branch_id = $2::uuid
+                and order_id = $3::uuid
+                and status in (
+                  'CREATED',
+                  'AWAITING_CONFIRMATION',
+                  'REVIEW_REQUIRED'
+                )
+
+              order by attempt_number desc
+
+              limit 1
+
+              for update
+            `,
+            [
+              order.tenant_id,
+              order.branch_id,
+              order.id,
+            ],
+          );
+
+        const activePayment =
+          activeResult.rows[0] ?? null;
+
+        if (activePayment) {
+          const reusableCod =
+            activePayment.method === 'CASH' &&
+            activePayment.provider === 'DRIVER_COD' &&
+            activePayment.status ===
+              'AWAITING_CONFIRMATION';
+
+          if (!reusableCod) {
+            throw new ConflictException(
+              'Order already has another active payment selection',
+            );
+          }
+
+          if (
+            order.payment_status !==
+            'AWAITING_CONFIRMATION'
+          ) {
+            throw new ConflictException(
+              'Cash on delivery payment state is inconsistent',
+            );
+          }
+
+          return this.mapPaymentResponse(
+            order,
+            activePayment,
+            true,
+          );
+        }
+
+        // -------------------------------------------------
+        // Siguiente numero de intento.
+        // El lock del Order serializa creaciones de pago
+        // concurrentes para este pedido.
+        // -------------------------------------------------
+
+        const attemptResult =
+          await client.query<{
+            attempt_number: number;
+          }>(
+            `
+              select
+                coalesce(
+                  max(attempt_number),
+                  0
+                )::int + 1
+                  as attempt_number
+
+              from public.order_payments
+
+              where tenant_id = $1::uuid
+                and order_id = $2::uuid
+            `,
+            [
+              order.tenant_id,
+              order.id,
+            ],
+          );
+
+        const attemptNumber =
+          attemptResult.rows[0].attempt_number;
+
+        const externalReference =
+          `COD-${order.order_number}-${attemptNumber}`;
+
+        // -------------------------------------------------
+        // Importante:
+        // cash_received_amount y cash_change_amount quedan
+        // NULL hasta el cobro autenticado por el driver.
+        //
+        // expires_at tambien queda NULL por contrato COD.
+        // -------------------------------------------------
+
+        const paymentResult =
+          await client.query<PaymentAttemptRow>(
+            `
+              insert into public.order_payments (
+                tenant_id,
+                branch_id,
+                order_id,
+                attempt_number,
+                method,
+                provider,
+                status,
+                amount,
+                currency,
+                external_reference,
+                idempotency_key,
+                expires_at,
+                paid_at,
+                verified_at,
+                cash_received_amount,
+                cash_change_amount
+              )
+              values (
+                $1::uuid,
+                $2::uuid,
+                $3::uuid,
+                $4,
+                'CASH',
+                'DRIVER_COD',
+                'AWAITING_CONFIRMATION',
+                $5::numeric,
+                $6,
+                $7,
+                $8,
+                null,
+                null,
+                null,
+                null,
+                null
+              )
+              returning
+                id::text,
+                tenant_id::text,
+                branch_id::text,
+                order_id::text,
+                attempt_number,
+                method,
+                provider,
+                status,
+                amount::text,
+                currency,
+                external_reference,
+                provider_payment_id,
+                provider_transaction_id,
+                qr_payload,
+                qr_content_type,
+                qr_mime_type,
+                expires_at,
+                paid_at,
+                verified_at,
+                cash_received_amount::text,
+                cash_change_amount::text,
+                created_at,
+                updated_at
+            `,
+            [
+              order.tenant_id,
+              order.branch_id,
+              order.id,
+              attemptNumber,
+              order.total,
+              order.currency,
+              externalReference,
+              idempotencyKey,
+            ],
+          );
+
+        const payment =
+          paymentResult.rows[0];
+
+        if (!payment) {
+          throw new ConflictException(
+            'Cash on delivery payment attempt was not created',
+          );
+        }
+
+        await client.query(
+          `
+            update public.orders
+
+            set
+              payment_status =
+                'AWAITING_CONFIRMATION'
+
+            where id = $1::uuid
+              and payment_status <> 'PAID'
+          `,
+          [
+            order.id,
+          ],
+        );
+
+        await this.insertPaymentEvent(
+          client,
+          {
+            tenantId: payment.tenant_id,
+            branchId: payment.branch_id,
+            paymentId: payment.id,
+            eventType:
+              'DRIVER_COD_SELECTED',
+            source: 'SYSTEM',
+            processingStatus:
+              'PROCESSED',
+            payload: {
+              provider:
+                payment.provider,
+              externalReference:
+                payment.external_reference,
+              amount:
+                payment.amount,
+              currency:
+                payment.currency,
+            },
+          },
+        );
+
+        return this.mapPaymentResponse(
+          {
+            ...order,
+            payment_status:
+              'AWAITING_CONFIRMATION',
+          },
+          payment,
+          false,
+        );
+      },
+    );
+  }
 
   async getOrderPayment(trackingToken: string) {
     await this.expirePaymentIfNeeded(trackingToken);

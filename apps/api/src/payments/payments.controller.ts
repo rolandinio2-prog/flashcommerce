@@ -33,6 +33,22 @@ export class PaymentsController {
     return this.paymentsService.createQrPayment(trackingToken);
   }
 
+  // POST /api/v1/payments/orders/:trackingToken/cod
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Post('orders/:trackingToken/cod')
+  createDriverCodPayment(
+    @Param('trackingToken', new ParseUUIDPipe())
+    trackingToken: string,
+
+    @Headers('idempotency-key')
+    idempotencyKey: string | undefined,
+  ) {
+    return this.paymentsService.createDriverCodPayment(
+      trackingToken,
+      idempotencyKey,
+    );
+  }
+
   // GET /api/v1/payments/orders/:trackingToken
   @Get('orders/:trackingToken')
   getOrderPayment(
