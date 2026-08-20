@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Patch,
   Post,
@@ -173,6 +174,39 @@ export class DriverController {
       identity.tenantId,
       identity.driverId,
       body,
+    );
+  }
+  @Throttle({
+    default: {
+      limit: 10,
+      ttl: 60_000,
+    },
+  })
+  @Post('deliveries/:deliveryId/cash-collection')
+  collectCash(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Headers('idempotency-key')
+    idempotencyKey: string | undefined,
+
+    @Body()
+    body: {
+      cashReceivedAmount?: unknown;
+    },
+
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity = this.requireIdentity(request);
+
+    return this.deliveryService.collectDriverCodCash(
+      deliveryId,
+      identity.tenantId,
+      identity.driverId,
+      identity.driverCode,
+      body?.cashReceivedAmount,
+      idempotencyKey,
     );
   }
   @Patch('deliveries/:deliveryId/deliver')

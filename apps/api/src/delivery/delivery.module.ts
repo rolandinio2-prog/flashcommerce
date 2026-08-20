@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { PaymentsModule } from '../payments/payments.module';
 import { DeliveryAddressService } from './delivery-address.service';
 import { DeliveryController } from './delivery.controller';
 import { DeliveryService } from './delivery.service';
@@ -11,6 +12,8 @@ import { OpsAccessGuard } from './ops-access.guard';
 import { OpsDeliveryController } from './ops-delivery.controller';
 
 @Module({
+  imports: [PaymentsModule],
+
   controllers: [
     DeliveryController,
     OpsDeliveryController,

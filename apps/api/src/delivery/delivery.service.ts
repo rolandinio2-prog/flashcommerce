@@ -12,6 +12,7 @@ import {
 import type { PoolClient } from 'pg';
 
 import { DatabaseService } from '../database/database.service';
+import { PaymentsService } from '../payments/payments.service';
 import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
 import type { GeoPoint, GeoRouteResult } from './geo.types';
 import {
@@ -51,6 +52,7 @@ interface DeliveryZoneRow {
 export class DeliveryService {
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly paymentsService: PaymentsService,
 
     @Inject(GEO_PROVIDER)
     private readonly geoProvider: GeoProvider,
@@ -4366,6 +4368,258 @@ export class DeliveryService {
         };
       },
     );
+  }
+  async collectDriverCodCash(
+    deliveryIdInput: unknown,
+    tenantIdInput: unknown,
+    driverIdInput: unknown,
+    driverCode: string,
+    cashReceivedAmount: unknown,
+    idempotencyKey: string | undefined,
+  ) {
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
+
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
+
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
+
+    const safeDriverCode = driverCode?.trim() || 'DRIVER';
+
+    return this.databaseService.withTransaction(async (client) => {
+      const deliveryResult = await client.query<{
+        id: string;
+        tenant_id: string;
+        branch_id: string;
+        order_id: string;
+        order_number: string;
+        delivery_status: string;
+        order_status: string;
+        payment_status: string;
+      }>(
+        `
+              select
+                d.id::text,
+                d.tenant_id::text,
+                d.branch_id::text,
+                d.order_id::text,
+                o.order_number::text,
+                d.status as delivery_status,
+                o.status as order_status,
+                o.payment_status
+
+              from public.deliveries d
+
+              inner join public.orders o
+                on o.tenant_id = d.tenant_id
+               and o.branch_id = d.branch_id
+               and o.id = d.order_id
+
+              where d.tenant_id = $1::uuid
+                and d.id = $2::uuid
+
+              for update of d, o
+            `,
+        [tenantId, deliveryId],
+      );
+
+      const delivery = deliveryResult.rows[0];
+
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
+
+      const branchAuthorizationResult = await client.query<{
+        id: string;
+      }>(
+        `
+              select
+                db.id::text
+
+              from public.delivery_driver_branches db
+
+              where db.tenant_id = $1::uuid
+                and db.branch_id = $2::uuid
+                and db.driver_id = $3::uuid
+                and db.status = 'ENABLED'
+
+              limit 1
+
+              for share of db
+            `,
+        [delivery.tenant_id, delivery.branch_id, driverId],
+      );
+
+      if (!branchAuthorizationResult.rows[0]) {
+        throw new ConflictException(
+          'Driver is not enabled for delivery branch',
+        );
+      }
+
+      if (
+        delivery.delivery_status !== 'ARRIVED' &&
+        delivery.delivery_status !== 'DELIVERED'
+      ) {
+        throw new ConflictException(
+          `Cash collection is unavailable from ${delivery.delivery_status}`,
+        );
+      }
+
+      const assignmentResult = await client.query<{
+        id: string;
+        assignment_number: number;
+        driver_id: string;
+        status: string;
+        assigned_at: string | Date;
+        accepted_at: string | Date | null;
+        completed_at: string | Date | null;
+      }>(
+        `
+              select
+                a.id::text,
+                a.assignment_number,
+                a.driver_id::text,
+                a.status,
+                a.assigned_at,
+                a.accepted_at,
+                a.completed_at
+
+              from public.delivery_assignments a
+
+              where a.tenant_id = $1::uuid
+                and a.branch_id = $2::uuid
+                and a.delivery_id = $3::uuid
+                and a.status in (
+                  'ACCEPTED',
+                  'COMPLETED'
+                )
+
+              order by
+                a.assignment_number desc
+
+              limit 1
+
+              for update of a
+            `,
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
+
+      const assignment = assignmentResult.rows[0];
+
+      if (!assignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
+
+      if (assignment.driver_id !== driverId) {
+        throw new ConflictException('Delivery is assigned to another driver');
+      }
+
+      if (!assignment.accepted_at) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
+
+      if (delivery.delivery_status === 'ARRIVED') {
+        if (
+          delivery.order_status !== 'READY' ||
+          assignment.status !== 'ACCEPTED' ||
+          assignment.completed_at
+        ) {
+          throw new ConflictException(
+            'Arrived cash collection state is inconsistent',
+          );
+        }
+      } else {
+        if (
+          delivery.order_status !== 'COMPLETED' ||
+          assignment.status !== 'COMPLETED' ||
+          !assignment.completed_at ||
+          delivery.payment_status !== 'PAID'
+        ) {
+          throw new ConflictException(
+            'Delivered cash collection replay state is inconsistent',
+          );
+        }
+      }
+
+      if (
+        delivery.payment_status !== 'AWAITING_CONFIRMATION' &&
+        delivery.payment_status !== 'PAID'
+      ) {
+        throw new ConflictException(
+          'Delivery does not have a collectible cash-on-delivery payment',
+        );
+      }
+
+      const collection = await this.paymentsService.collectDriverCodCash(
+        client,
+        {
+          tenantId: delivery.tenant_id,
+
+          branchId: delivery.branch_id,
+
+          orderId: delivery.order_id,
+
+          deliveryId: delivery.id,
+
+          assignmentId: assignment.id,
+
+          driverId,
+
+          cashReceivedAmount,
+
+          idempotencyKey,
+        },
+      );
+
+      return {
+        changed: collection.changed,
+
+        action: collection.changed ? 'CASH_COLLECTED' : 'UNCHANGED',
+
+        delivery: {
+          id: delivery.id,
+
+          status: delivery.delivery_status,
+        },
+
+        order: {
+          id: delivery.order_id,
+
+          number: delivery.order_number,
+
+          status: delivery.order_status,
+
+          paymentStatus: 'PAID',
+        },
+
+        assignment: {
+          id: assignment.id,
+
+          number: assignment.assignment_number,
+
+          status: assignment.status,
+
+          assignedAt: assignment.assigned_at,
+
+          acceptedAt: assignment.accepted_at,
+
+          completedAt: assignment.completed_at,
+
+          driver: {
+            id: driverId,
+
+            code: safeDriverCode,
+          },
+        },
+
+        payment: collection.payment,
+
+        collection: collection.collection,
+      };
+    });
   }
   async deliverDriverDelivery(
     deliveryIdInput: unknown,
