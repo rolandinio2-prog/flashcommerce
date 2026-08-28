@@ -11,6 +11,8 @@ export interface CreateQrPaymentInput {
   externalReference: string;
   amount: string;
   currency: string;
+  customerPhone: string | null;
+  branchOffice: string | null;
   expiresAt: Date;
 }
 

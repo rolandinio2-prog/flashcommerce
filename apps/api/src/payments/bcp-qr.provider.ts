@@ -38,9 +38,7 @@ interface BcpConfiguration {
   businessCode: string;
   serviceCode: string;
   city: string;
-  branchOffice: string;
   teller: string;
-  phoneNumber: string;
   enableBank: string;
   requestTimeoutMs: number;
   agent: Agent;
@@ -107,6 +105,22 @@ export class BcpQrProvider implements PaymentProvider {
 
     const amount = this.parseAmount(input.amount);
 
+    const branchOffice = input.branchOffice?.trim() || '';
+
+    if (branchOffice.length === 0) {
+      throw new BadRequestException(
+        'BCP QR branchOffice is required',
+      );
+    }
+
+    const customerPhone = input.customerPhone?.trim() || '';
+
+    if (customerPhone.length === 0) {
+      throw new BadRequestException(
+        'BCP QR customerPhone is required',
+      );
+    }
+
     const response = await this.postJson<BcpGenerateResponse>(
       configuration.endpoints.generatePath,
       {
@@ -119,9 +133,9 @@ export class BcpQrProvider implements PaymentProvider {
         singleUse: true,
         enableBank: configuration.enableBank,
         city: configuration.city,
-        branchOffice: configuration.branchOffice,
+        branchOffice,
         teller: configuration.teller,
-        phoneNumber: configuration.phoneNumber,
+        phoneNumber: customerPhone,
         publicToken: configuration.publicToken,
         expiration: this.buildExpiration(input.expiresAt),
         collectors: [],
@@ -132,7 +146,7 @@ export class BcpQrProvider implements PaymentProvider {
     this.assertSuccessfulState(response.state);
 
     if (response.data === null || typeof response.data !== 'object') {
-      throw new BadGatewayException('BCP QR generation returned invalid data');
+      throw new GatewayTimeoutException('BCP QR generation returned invalid data');
     }
 
     const providerPaymentId = this.normalizeGeneratedId(response.data.id);
@@ -333,9 +347,7 @@ export class BcpQrProvider implements PaymentProvider {
       businessCode: this.requiredValue('BCP_QR_BUSINESS_CODE'),
       serviceCode: this.optionalValue('BCP_QR_SERVICE_CODE') || '050',
       city: this.requiredValue('BCP_QR_CITY'),
-      branchOffice: this.requiredValue('BCP_QR_BRANCH_OFFICE'),
       teller: this.requiredValue('BCP_QR_TELLER'),
-      phoneNumber: this.requiredValue('BCP_QR_PHONE_NUMBER'),
       enableBank: this.optionalValue('BCP_QR_ENABLE_BANK') || 'ALL',
       requestTimeoutMs,
       agent: new Agent({
@@ -371,6 +383,7 @@ export class BcpQrProvider implements PaymentProvider {
 
     return new Promise<TResponse>((resolve, reject) => {
       let settled = false;
+      let requestFinished = false;
       let timedOut = false;
 
       const succeed = (value: TResponse): void => {
@@ -419,7 +432,7 @@ export class BcpQrProvider implements PaymentProvider {
               response.destroy();
 
               fail(
-                new BadGatewayException(
+                new GatewayTimeoutException(
                   'BCP QR response exceeded the allowed size',
                 ),
               );
@@ -431,7 +444,7 @@ export class BcpQrProvider implements PaymentProvider {
           });
 
           response.on('error', () => {
-            fail(new BadGatewayException('BCP QR response stream failed'));
+            fail(new GatewayTimeoutException('BCP QR response stream failed'));
           });
 
           response.on('end', () => {
@@ -453,7 +466,7 @@ export class BcpQrProvider implements PaymentProvider {
 
             if (responseBody.trim().length === 0) {
               fail(
-                new BadGatewayException(
+                new GatewayTimeoutException(
                   'BCP QR service returned an empty response',
                 ),
               );
@@ -467,7 +480,7 @@ export class BcpQrProvider implements PaymentProvider {
               parsedResponse = JSON.parse(responseBody);
             } catch {
               fail(
-                new BadGatewayException('BCP QR service returned invalid JSON'),
+                new GatewayTimeoutException('BCP QR service returned invalid JSON'),
               );
 
               return;
@@ -479,7 +492,7 @@ export class BcpQrProvider implements PaymentProvider {
               Array.isArray(parsedResponse)
             ) {
               fail(
-                new BadGatewayException(
+                new GatewayTimeoutException(
                   'BCP QR service returned an invalid response',
                 ),
               );
@@ -492,6 +505,10 @@ export class BcpQrProvider implements PaymentProvider {
         },
       );
 
+      outboundRequest.on('finish', () => {
+        requestFinished = true;
+      });
+
       outboundRequest.setTimeout(configuration.requestTimeoutMs, () => {
         timedOut = true;
 
@@ -501,6 +518,16 @@ export class BcpQrProvider implements PaymentProvider {
       outboundRequest.on('error', () => {
         if (timedOut) {
           fail(new GatewayTimeoutException('BCP QR service timed out'));
+
+          return;
+        }
+
+        if (requestFinished) {
+          fail(
+            new GatewayTimeoutException(
+              'BCP QR service request outcome is unknown',
+            ),
+          );
 
           return;
         }
@@ -525,7 +552,7 @@ export class BcpQrProvider implements PaymentProvider {
       typeof value === 'number' ? value : Number(this.normalizeString(value));
 
     if (!Number.isSafeInteger(numericValue) || numericValue <= 0) {
-      throw new BadGatewayException(
+      throw new GatewayTimeoutException(
         'BCP QR generation returned an invalid identifier',
       );
     }
@@ -644,7 +671,7 @@ export class BcpQrProvider implements PaymentProvider {
       encodedImage.length === 0 ||
       !/^[A-Za-z0-9+/]*={0,2}$/.test(encodedImage)
     ) {
-      throw new BadGatewayException(
+      throw new GatewayTimeoutException(
         'BCP QR service returned invalid image data',
       );
     }
@@ -652,7 +679,7 @@ export class BcpQrProvider implements PaymentProvider {
     const remainder = encodedImage.length % 4;
 
     if (remainder === 1) {
-      throw new BadGatewayException(
+      throw new GatewayTimeoutException(
         'BCP QR service returned invalid Base64 data',
       );
     }
@@ -664,7 +691,7 @@ export class BcpQrProvider implements PaymentProvider {
     const image = Buffer.from(encodedImage, 'base64');
 
     if (image.length === 0 || image.length > MAX_QR_IMAGE_BYTES) {
-      throw new BadGatewayException('BCP QR image size is invalid');
+      throw new GatewayTimeoutException('BCP QR image size is invalid');
     }
 
     const isPng =
@@ -698,7 +725,7 @@ export class BcpQrProvider implements PaymentProvider {
       };
     }
 
-    throw new BadGatewayException(
+    throw new GatewayTimeoutException(
       'BCP QR service returned an unsupported image format',
     );
   }

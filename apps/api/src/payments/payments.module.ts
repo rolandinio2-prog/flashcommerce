@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { StaffModule } from '../staff/staff.module';
+import { BcpPaymentCallbackController } from './bcp-payment-callback.controller';
 import { BcpQrProvider } from './bcp-qr.provider';
 import { MockQrProvider } from './mock-qr.provider';
 import {
@@ -9,7 +11,12 @@ import {
 import { PaymentsService } from './payments.service';
 
 @Module({
-  controllers: [PaymentsController, OpsPaymentsController],
+  imports: [StaffModule],
+  controllers: [
+    PaymentsController,
+    OpsPaymentsController,
+    BcpPaymentCallbackController,
+  ],
   providers: [PaymentsService, MockQrProvider, BcpQrProvider],
   exports: [PaymentsService],
 })

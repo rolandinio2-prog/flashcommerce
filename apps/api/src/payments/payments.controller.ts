@@ -6,16 +6,20 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+
+import { StaffRoleGuard } from '../staff/staff-role.guard';
+import { StaffRoles } from '../staff/staff-roles.decorator';
+import { StaffSessionGuard } from '../staff/staff-session.guard';
+import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 
 import { PaymentsService } from './payments.service';
 
 interface ConfirmCashPaymentBody {
-  tenantCode?: string;
-  branchCode?: string;
   cashReceivedAmount?: string | number;
-  cashierReference?: string;
   terminalReference?: string;
 }
 
@@ -88,28 +92,31 @@ export class OpsPaymentsController {
   // SOLO CAJA PRESENCIAL:
   // POST /api/v1/ops/payments/orders/:orderId/cash
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @UseGuards(StaffSessionGuard, StaffRoleGuard)
+  @StaffRoles('ADMIN', 'MANAGER', 'CASHIER')
   @Post('orders/:orderId/cash')
   confirmCashPayment(
     @Param('orderId', new ParseUUIDPipe())
     orderId: string,
 
-    @Headers('x-cashier-key')
-    cashierAccessKey: string | undefined,
-
     @Headers('idempotency-key')
     idempotencyKey: string | undefined,
+
+    @Req()
+    request: StaffAuthenticatedRequest,
 
     @Body()
     body: ConfirmCashPaymentBody,
   ) {
     return this.paymentsService.confirmCashPayment(orderId, {
-      tenantCode: body?.tenantCode,
-      branchCode: body?.branchCode,
+      tenantCode: request.staff.tenantCode,
+      branchCode: request.staff.branchCode,
       cashReceivedAmount: body?.cashReceivedAmount,
-      cashierReference: body?.cashierReference,
       terminalReference: body?.terminalReference,
       idempotencyKey,
-      cashierAccessKey,
+      operatorUserId: request.staff.userId,
+      operatorCode: request.staff.userCode,
+      operatorDisplayName: request.staff.displayName,
     });
   }
 
