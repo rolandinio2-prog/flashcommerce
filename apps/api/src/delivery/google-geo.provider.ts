@@ -53,6 +53,7 @@ const GEOCODE_PLACE_FIELD_MASK = [
 const ROUTE_FIELD_MASK = [
   'routes.distanceMeters',
   'routes.duration',
+  'routes.polyline.encodedPolyline',
 ].join(',');
 
 interface GoogleGeoConfiguration {
@@ -431,9 +432,23 @@ export class GoogleGeoProvider implements GeoProvider {
         route.duration,
       );
 
+    const polyline =
+      this.requireRecord(
+        route.polyline,
+        'Google Routes polyline',
+      );
+
+    const encodedPolyline =
+      this.requireText(
+        polyline.encodedPolyline,
+        'Google Routes encoded polyline',
+        100_000,
+      );
+
     return {
       distanceMeters,
       durationSeconds,
+      encodedPolyline,
     };
   }
 

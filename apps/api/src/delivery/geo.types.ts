@@ -54,4 +54,5 @@ export interface GeoRouteInput {
 export interface GeoRouteResult {
   distanceMeters: number;
   durationSeconds: number;
+  encodedPolyline: string;
 }
