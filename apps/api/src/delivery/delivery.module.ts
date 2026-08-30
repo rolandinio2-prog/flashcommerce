@@ -14,6 +14,7 @@ import { ROUTING_PROVIDER } from './routing-provider';
 import { DriverController } from './driver.controller';
 import { OpsAccessGuard } from './ops-access.guard';
 import { OpsDeliveryController } from './ops-delivery.controller';
+import { GeoProfileResolver } from './geo-profile-resolver.service';
 
 @Module({
   imports: [PaymentsModule],
@@ -25,6 +26,7 @@ import { OpsDeliveryController } from './ops-delivery.controller';
   ],
 
   providers: [
+    GeoProfileResolver,
     DeliveryService,
     DeliveryAddressService,
 
@@ -51,6 +53,7 @@ import { OpsDeliveryController } from './ops-delivery.controller';
   ],
 
   exports: [
+    GeoProfileResolver,
     DeliveryService,
     GEO_PROVIDER,
     ROUTING_PROVIDER,
