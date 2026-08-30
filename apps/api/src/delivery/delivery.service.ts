@@ -14,6 +14,7 @@ import type { PoolClient } from 'pg';
 import { DatabaseService } from '../database/database.service';
 import { PaymentsService } from '../payments/payments.service';
 import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
+import { GeoUsageMeterService } from './geo-usage-meter.service';
 import type { GeoPoint, GeoRouteResult } from './geo.types';
 import {
   deriveDeliveryPod,
@@ -48,11 +49,24 @@ interface DeliveryZoneRow {
   eta_max_minutes: number;
 }
 
+interface DeliveryMapRouteCacheEntry {
+  expiresAt: number;
+  route: GeoRouteResult;
+}
+
+const DELIVERY_MAP_ROUTE_CACHE_TTL_MS = 15_000;
+const DELIVERY_MAP_ROUTE_CACHE_MAX_ENTRIES = 250;
+
 @Injectable()
 export class DeliveryService {
+  private readonly deliveryMapRouteCache =
+    new Map<string, DeliveryMapRouteCacheEntry>();
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly paymentsService: PaymentsService,
+
+    private readonly geoUsageMeter: GeoUsageMeterService,
 
     @Inject(GEO_PROVIDER)
     private readonly geoProvider: GeoProvider,
@@ -392,10 +406,10 @@ export class DeliveryService {
     };
 
     const route =
-      await this.geoProvider.calculateRoute({
+      await this.geoUsageMeter.measure({ tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false }, () => this.geoProvider.calculateRoute({
         origin,
         destination,
-      });
+      }));
 
     this.validateDeliveryRouteMetrics(
       route.distanceMeters,
@@ -1716,6 +1730,185 @@ export class DeliveryService {
           maxMinutes: row.eta_max_minutes,
         },
       })),
+    };
+  }
+  async getDriverDeliveryMapRoute(
+    deliveryIdInput: unknown,
+    tenantIdInput: unknown,
+    driverIdInput: unknown,
+  ) {
+    const deliveryId =
+      this.requireUuid(
+        deliveryIdInput,
+        'deliveryId',
+      );
+
+    const tenantId =
+      this.requireUuid(
+        tenantIdInput,
+        'tenantId',
+      );
+
+    const driverId =
+      this.requireUuid(
+        driverIdInput,
+        'driverId',
+      );
+
+    const result =
+      await this.databaseService.query<{
+        delivery_id: string;
+        delivery_status: string;
+
+        destination_latitude: number;
+        destination_longitude: number;
+
+        latitude: number | null;
+        longitude: number | null;
+        captured_at: string | Date | null;
+      }>(
+        `
+          select
+            d.id::text
+              as delivery_id,
+
+            d.status
+              as delivery_status,
+
+            gis.ST_Y(
+              d.destination::gis.geometry
+            )::double precision
+              as destination_latitude,
+
+            gis.ST_X(
+              d.destination::gis.geometry
+            )::double precision
+              as destination_longitude,
+
+            loc.latitude,
+            loc.longitude,
+            loc.captured_at
+
+          from public.deliveries d
+
+          inner join public.delivery_assignments a
+            on a.tenant_id = d.tenant_id
+           and a.branch_id = d.branch_id
+           and a.delivery_id = d.id
+           and a.driver_id = $3::uuid
+           and a.status = 'ACCEPTED'
+
+          inner join public.delivery_driver_branches db
+            on db.tenant_id = a.tenant_id
+           and db.branch_id = a.branch_id
+           and db.driver_id = a.driver_id
+           and db.status = 'ENABLED'
+
+          left join lateral (
+            select
+              gis.ST_Y(
+                l.position::gis.geometry
+              )::double precision
+                as latitude,
+
+              gis.ST_X(
+                l.position::gis.geometry
+              )::double precision
+                as longitude,
+
+              l.captured_at
+
+            from public.delivery_driver_locations l
+
+            where l.tenant_id = d.tenant_id
+              and l.branch_id = d.branch_id
+              and l.delivery_id = d.id
+              and l.driver_id = a.driver_id
+              and l.captured_at <= l.received_at + interval '5 minutes'
+              and l.captured_at >= l.received_at - interval '24 hours'
+
+            order by
+              l.received_at desc,
+              l.captured_at desc
+
+            limit 1
+          ) loc
+            on true
+
+          where d.tenant_id = $1::uuid
+            and d.id = $2::uuid
+            and d.status in (
+              'ACCEPTED',
+              'PICKED_UP',
+              'EN_ROUTE',
+              'ARRIVED'
+            )
+
+          limit 1
+        `,
+        [
+          tenantId,
+          deliveryId,
+          driverId,
+        ],
+      );
+
+    const row =
+      result.rows[0];
+
+    if (!row) {
+      throw new NotFoundException(
+        'Active delivery route not found',
+      );
+    }
+
+    if (
+      row.latitude === null ||
+      row.longitude === null ||
+      row.captured_at === null
+    ) {
+      throw new ConflictException(
+        'Driver location is not available yet',
+      );
+    }
+
+    const location = {
+      latitude:
+        row.latitude,
+
+      longitude:
+        row.longitude,
+    };
+
+    const destination = {
+      latitude:
+        row.destination_latitude,
+
+      longitude:
+        row.destination_longitude,
+    };
+
+    const route =
+      await this.getCachedDeliveryMapRoute(
+        tenantId,
+        location,
+        destination,
+      );
+
+    return {
+      delivery: {
+        id: row.delivery_id,
+        status: row.delivery_status,
+      },
+
+      location: {
+        ...location,
+        capturedAt:
+          row.captured_at,
+      },
+
+      destination,
+      route,
     };
   }
   async acceptDriverDelivery(
@@ -5559,11 +5752,26 @@ export class DeliveryService {
     return outcome.response;
   }
   async getPublicDeliveryLocationByOrderTrackingToken(
-    trackingToken: string,
+    trackingTokenInput: unknown,
   ) {
+    const trackingToken =
+      this.requireUuid(
+        trackingTokenInput,
+        'trackingToken',
+      );
+
     const result =
       await this.databaseService.query<{
+        tenant_id: string;
+
+        order_number: string;
+        order_status: string;
+        order_payment_status: string;
+
         delivery_status: string;
+
+        destination_latitude: number;
+        destination_longitude: number;
 
         latitude: number | null;
         longitude: number | null;
@@ -5576,8 +5784,30 @@ export class DeliveryService {
       }>(
         `
           select
+            d.tenant_id::text
+              as tenant_id,
+
+            o.order_number::text
+              as order_number,
+
+            o.status
+              as order_status,
+
+            o.payment_status
+              as order_payment_status,
+
             d.status
               as delivery_status,
+
+            gis.ST_Y(
+              d.destination::gis.geometry
+            )::double precision
+              as destination_latitude,
+
+            gis.ST_X(
+              d.destination::gis.geometry
+            )::double precision
+              as destination_longitude,
 
             loc.latitude,
             loc.longitude,
@@ -5658,46 +5888,99 @@ export class DeliveryService {
       row.longitude !== null &&
       row.captured_at !== null;
 
+    const destinationVisible =
+      [
+        'ASSIGNED',
+        'ACCEPTED',
+        'PICKED_UP',
+        'EN_ROUTE',
+        'ARRIVED',
+        'DELIVERED',
+      ].includes(row.delivery_status);
+
+    const destination =
+      destinationVisible
+        ? {
+            latitude:
+              row.destination_latitude,
+
+            longitude:
+              row.destination_longitude,
+          }
+        : null;
+
+    const location =
+      !hasLocation
+        ? null
+        : {
+            latitude:
+              row.latitude as number,
+
+            longitude:
+              row.longitude as number,
+
+            accuracyMeters:
+              row.accuracy_meters === null
+                ? null
+                : Number(
+                    row.accuracy_meters,
+                  ),
+
+            headingDegrees:
+              row.heading_degrees === null
+                ? null
+                : Number(
+                    row.heading_degrees,
+                  ),
+
+            speedMps:
+              row.speed_mps === null
+                ? null
+                : Number(
+                    row.speed_mps,
+                  ),
+
+            capturedAt:
+              row.captured_at,
+          };
+
+    let route: GeoRouteResult | null = null;
+
+    if (location && destination) {
+      try {
+        route =
+          await this.getCachedDeliveryMapRoute(
+            row.tenant_id,
+            location,
+            destination,
+          );
+      } catch {
+        // Tracking status and the latest safe GPS point remain useful
+        // even when the optional Google route overlay is unavailable.
+        route = null;
+      }
+    }
+
     return {
+      order: {
+        number:
+          row.order_number,
+
+        status:
+          row.order_status,
+
+        paymentStatus:
+          row.order_payment_status,
+      },
+
       delivery: {
         status:
           row.delivery_status,
       },
 
-      location:
-        !hasLocation
-          ? null
-          : {
-              latitude:
-                row.latitude,
-
-              longitude:
-                row.longitude,
-
-              accuracyMeters:
-                row.accuracy_meters === null
-                  ? null
-                  : Number(
-                      row.accuracy_meters,
-                    ),
-
-              headingDegrees:
-                row.heading_degrees === null
-                  ? null
-                  : Number(
-                      row.heading_degrees,
-                    ),
-
-              speedMps:
-                row.speed_mps === null
-                  ? null
-                  : Number(
-                      row.speed_mps,
-                    ),
-
-              capturedAt:
-                row.captured_at,
-            },
+      destination,
+      location,
+      route,
     };
   }
   async getPublicDeliveryPodByOrderTrackingToken(
@@ -6323,10 +6606,78 @@ export class DeliveryService {
         branch,
       );
 
-    return this.geoProvider.calculateRoute({
+    return this.geoUsageMeter.measure({ tenantId: branch.tenant_id, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false }, () => this.geoProvider.calculateRoute({
       origin,
       destination,
-    });
+    }));
+  }
+
+  private async getCachedDeliveryMapRoute(
+    tenantId: string,
+    origin: GeoPoint,
+    destination: GeoPoint,
+  ): Promise<GeoRouteResult> {
+    const now = Date.now();
+
+    const cacheKey = [
+      origin.latitude,
+      origin.longitude,
+      destination.latitude,
+      destination.longitude,
+    ].join(':');
+
+    const cached =
+      this.deliveryMapRouteCache.get(
+        cacheKey,
+      );
+
+    if (
+      cached &&
+      cached.expiresAt > now
+    ) {
+      return cached.route;
+    }
+
+    if (cached) {
+      this.deliveryMapRouteCache.delete(
+        cacheKey,
+      );
+    }
+
+    const route =
+      await this.geoUsageMeter.measure({ tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false }, () => this.geoProvider.calculateRoute({
+        origin,
+        destination,
+      }));
+
+    if (
+      this.deliveryMapRouteCache.size >=
+      DELIVERY_MAP_ROUTE_CACHE_MAX_ENTRIES
+    ) {
+      const oldestKey =
+        this.deliveryMapRouteCache
+          .keys()
+          .next()
+          .value as string | undefined;
+
+      if (oldestKey) {
+        this.deliveryMapRouteCache.delete(
+          oldestKey,
+        );
+      }
+    }
+
+    this.deliveryMapRouteCache.set(
+      cacheKey,
+      {
+        expiresAt:
+          now + DELIVERY_MAP_ROUTE_CACHE_TTL_MS,
+
+        route,
+      },
+    );
+
+    return route;
   }
 
   private requireDeliveryBranchOrigin(

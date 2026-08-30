@@ -12,6 +12,7 @@ import {
   GEO_PROVIDER,
   type GeoProvider,
 } from './geo-provider';
+import { GeoUsageMeterService } from './geo-usage-meter.service';
 import type { GeoPoint } from './geo.types';
 import type {
   DeliveryAddressAutocompleteInput,
@@ -47,6 +48,8 @@ export class DeliveryAddressService {
     private readonly databaseService: DatabaseService,
 
     private readonly configService: ConfigService,
+
+    private readonly geoUsageMeter: GeoUsageMeterService,
 
     @Inject(GEO_PROVIDER)
     private readonly geoProvider: GeoProvider,
@@ -88,7 +91,7 @@ export class DeliveryAddressService {
       this.readBiasRadiusMeters();
 
     const suggestions =
-      await this.geoProvider.autocomplete({
+      await this.geoUsageMeter.measure({ tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_SEARCH', cacheHit: false }, () => this.geoProvider.autocomplete({
         input: searchText,
 
         languageCode:
@@ -110,7 +113,7 @@ export class DeliveryAddressService {
                 radiusMeters,
               }
             : undefined,
-      });
+      }));
 
     return {
       tenant:
@@ -153,7 +156,7 @@ export class DeliveryAddressService {
       this.readLocale();
 
     const location =
-      await this.geoProvider.resolvePlace({
+      await this.geoUsageMeter.measure({ tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_RESOLVE', cacheHit: false }, () => this.geoProvider.resolvePlace({
         placeId,
 
         languageCode:
@@ -161,7 +164,7 @@ export class DeliveryAddressService {
 
         regionCode:
           locale.countryCode,
-      });
+      }));
 
     return {
       tenant:
@@ -207,7 +210,7 @@ export class DeliveryAddressService {
       this.readLocale();
 
     const location =
-      await this.geoProvider.geocodeAddress({
+      await this.geoUsageMeter.measure({ tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_FORWARD', cacheHit: false }, () => this.geoProvider.geocodeAddress({
         address,
 
         languageCode:
@@ -215,7 +218,7 @@ export class DeliveryAddressService {
 
         regionCode:
           locale.countryCode,
-      });
+      }));
 
     return {
       tenant:

@@ -15,6 +15,7 @@ import { DriverController } from './driver.controller';
 import { OpsAccessGuard } from './ops-access.guard';
 import { OpsDeliveryController } from './ops-delivery.controller';
 import { GeoProfileResolver } from './geo-profile-resolver.service';
+import { GeoUsageMeterService } from './geo-usage-meter.service';
 
 @Module({
   imports: [PaymentsModule],
@@ -25,32 +26,16 @@ import { GeoProfileResolver } from './geo-profile-resolver.service';
     DriverController,
   ],
 
-  providers: [
-    GeoProfileResolver,
-    DeliveryService,
-    DeliveryAddressService,
-
-    GoogleGeoProvider,
-    {
+  providers: [GeoProfileResolver, DeliveryService, DeliveryAddressService, GoogleGeoProvider, {
       provide: GEO_PROVIDER,
       useExisting: GoogleGeoProvider,
-    },
-
-    GoogleRoutingProvider,
-    {
+    }, GoogleRoutingProvider, {
       provide: ROUTING_PROVIDER,
       useExisting: GoogleRoutingProvider,
-    },
-
-    GoogleGeocodingProvider,
-    {
+    }, GoogleGeocodingProvider, {
       provide: GEOCODING_PROVIDER,
       useExisting: GoogleGeocodingProvider,
-    },
-
-    OpsAccessGuard,
-    DriverAccessGuard,
-  ],
+    }, OpsAccessGuard, DriverAccessGuard, GeoUsageMeterService],
 
   exports: [
     GeoProfileResolver,
