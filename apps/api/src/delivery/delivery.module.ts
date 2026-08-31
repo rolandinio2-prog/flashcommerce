@@ -5,11 +5,16 @@ import { DeliveryAddressService } from './delivery-address.service';
 import { DeliveryController } from './delivery.controller';
 import { DeliveryService } from './delivery.service';
 import { DriverAccessGuard } from './driver-access.guard';
+import { DriverAuthController } from './driver-auth.controller';
+import { DriverAuthService } from './driver-auth.service';
 import { GEOCODING_PROVIDER } from './geocoding-provider';
 import { GEO_PROVIDER } from './geo-provider';
 import { GoogleGeocodingProvider } from './google-geocoding.provider';
 import { GoogleGeoProvider } from './google-geo.provider';
 import { GoogleRoutingProvider } from './google-routing.provider';
+import { GeoShadowEtaCalibrationService } from './geo-shadow-eta-calibration.service';
+import { GeoShadowEtaOrchestratorService } from './geo-shadow-eta-orchestrator.service';
+import { ValhallaRoutingProvider } from './valhalla-routing.provider';
 import { ROUTING_PROVIDER } from './routing-provider';
 import { DriverController } from './driver.controller';
 import { OpsAccessGuard } from './ops-access.guard';
@@ -24,18 +29,40 @@ import { GeoUsageMeterService } from './geo-usage-meter.service';
     DeliveryController,
     OpsDeliveryController,
     DriverController,
+    DriverAuthController,
   ],
 
-  providers: [GeoProfileResolver, DeliveryService, DeliveryAddressService, GoogleGeoProvider, {
+  providers: [
+    GeoProfileResolver,
+    DeliveryService,
+    DeliveryAddressService,
+    GeoUsageMeterService,
+
+    GoogleGeoProvider,
+    {
       provide: GEO_PROVIDER,
       useExisting: GoogleGeoProvider,
-    }, GoogleRoutingProvider, {
+    },
+
+    GoogleRoutingProvider,
+    ValhallaRoutingProvider,
+    GeoShadowEtaCalibrationService,
+    GeoShadowEtaOrchestratorService,
+    {
       provide: ROUTING_PROVIDER,
       useExisting: GoogleRoutingProvider,
-    }, GoogleGeocodingProvider, {
+    },
+
+    GoogleGeocodingProvider,
+    {
       provide: GEOCODING_PROVIDER,
       useExisting: GoogleGeocodingProvider,
-    }, OpsAccessGuard, DriverAccessGuard, GeoUsageMeterService],
+    },
+
+    OpsAccessGuard,
+    DriverAccessGuard,
+    DriverAuthService,
+  ],
 
   exports: [
     GeoProfileResolver,
