@@ -5,11 +5,15 @@ import { useCallback, useEffect, useState } from "react";
 import {
   confirmOperationalCashPayment,
   getOperationalOrders,
+  getOperationsCapabilities,
+  type OperationsCapabilities,
+  handoffOperationalDelivery,
   updateOperationalOrderStatus,
   type OrderOrigin,
   type OrderPaymentStatus,
   type OperationalOrder,
   type OperationalOrderStatus,
+  type StaffSessionUser,
 } from "../../../lib/flash-api";
 
 import OpsTablesPanel from "./ops-tables-panel";
@@ -47,6 +51,7 @@ interface CashPaymentReceipt {
 interface OpsOrdersClientProps {
   tenantCode: string;
   branchCode: string;
+  operator: StaffSessionUser;
 }
 
 interface StatusColumn {
@@ -164,6 +169,7 @@ function isOrderPaymentVerified(order: OperationalOrder): boolean {
 }
 
 function canReceiveCashPayment(order: OperationalOrder): boolean {
+  if (!["DINE_IN", "TAKEAWAY", "PICKUP"].includes(order.orderType)) return false;
   if (order.status !== "PENDING" && order.status !== "CONFIRMED") {
     return false;
   }
@@ -265,25 +271,25 @@ function isAdvanceOrderPreparationLocked(
 export default function OpsOrdersClient({
   tenantCode,
   branchCode,
+  operator,
 }: OpsOrdersClientProps) {
   const [orders, setOrders] = useState<OperationalOrderWithFulfillment[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [capabilities, setCapabilities] = useState<OperationsCapabilities | null>(null);
 
   const [error, setError] = useState<string | null>(null);
 
   const [busyOrderId, setBusyOrderId] = useState<string | null>(null);
-
+  const [busyHandoffDeliveryId, setBusyHandoffDeliveryId] = useState<
+    string | null
+  >(null);
   const [cashOrder, setCashOrder] =
     useState<OperationalOrderWithFulfillment | null>(null);
 
   const [cashReceivedAmount, setCashReceivedAmount] = useState("");
 
-  const [cashierReference, setCashierReference] = useState("");
-
   const [terminalReference, setTerminalReference] = useState("CAJA-01");
-
-  const [cashierAccessKey, setCashierAccessKey] = useState("");
 
   const [cashIdempotencyKey, setCashIdempotencyKey] = useState("");
 
@@ -305,6 +311,9 @@ export default function OpsOrdersClient({
       ? Math.round((parsedCashReceived - cashOrder.total) * 100) / 100
       : null;
 
+  const canOperateCash =
+    capabilities?.permissions.includes("payments.cash") ?? false;
+
   // =======================================================
   // 5. CARGA DE PEDIDOS ACTIVOS
   // =======================================================
@@ -313,10 +322,16 @@ export default function OpsOrdersClient({
     setError(null);
 
     try {
+      const access = await getOperationsCapabilities();
+      if (access.tenantCode !== tenantCode || access.branchCode !== branchCode) throw new Error('La sucursal de la sesión cambió. Vuelve a ingresar.');
+      setCapabilities(access);
       const result = await getOperationalOrders(tenantCode, branchCode);
 
       setOrders(result.orders);
     } catch (error) {
+      setCapabilities(null);
+      setOrders([]);
+      setActiveTab("ORDERS");
       if (error instanceof Error) {
         setError(error.message);
       } else {
@@ -327,7 +342,6 @@ export default function OpsOrdersClient({
     }
   }, [tenantCode, branchCode]);
 
-  // =======================================================
   // 6. POLLING AUTOMÁTICO CADA 5 SEGUNDOS
   // =======================================================
 
@@ -354,7 +368,6 @@ export default function OpsOrdersClient({
     };
   }, [loadOrders]);
 
-  // =======================================================
   // 7. AVANZAR ESTADO DEL PEDIDO
   // =======================================================
 
@@ -362,6 +375,18 @@ export default function OpsOrdersClient({
     const nextStatus = getNextStatus(order.status);
 
     if (!nextStatus) {
+      return;
+    }
+
+    if (
+      order.orderType === "DELIVERY" &&
+      order.status === "READY" &&
+      nextStatus === "COMPLETED"
+    ) {
+      setError(
+        "El pedido Delivery se completa desde la app del repartidor después de validar la entrega.",
+      );
+
       return;
     }
 
@@ -389,6 +414,40 @@ export default function OpsOrdersClient({
       }
     } finally {
       setBusyOrderId(null);
+    }
+  }
+
+  async function handoffDeliveryToDriver(
+    order: OperationalOrderWithFulfillment,
+  ) {
+    const delivery = order.delivery;
+
+    if (!delivery) {
+      setError("No se encontró el Delivery vinculado al pedido");
+      return;
+    }
+
+    if (delivery.status !== "ACCEPTED") {
+      setError(
+        "El repartidor debe aceptar la entrega antes de recibir el pedido.",
+      );
+      return;
+    }
+
+    setBusyHandoffDeliveryId(delivery.id);
+    setError(null);
+
+    try {
+      await handoffOperationalDelivery(delivery.id);
+      await loadOrders();
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo entregar el pedido al repartidor",
+      );
+    } finally {
+      setBusyHandoffDeliveryId(null);
     }
   }
 
@@ -433,20 +492,8 @@ export default function OpsOrdersClient({
       return;
     }
 
-    if (cashierReference.trim().length < 2) {
-      setCashError("Ingresa la referencia del cajero");
-
-      return;
-    }
-
     if (terminalReference.trim().length < 2) {
       setCashError("Ingresa la referencia de la caja");
-
-      return;
-    }
-
-    if (!cashierAccessKey.trim()) {
-      setCashError("Ingresa la clave privada de caja");
 
       return;
     }
@@ -464,17 +511,10 @@ export default function OpsOrdersClient({
       const result = await confirmOperationalCashPayment(
         cashOrder.id,
         {
-          tenantCode,
-          branchCode,
-
           cashReceivedAmount: normalizedAmount,
-
-          cashierReference: cashierReference.trim(),
-
           terminalReference: terminalReference.trim(),
         },
         cashIdempotencyKey,
-        cashierAccessKey.trim(),
       );
 
       const received =
@@ -506,10 +546,6 @@ export default function OpsOrdersClient({
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "No se pudo registrar el pago";
-
-      if (message === "Invalid cashier credentials") {
-        setCashierAccessKey("");
-      }
 
       setCashError(message);
     } finally {
@@ -580,6 +616,7 @@ export default function OpsOrdersClient({
             Pedidos
           </button>
 
+          {capabilities?.permissions.includes("tables.read") && (
           <button
             type="button"
             onClick={() => setActiveTab("TABLES")}
@@ -591,7 +628,9 @@ export default function OpsOrdersClient({
           >
             Mesas
           </button>
+          )}
 
+          {capabilities?.permissions.includes("reservations.read") && (
           <button
             type="button"
             onClick={() => setActiveTab("RESERVATIONS")}
@@ -603,6 +642,7 @@ export default function OpsOrdersClient({
           >
             Reservas
           </button>
+          )}
         </nav>
       </div>
 
@@ -648,14 +688,14 @@ export default function OpsOrdersClient({
       )}
 
       <div className="mx-auto max-w-[1600px] px-6 py-6">
-        {activeTab === "TABLES" ? (
+        {activeTab === "TABLES" && capabilities?.permissions.includes("tables.read") ? (
           <OpsTablesPanel
             tenantCode={tenantCode}
             branchCode={branchCode}
             orders={orders}
             onOrdersChanged={loadOrders}
           />
-        ) : activeTab === "RESERVATIONS" ? (
+        ) : activeTab === "RESERVATIONS" && capabilities?.permissions.includes("reservations.read") ? (
           <OpsReservationsPanel
             tenantCode={tenantCode}
             branchCode={branchCode}
@@ -714,11 +754,65 @@ export default function OpsOrdersClient({
 
                       const paymentVerified = isOrderPaymentVerified(order);
 
+                      const isReadyDelivery =
+                        order.orderType === "DELIVERY" &&
+                        order.status === "READY";
+
+                      const operationalDelivery = order.delivery;
+
+                      const memberOrders =
+                        operationalDelivery?.isShared
+                          ? orders
+                              .filter(
+                                (candidate) =>
+                                  candidate.delivery?.id ===
+                                  operationalDelivery.id,
+                              )
+                              .map(
+                                (candidate) =>
+                                  candidate.orderNumber,
+                              )
+                          : [];
+
+                      const operationalDriver =
+                        operationalDelivery?.assignment?.driver ?? null;
+
+                      const handoffBusy =
+                        operationalDelivery !== null &&
+                        busyHandoffDeliveryId === operationalDelivery?.id;
+
                       return (
                         <article
                           key={order.id}
                           className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
                         >
+                          {operationalDelivery?.isShared ? (
+                            <div
+                              className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900"
+                              data-ops-shared-delivery="true"
+                            >
+                              <p className="font-bold">
+                                Entrega conjunta Â·{" "}
+                                {operationalDelivery.memberCount} pedidos
+                              </p>
+
+                              <p className="mt-1">
+                                Pedidos:{" "}
+                                {memberOrders
+                                  .map((number) => `#${number}`)
+                                  .join(", ")}
+                              </p>
+
+                              <p className="mt-1 text-xs">
+                                Rol de este pedido:{" "}
+                                {operationalDelivery.relationshipRole ===
+                                "PRIMARY"
+                                  ? "Principal"
+                                  : "Adicional"}
+                              </p>
+                            </div>
+                          ) : null}
+
                           {/* =================================
                                   CABECERA DEL PEDIDO
                               ================================= */}
@@ -791,7 +885,7 @@ export default function OpsOrdersClient({
                             )}
                           </div>
 
-                          {canReceiveCashPayment(order) && (
+                          {canOperateCash && canReceiveCashPayment(order) && (
                             <button
                               type="button"
                               disabled={busyOrderId !== null || cashBusy}
@@ -877,19 +971,6 @@ export default function OpsOrdersClient({
                                   )}
                                 </div>
                               )}
-
-                              {order.orderType === "DELIVERY" &&
-                                fulfillment.deliveryAddress && (
-                                  <div className="mt-3 border-t border-zinc-200 pt-3">
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-                                      Dirección
-                                    </p>
-
-                                    <p className="mt-1 text-sm font-medium">
-                                      {fulfillment.deliveryAddress}
-                                    </p>
-                                  </div>
-                                )}
                             </div>
                           )}
 
@@ -937,31 +1018,86 @@ export default function OpsOrdersClient({
                                   ACCIÓN OPERATIVA
                               ================================= */}
 
-                          <button
-                            type="button"
-                            disabled={
-                              busyOrderId === order.id ||
-                              paymentLocked ||
-                              preparationLocked
-                            }
-                            onClick={() => void advanceOrder(order)}
-                            className="mt-5 w-full rounded-xl bg-zinc-950 px-4 py-3 text-sm font-bold text-white disabled:bg-zinc-400"
-                          >
-                            {busyOrderId === order.id
-                              ? "Actualizando..."
-                              : paymentLocked
-                                ? "Esperando confirmación del pago"
-                                : preparationLocked
-                                  ? `Preparación disponible desde ${formatBoliviaTime(
-                                      new Date(
+                          {isReadyDelivery ? (
+                            <div className="mt-5 space-y-3">
+                              {operationalDriver && (
+                                <p className="text-xs font-semibold text-zinc-600">
+                                  Repartidor: {operationalDriver.name ?? operationalDriver.code}
+                                  {operationalDriver.name && operationalDriver.code
+                                    ? ` · ${operationalDriver.code}`
+                                    : ""}
+                                </p>
+                              )}
+
+                              {operationalDelivery?.status === "ACCEPTED" ? (
+                                <button
+                                  type="button"
+                                  disabled={handoffBusy}
+                                  onClick={() =>
+                                    void handoffDeliveryToDriver(order)
+                                  }
+                                  className="w-full rounded-xl bg-zinc-950 px-4 py-3 text-sm font-bold text-white disabled:bg-zinc-400"
+                                >
+                                  {handoffBusy
+                                    ? "Entregando al repartidor..."
+                                    : "Entregar al repartidor"}
+                                </button>
+                              ) : operationalDelivery?.status === "ASSIGNED" ? (
+                                <button
+                                  type="button"
+                                  disabled
+                                  className="w-full rounded-xl bg-zinc-400 px-4 py-3 text-sm font-bold text-white"
+                                >
+                                  Esperando aceptación del repartidor
+                                </button>
+                              ) : operationalDelivery?.status ===
+                                  "WAITING_ASSIGNMENT" ||
+                                operationalDelivery?.status === "CREATED" ? (
+                                <button
+                                  type="button"
+                                  disabled
+                                  className="w-full rounded-xl bg-zinc-400 px-4 py-3 text-sm font-bold text-white"
+                                >
+                                  Buscando repartidor
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled
+                                  className="w-full rounded-xl bg-zinc-400 px-4 py-3 text-sm font-bold text-white"
+                                >
+                                  Actualizando despacho...
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={
+                                !capabilities?.orderStatuses.includes(getNextStatus(order.status) ?? "") ||
+                                busyOrderId === order.id ||
+                                paymentLocked ||
+                                preparationLocked
+                              }
+                              onClick={() => void advanceOrder(order)}
+                              className="mt-5 w-full rounded-xl bg-zinc-950 px-4 py-3 text-sm font-bold text-white disabled:bg-zinc-400"
+                            >
+                              {!capabilities?.orderStatuses.includes(getNextStatus(order.status) ?? "") ? "Acción no disponible para tu rol" : busyOrderId === order.id
+                                ? "Actualizando..."
+                                : paymentLocked
+                                  ? "Esperando confirmación del pago"
+                                  : preparationLocked
+                                    ? `Preparación disponible desde ${formatBoliviaTime(
                                         new Date(
-                                          order.reservation!.reservedFor,
-                                        ).getTime() -
-                                          60 * 60 * 1000,
-                                      ).toISOString(),
-                                    )}`
-                                  : getActionLabel(order.status)}
-                          </button>
+                                          new Date(
+                                            order.reservation!.reservedFor,
+                                          ).getTime() -
+                                            60 * 60 * 1000,
+                                        ).toISOString(),
+                                      )}`
+                                    : getActionLabel(order.status)}
+                            </button>
+                          )}
                         </article>
                       );
                     })}
@@ -1073,21 +1209,15 @@ export default function OpsOrdersClient({
             </div>
 
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <label className="block">
-                <span className="text-sm font-bold">Referencia del cajero</span>
-
-                <input
-                  type="text"
-                  value={cashierReference}
-                  onChange={(event) => {
-                    setCashierReference(event.target.value);
-                    setCashError(null);
-                  }}
-                  maxLength={80}
-                  placeholder="Ej. CAJERO-01"
-                  className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-3 outline-none focus:border-zinc-950"
-                />
-              </label>
+              <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
+                <span className="text-xs font-bold uppercase tracking-wide text-zinc-500">
+                  Operador de caja
+                </span>
+                <p className="mt-1 font-black">{operator.displayName}</p>
+                <p className="mt-1 font-mono text-xs text-zinc-500">
+                  {operator.userCode} · {operator.role}
+                </p>
+              </div>
 
               <label className="block">
                 <span className="text-sm font-bold">Caja o terminal</span>
@@ -1105,27 +1235,6 @@ export default function OpsOrdersClient({
                 />
               </label>
             </div>
-
-            <label className="mt-4 block">
-              <span className="text-sm font-bold">Clave privada de caja</span>
-
-              <input
-                type="password"
-                autoComplete="off"
-                value={cashierAccessKey}
-                onChange={(event) => {
-                  setCashierAccessKey(event.target.value);
-                  setCashError(null);
-                }}
-                placeholder="Pega la clave autorizada"
-                className="mt-2 w-full rounded-xl border border-zinc-300 px-3 py-3 outline-none focus:border-zinc-950"
-              />
-
-              <span className="mt-2 block text-xs text-zinc-500">
-                La clave permanece solamente en la memoria de esta página y no
-                se envía dentro del cuerpo del pago.
-              </span>
-            </label>
 
             {cashError && (
               <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
@@ -1148,9 +1257,7 @@ export default function OpsOrdersClient({
                 disabled={
                   cashBusy ||
                   calculatedCashChange === null ||
-                  cashierReference.trim().length < 2 ||
-                  terminalReference.trim().length < 2 ||
-                  !cashierAccessKey.trim()
+                  terminalReference.trim().length < 2
                 }
                 className="rounded-xl bg-zinc-950 px-4 py-3 font-bold text-white disabled:bg-zinc-400"
               >

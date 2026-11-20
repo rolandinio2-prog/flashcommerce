@@ -123,24 +123,6 @@ function formatOccupiedTime(
   return parts.join(' ');
 }
 
-function formatQrExpiration(
-  value: string,
-  timeZone: string,
-) {
-  return new Date(value).toLocaleString(
-    'es-BO',
-    {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone,
-    },
-  );
-}
-
 function hasActiveOrders(
   table: OperationalDiningTable,
 ) {
@@ -340,7 +322,7 @@ export default function OpsTablesPanel({
       setError(
         getErrorMessage(
           error,
-          'No se pudo generar el QR de la mesa',
+          'No se pudo cargar el QR permanente de la mesa',
         ),
       );
     } finally {
@@ -355,7 +337,7 @@ export default function OpsTablesPanel({
 
     try {
       await navigator.clipboard.writeText(
-        qrContext.menuUrl,
+        qrContext.permanentUrl,
       );
 
       setQrLinkCopied(true);
@@ -369,6 +351,122 @@ export default function OpsTablesPanel({
         'No se pudo copiar el enlace. Puedes abrirlo y copiarlo desde el navegador.',
       );
     }
+  }
+
+  function printPermanentQr() {
+    if (!qrContext) {
+      return;
+    }
+
+    const qrNode =
+      document.getElementById(
+        'permanent-table-qr',
+      );
+
+    if (!qrNode) {
+      setError(
+        'No se pudo preparar el QR para impresión.',
+      );
+
+      return;
+    }
+
+    const printWindow =
+      window.open(
+        '',
+        '_blank',
+        'width=720,height=900',
+      );
+
+    if (!printWindow) {
+      setError(
+        'El navegador bloqueó la ventana de impresión. Habilita las ventanas emergentes e intenta nuevamente.',
+      );
+
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(
+      '<!doctype html><html><head><meta charset="utf-8"><title>QR permanente</title>' +
+        '<style>' +
+        'body{font-family:Arial,sans-serif;margin:0;padding:32px;color:#111;background:#fff}' +
+        'main{max-width:560px;margin:0 auto;text-align:center}' +
+        'h1{font-size:28px;margin:0 0 8px}' +
+        'p{font-size:15px;line-height:1.5;margin:8px 0}' +
+        '.qr{width:320px;max-width:100%;margin:28px auto;padding:24px;border:1px solid #ddd;border-radius:24px}' +
+        '.qr svg{width:100%;height:auto;display:block}' +
+        '.url{font-family:monospace;font-size:12px;word-break:break-all;margin-top:20px}' +
+        '@media print{body{padding:0}.qr{border-color:#bbb}}' +
+        '</style></head><body><main id="print-root"></main></body></html>',
+    );
+    printWindow.document.close();
+
+    const root =
+      printWindow.document.getElementById(
+        'print-root',
+      );
+
+    if (!root) {
+      printWindow.close();
+      setError(
+        'No se pudo preparar la vista de impresión.',
+      );
+
+      return;
+    }
+
+    const title =
+      printWindow.document.createElement('h1');
+
+    title.textContent =
+      `${qrContext.table.code} · ${qrContext.table.name}`;
+
+    const instruction =
+      printWindow.document.createElement('p');
+
+    instruction.textContent =
+      'Escanea este código para abrir el menú de esta mesa.';
+
+    const permanentLabel =
+      printWindow.document.createElement('p');
+
+    permanentLabel.textContent =
+      'QR físico permanente';
+
+    const qrWrapper =
+      printWindow.document.createElement('div');
+
+    qrWrapper.className = 'qr';
+    qrWrapper.innerHTML = qrNode.innerHTML;
+
+    const url =
+      printWindow.document.createElement('p');
+
+    url.className = 'url';
+    url.textContent = qrContext.permanentUrl;
+
+    root.append(
+      title,
+      permanentLabel,
+      instruction,
+      qrWrapper,
+      url,
+    );
+
+    printWindow.addEventListener(
+      'afterprint',
+      () => printWindow.close(),
+      { once: true },
+    );
+
+    window.setTimeout(
+      () => {
+        printWindow.focus();
+        printWindow.print();
+      },
+      250,
+    );
   }
 
   function requestOccupy(
@@ -893,8 +991,8 @@ export default function OpsTablesPanel({
                       >
                         {qrLoadingTableId ===
                         table.id
-                          ? 'Generando QR...'
-                          : 'Ver QR de mesa'}
+                          ? 'Cargando QR...'
+                          : 'Ver QR permanente'}
                       </button>
                     </article>
                   );
@@ -1099,7 +1197,7 @@ export default function OpsTablesPanel({
             <div className="flex items-start justify-between gap-4 border-b border-zinc-100 px-6 py-5">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
-                  QR contextual diario
+                  QR permanente
                 </p>
                 <h2
                   id="table-qr-title"
@@ -1128,20 +1226,19 @@ export default function OpsTablesPanel({
             <div className="space-y-4 px-6 py-5">
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-center">
                 <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">
-                  Válido hoy
+                  QR físico permanente
                 </p>
                 <p className="mt-1 text-sm font-semibold text-emerald-950">
-                  Hasta {formatQrExpiration(
-                    qrContext.expiresAt,
-                    qrContext.timeZone,
-                  )}
+                  Puedes imprimirlo y mantenerlo en la mesa. No vence cuando cambia la sesión.
                 </p>
               </div>
-
-              <div className="mx-auto w-full max-w-[300px] rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <div
+                id="permanent-table-qr"
+                className="mx-auto w-full max-w-[300px] rounded-3xl border border-zinc-200 bg-white p-5 shadow-sm"
+              >
                 <QRCode
-                  value={qrContext.menuUrl}
-                  title={`QR de ${qrContext.table.code}`}
+                  value={qrContext.permanentUrl}
+                  title={`QR permanente de ${qrContext.table.code}`}
                   size={256}
                   level="M"
                   viewBox="0 0 256 256"
@@ -1153,24 +1250,32 @@ export default function OpsTablesPanel({
                 />
               </div>
 
+              <button
+                type="button"
+                onClick={printPermanentQr}
+                className="w-full rounded-xl bg-zinc-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-zinc-800"
+              >
+                Imprimir QR
+              </button>
+
               <p className="text-center text-sm leading-6 text-zinc-600">
-                Al abrir este código, Flash Menu identifica automáticamente la mesa y vincula los nuevos pedidos a su sesión.
+                Al escanear este código, FastPay identifica automáticamente la mesa para realizar pedidos desde ella.
               </p>
 
-              {qrContext.menuUrl.includes(
-                '://localhost',
-              ) && (
-                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-                  Este enlace usa localhost. Por ahora pruébalo con “Abrir menú” en esta computadora; para escanearlo desde un teléfono configuraremos una dirección accesible en la red.
-                </div>
-              )}
-
+              <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+                <p className="font-bold">
+                  Independiente de pedidos y sesiones
+                </p>
+                <p className="mt-1 leading-5">
+                  Este QR identifica únicamente la mesa. Cada cliente conserva sus propios pedidos y el código sigue siendo válido cuando la mesa se libera y vuelve a ocuparse.
+                </p>
+              </div>
               <div className="rounded-xl bg-zinc-100 px-4 py-3">
                 <p className="text-xs font-bold uppercase tracking-wide text-zinc-500">
-                  Enlace del menú
+                  Enlace permanente
                 </p>
                 <p className="mt-2 break-all text-xs leading-5 text-zinc-700">
-                  {qrContext.menuUrl}
+                  {qrContext.permanentUrl}
                 </p>
               </div>
             </div>
@@ -1189,7 +1294,7 @@ export default function OpsTablesPanel({
               </button>
 
               <a
-                href={qrContext.menuUrl}
+                href={qrContext.permanentUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="rounded-xl bg-zinc-950 px-4 py-3 text-center text-sm font-bold text-white hover:bg-zinc-800"

@@ -2,16 +2,8 @@
   min-height: 100vh;
   padding: 32px;
   background:
-    radial-gradient(circle at top right, rgba(34, 197, 94, 0.12), transparent 30%),
-    #f5f7f8;
-  color: #17202a;
-}
-
-.hero,
-.mapCard,
-.boundaryCard {
-  max-width: 1280px;
-  margin: 0 auto;
+    linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+  color: #111827;
 }
 
 .hero {
@@ -19,165 +11,277 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 24px;
+  max-width: 1500px;
+  margin: 0 auto 20px;
 }
 
 .eyebrow {
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #16794a;
+  color: #475569;
 }
 
 .title {
   margin: 0;
-  font-size: clamp(30px, 5vw, 48px);
-  line-height: 1.05;
+  font-size: clamp(30px, 4vw, 48px);
+  line-height: 1;
 }
 
 .subtitle {
   max-width: 760px;
   margin: 14px 0 0;
-  line-height: 1.65;
-  color: #52606d;
+  line-height: 1.6;
+  color: #475569;
 }
 
 .badge,
 .scopePill {
   display: inline-flex;
   align-items: center;
+  border: 1px solid #cbd5e1;
   border-radius: 999px;
+  padding: 8px 12px;
+  background: #ffffff;
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   white-space: nowrap;
 }
 
-.badge {
-  padding: 10px 14px;
-  background: #e6f7ee;
-  color: #12633d;
-  border: 1px solid #b8e4ca;
+.accessCard,
+.summaryRow,
+.mapCard,
+.deliveryCard,
+.emptyState,
+.errorBox {
+  max-width: 1500px;
+  margin-left: auto;
+  margin-right: auto;
 }
 
-.mapCard,
-.boundaryCard {
-  border: 1px solid #dfe5e8;
-  border-radius: 20px;
+.accessCard {
+  display: grid;
+  grid-template-columns:
+    minmax(150px, 1fr)
+    minmax(150px, 1fr)
+    minmax(220px, 1.4fr)
+    auto;
+  gap: 12px;
+  align-items: end;
+  padding: 18px;
+  border: 1px solid #dbe3ec;
+  border-radius: 18px;
   background: #ffffff;
-  box-shadow: 0 18px 50px rgba(23, 32, 42, 0.08);
+  box-shadow: 0 8px 30px rgb(15 23 42 / 7%);
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.field input {
+  min-width: 0;
+  height: 42px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #111827;
+  outline: none;
+}
+
+.field input:focus {
+  border-color: #64748b;
+  box-shadow: 0 0 0 3px rgb(100 116 139 / 14%);
+}
+
+.primaryButton,
+.secondaryButton {
+  min-height: 42px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+.secondaryButton {
+  align-self: stretch;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.errorBox {
+  margin-top: 14px;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.summaryRow {
+  display: grid;
+  grid-template-columns: 1fr 2fr auto;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.summaryCard {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dbe3ec;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #ffffff;
+}
+
+.summaryCard span,
+.cardLabel {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.summaryCard strong {
+  font-size: 16px;
 }
 
 .mapCard {
+  margin-top: 14px;
   overflow: hidden;
+  border: 1px solid #dbe3ec;
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 8px 30px rgb(15 23 42 / 7%);
 }
 
 .mapHeader {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 20px;
-  padding: 20px 22px;
-  border-bottom: 1px solid #e7ecef;
+  gap: 18px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #e2e8f0;
 }
 
-.mapTitle,
-.boundaryTitle {
+.mapTitle {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .mapCaption {
-  margin: 6px 0 0;
-  color: #687782;
-  font-size: 14px;
+  margin: 7px 0 0;
+  color: #64748b;
 }
 
-.scopePill {
-  padding: 8px 12px;
-  background: #f1f4f5;
-  color: #56636d;
-}
-
-.mapFrame {
+.mapViewport {
   position: relative;
   min-height: 560px;
-  background: #dfe7ea;
+  background: #e2e8f0;
 }
 
 .mapCanvas {
+  width: 100%;
+  height: 560px;
+}
+
+.mapLoading {
   position: absolute;
   inset: 0;
-}
-
-.mapStatus {
-  position: absolute;
-  z-index: 2;
-  left: 16px;
-  top: 16px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 6px 20px rgba(23, 32, 42, 0.16);
-  font-size: 12px;
-  font-weight: 800;
-  color: #34424d;
-  backdrop-filter: blur(8px);
-}
-
-.statusDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: #d69e2e;
-}
-
-.mapStatus[data-map-state='ready'] .statusDot {
-  background: #1f9d61;
-}
-
-.mapStatus[data-map-state='unavailable'] .statusDot {
-  background: #c2413b;
-}
-
-.boundaryCard {
-  margin-top: 24px;
-  padding: 22px;
-}
-
-.boundaryTitle {
-  margin-bottom: 16px;
-}
-
-.boundaryGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  place-items: center;
+  pointer-events: none;
+  background: rgb(248 250 252 / 70%);
+  font-weight: 800;
+  color: #475569;
+}
+
+.driverMarker,
+.destinationMarker {
+  width: 22px;
+  height: 22px;
+  border: 3px solid #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgb(15 23 42 / 28%);
+}
+
+.driverMarker {
+  background: #2563eb;
+}
+
+.destinationMarker {
+  background: #dc2626;
+}
+
+.deliveryList {
+  display: grid;
+  grid-template-columns:
+    repeat(
+      auto-fit,
+      minmax(250px, 1fr)
+    );
+  gap: 12px;
+  max-width: 1500px;
+  margin: 14px auto 0;
+}
+
+.deliveryCard {
+  display: grid;
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
   gap: 14px;
-}
-
-.boundaryGrid > div {
   padding: 16px;
-  border-radius: 14px;
-  background: #f7f9fa;
-  border: 1px solid #e7ecef;
+  border: 1px solid #dbe3ec;
+  border-radius: 16px;
+  background: #ffffff;
 }
 
-.boundaryGrid p {
-  margin: 7px 0 0;
-  color: #667580;
-  line-height: 1.5;
-  font-size: 14px;
+.deliveryCard > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
 }
 
-@media (max-width: 760px) {
+.deliveryCard strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emptyState {
+  grid-column: 1 / -1;
+  border: 1px dashed #cbd5e1;
+  border-radius: 16px;
+  padding: 28px;
+  text-align: center;
+  color: #64748b;
+  background: #ffffff;
+}
+
+@media (max-width: 900px) {
   .shell {
-    padding: 20px 14px;
+    padding: 20px;
   }
 
   .hero,
@@ -185,11 +289,34 @@
     flex-direction: column;
   }
 
-  .boundaryGrid {
+  .accessCard {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .summaryRow {
     grid-template-columns: 1fr;
   }
 
-  .mapFrame {
+  .mapViewport,
+  .mapCanvas {
+    height: 480px;
     min-height: 480px;
+  }
+}
+
+@media (max-width: 620px) {
+  .shell {
+    padding: 14px;
+  }
+
+  .accessCard,
+  .deliveryCard {
+    grid-template-columns: 1fr;
+  }
+
+  .mapViewport,
+  .mapCanvas {
+    height: 420px;
+    min-height: 420px;
   }
 }

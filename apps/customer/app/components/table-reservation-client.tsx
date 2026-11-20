@@ -1,731 +1,163 @@
 "use client";
+import {useEffect,useMemo,useRef,useState} from "react";
+import {createTableReservation,getReservationAvailability,getTableReservationTracking,type ReservationAvailabilityResponse,type TableReservation} from "../../lib/flash-api";
+import CheckoutContact from "./checkout-contact";
+import {FlashApiError,getCustomerRecoveryProfile,registerCustomerRecovery,loginCustomerRecovery,updateCustomerRecoveryName,normalizeRecoveryContactPhone,recoveryAccessError,type CustomerRecoveryProfile} from "../../lib/flash-api";
+import styles from "./reservation-design.module.css";
 
-import { useEffect, useMemo, useState } from "react";
-
-import {
-  createTableReservation,
-  getReservationAvailability,
-  getTableReservationTracking,
-  type ReservationAvailabilityResponse,
-  type TableReservation,
-} from "../../lib/flash-api";
-
-interface TableReservationClientProps {
-  tenantCode: string;
-  branchCode: string;
-  timeZone: string;
-  onStartPreorder?: (reservation: TableReservation) => void;
+interface TableReservationClientProps {tenantCode:string;branchCode:string;timeZone:string;restaurantName?:string;branchName?:string;onStartPreorder?:(reservation:TableReservation)=>void;onProfileSaved?:(profile:CustomerRecoveryProfile)=>void;}
+type Step="welcome"|"schedule"|"table"|"contact"|"review"|"result";
+const steps:Step[]=["schedule","table","contact","review"];
+const titles:Record<Step,string>={welcome:"Reserva tu mesa",schedule:"Fecha y horario",table:"Zona y mesa",contact:"Tus datos",review:"Resumen de reserva",result:"Mi reserva"};
+const terminal=(status:string)=>["COMPLETED","CANCELLED","NO_SHOW"].includes(status);
+const labels:Record<string,string>={PENDING:"Pendiente de confirmación",CONFIRMED:"Confirmada",SEATED:"En el local",COMPLETED:"Completada",CANCELLED:"Cancelada",NO_SHOW:"No se presentó"};
+function localParts(date:Date,timeZone:string){const values=new Intl.DateTimeFormat("en-CA",{timeZone,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(date);const p=Object.fromEntries(values.map(v=>[v.type,v.value]));return {date:`${p.year}-${p.month}-${p.day}`,time:`${p.hour}:${p.minute}`};}
+export function reservationInstant(date:string,time:string,timeZone:string){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!/^\d{2}:\d{2}$/.test(time))throw Error("Selecciona una fecha y hora válidas.");
+ const wall=Date.parse(`${date}T${time}:00Z`);let stamp=wall;
+ for(let i=0;i<4;i++){const p=localParts(new Date(stamp),timeZone);const diff=wall-Date.parse(`${p.date}T${p.time}:00Z`);if(!diff)break;stamp+=diff;}
+ const check=localParts(new Date(stamp),timeZone);if(check.date!==date||check.time!==time)throw Error("Ese horario no existe en la zona horaria de la sucursal.");
+ return new Date(stamp).toISOString();
 }
+export default function TableReservationClient({tenantCode,branchCode,timeZone,restaurantName,branchName,onStartPreorder,onProfileSaved}:TableReservationClientProps){
+ const storageKey=`flashcommerce.tableReservation:${tenantCode}:${branchCode}`;
+ const [open,setOpen]=useState(false),[step,setStep]=useState<Step>("welcome");
+ const [date,setDate]=useState(""),[time,setTime]=useState(""),[duration,setDuration]=useState(90),[party,setParty]=useState(2);
+ const [availability,setAvailability]=useState<ReservationAvailabilityResponse|null>(null),[tableId,setTableId]=useState(""),[zone,setZone]=useState("");
+ const [name,setName]=useState(""),[phone,setPhone]=useState(""),[notes,setNotes]=useState("");
+ const [active,setActive]=useState<TableReservation|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
+ const [uncertain,setUncertain]=useState(false);
+ const dialog=useRef<HTMLDialogElement>(null),heading=useRef<HTMLHeadingElement>(null),flight=useRef(false),request=useRef(0),alive=useRef(true);
+ useEffect(()=>{alive.current=true;const initial=localParts(new Date(Math.ceil((Date.now()+90*60000)/900000)*900000),timeZone);setDate(initial.date);setTime(initial.time);
+ let disposed=false;let token:string|null=null;try{token=localStorage.getItem(storageKey);}catch{/* Optional browser storage. */}
+ if(token)void getTableReservationTracking(token).then(r=>{if(!disposed&&r.tenant===tenantCode&&r.branch===branchCode)setActive(r.reservation);}).catch(()=>{/* Keep access on temporary network failure. */});
+ return()=>{disposed=true;alive.current=false;request.current++;};},[storageKey,tenantCode,branchCode,timeZone]);
+ useEffect(()=>{if(!active||terminal(active.status))return;let disposed=false,polling=false;
+ const timer=setInterval(()=>{if(polling)return;polling=true;void getTableReservationTracking(active.trackingToken).then(r=>{if(!disposed&&r.tenant===tenantCode&&r.branch===branchCode)setActive(r.reservation);}).catch(()=>{}).finally(()=>{polling=false;});},5000);
+ return()=>{disposed=true;clearInterval(timer);};},[active?.trackingToken,active?.status,tenantCode,branchCode]);
+ useEffect(()=>{const el=dialog.current;if(!el)return;if(open&&!el.open)el.showModal();else if(!open&&el.open)el.close();},[open]);
+ useEffect(()=>{if(open){heading.current?.focus();dialog.current?.querySelector('[data-scroll-body]')?.scrollTo(0,0);}},[step,open]);
+ const [profile,setProfile]=useState<CustomerRecoveryProfile|null>(null),[pin,setPin]=useState("");
+ const [contactMode,setContactMode]=useState<"recover"|"register">("recover"),[editingContact,setEditingContact]=useState(false);
+ const [contactLoading,setContactLoading]=useState(false),[contactBusy,setContactBusy]=useState(false),[contactError,setContactError]=useState<string|null>(null);
+ const contactFlight=useRef(false),contactEdited=useRef(false);
+ const contactName=name.trim().replace(/\s+/g," "),contactPhone=normalizeRecoveryContactPhone(phone);
+ const samePhone=Boolean(profile&&profile.tenantCode===tenantCode&&profile.phone===contactPhone);
+ const nameValid=contactName.length>=2&&contactName.length<=120,phoneValid=/^[0-9]{7,15}$/.test(contactPhone);
+ const contactReady=phoneValid&&(samePhone?nameValid&&(!editingContact||/^[0-9]{6}$/.test(pin)):/^[0-9]{6}$/.test(pin)&&(contactMode==="recover"||nameValid));
+ const contactSaved=!editingContact&&contactReady&&samePhone&&profile?.fullName===contactName&&!contactBusy&&!contactLoading&&!contactError;
+ const contactEnabled=open&&step==="contact"&&!busy;
+ const contactKey=JSON.stringify([tenantCode,name,phone,pin,contactMode,editingContact,open,step]);
+ const contactVersion=useRef({key:contactKey,value:0});
+ if(contactVersion.current.key!==contactKey)contactVersion.current={key:contactKey,value:contactVersion.current.value+1};
+ const contactMessage=contactLoading?"Verificando tus datos guardados…":(contactMode==="register"||samePhone)&&!nameValid?"Completa tu nombre completo.":!phoneValid?"Ingresa un teléfono válido.":!contactReady?"Completa tu código de recuperación de 6 dígitos.":"Tus datos se guardarán automáticamente.";
+ useEffect(()=>{
+  if(!open)return;let disposed=false;setContactLoading(true);
+  void getCustomerRecoveryProfile(tenantCode).then(p=>{
+   if(disposed||p.tenantCode!==tenantCode)return;setProfile(p);setPin("");setContactError(null);
+   if(!contactEdited.current){setName(p.fullName);setPhone(p.phone);setEditingContact(!p.fullName);}
+  }).catch(()=>{if(!disposed)setProfile(null);})
+    .finally(()=>{if(!disposed)setContactLoading(false);});
+  return()=>{disposed=true;};
+ },[open,tenantCode]);
+ async function saveContact(){
+  if(contactFlight.current||contactLoading||!contactEnabled||!contactReady)return;
+  const version=contactVersion.current.value;
+  contactFlight.current=true;setContactBusy(true);setContactError(null);
+  try{
+   if(editingContact&&samePhone)await updateCustomerRecoveryName(tenantCode,contactName,contactPhone,pin);
+   else if(!samePhone&&contactMode==="recover")await loginCustomerRecovery(tenantCode,contactPhone,pin);
+   else if(!samePhone)await registerCustomerRecovery(tenantCode,contactName,contactPhone,pin);
+   const p=await getCustomerRecoveryProfile(tenantCode);
+   if(!alive.current)return;
+   if(version!==contactVersion.current.value)throw Error("Stale profile response");
+   if(p.tenantCode!==tenantCode||p.phone!==contactPhone||(editingContact&&p.fullName!==contactName))throw Error("Profile mismatch");
+   setProfile(p);setName(p.fullName);setPhone(p.phone);setPin("");setEditingContact(!p.fullName);onProfileSaved?.(p);
+  }catch(e){
+   if(!alive.current)return;
+   if(e instanceof FlashApiError&&e.status===401)setProfile(null);
+   setContactError(recoveryAccessError(e));
+  }finally{contactFlight.current=false;if(alive.current)setContactBusy(false);}
+ }
+ useEffect(()=>{
+  if(editingContact||!contactEnabled||!contactReady||contactSaved||contactBusy||contactLoading||contactError)return;
+  const timer=window.setTimeout(()=>void saveContact(),900);
+  return()=>window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+ },[editingContact,contactKey,contactEnabled,contactReady,contactSaved,contactBusy,contactLoading,contactError]);
 
-type ReservationView = "FORM" | "SUCCESS";
-
-function pad(value: number): string {
-  return String(value).padStart(2, "0");
-}
-
-function getInitialSchedule(): {
-  date: string;
-  time: string;
-} {
-  const value = new Date(Date.now() + 90 * 60 * 1000);
-
-  value.setMinutes(Math.ceil(value.getMinutes() / 15) * 15, 0, 0);
-
-  return {
-    date: `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`,
-    time: `${pad(value.getHours())}:${pad(value.getMinutes())}`,
+ // The dialog follows the visible viewport, not page scaling. Only its body scrolls.
+ useEffect(()=>{
+  if(!open)return;const el=dialog.current;if(!el)return;
+  const y=window.scrollY,x=window.scrollX;
+  const previous={overflow:document.body.style.overflow,position:document.body.style.position,top:document.body.style.top,width:document.body.style.width};
+  Object.assign(document.body.style,{overflow:"hidden",position:"fixed",top:`-${y}px`,width:"100%"});
+  const viewport=window.visualViewport;
+  const resize=()=>{if(viewport&&Math.abs(viewport.scale-1)>.01)return;el.style.setProperty("--reservation-visible-height",`${viewport?.height??window.innerHeight}px`);el.style.setProperty("--reservation-visible-top",`${viewport?.offsetTop??0}px`);};
+  const cancel=(event:Event)=>{if(event.cancelable)event.preventDefault();};
+  const touch=(event:TouchEvent)=>{if(event.touches.length>1)cancel(event);};
+  resize();viewport?.addEventListener("resize",resize);viewport?.addEventListener("scroll",resize);window.addEventListener("resize",resize);
+  for(const event of ["gesturestart","gesturechange","gestureend"])el.addEventListener(event,cancel,{capture:true,passive:false});
+  el.addEventListener("touchstart",touch,{capture:true,passive:false});el.addEventListener("touchmove",touch,{capture:true,passive:false});
+  return()=>{
+   viewport?.removeEventListener("resize",resize);viewport?.removeEventListener("scroll",resize);window.removeEventListener("resize",resize);
+   for(const event of ["gesturestart","gesturechange","gestureend"])el.removeEventListener(event,cancel,true);
+   el.removeEventListener("touchstart",touch,true);el.removeEventListener("touchmove",touch,true);
+   Object.assign(document.body.style,previous);window.scrollTo(x,y);
   };
-}
-
-function getStatusLabel(status: string): string {
-  switch (status) {
-    case "PENDING":
-      return "Pendiente de confirmación";
-    case "CONFIRMED":
-      return "Confirmada";
-    case "SEATED":
-      return "Clientes en la mesa";
-    case "COMPLETED":
-      return "Completada";
-    case "CANCELLED":
-      return "Cancelada";
-    case "NO_SHOW":
-      return "No se presentó";
-    default:
-      return status;
-  }
-}
-
-function getStatusClass(status: string): string {
-  if (status === "CONFIRMED" || status === "SEATED") {
-    return "bg-emerald-100 text-emerald-800";
-  }
-
-  if (status === "CANCELLED" || status === "NO_SHOW") {
-    return "bg-red-100 text-red-700";
-  }
-
-  if (status === "COMPLETED") {
-    return "bg-zinc-200 text-zinc-700";
-  }
-
-  return "bg-amber-100 text-amber-800";
-}
-
-function getPreorderStatusLabel(status: string): string {
-  switch (status) {
-    case "PENDING":
-      return "Recibido";
-    case "CONFIRMED":
-      return "Confirmado";
-    case "PREPARING":
-      return "En preparación";
-    case "READY":
-      return "Listo";
-    case "COMPLETED":
-      return "Entregado";
-    case "CANCELLED":
-      return "Cancelado";
-    default:
-      return status;
-  }
-}
-
-function isFinalReservationStatus(status: string): boolean {
-  return ["COMPLETED", "CANCELLED", "NO_SHOW"].includes(status);
-}
-
-function formatReservationDate(value: string, timeZone: string): string {
-  return new Date(value).toLocaleString("es-BO", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone,
-  });
-}
-
-export default function TableReservationClient({
-  tenantCode,
-  branchCode,
-  timeZone,
-  onStartPreorder,
-}: TableReservationClientProps) {
-  const storageKey = `flashcommerce.tableReservation:${tenantCode}:${branchCode}`;
-
-  const [modalOpen, setModalOpen] = useState(false);
-  const [view, setView] = useState<ReservationView>("FORM");
-  const [reservationDate, setReservationDate] = useState("");
-  const [reservationTime, setReservationTime] = useState("");
-  const [durationMinutes, setDurationMinutes] = useState(90);
-  const [partySize, setPartySize] = useState(2);
-  const [availability, setAvailability] =
-    useState<ReservationAvailabilityResponse | null>(null);
-  const [selectedTableId, setSelectedTableId] = useState("");
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [customerNotes, setCustomerNotes] = useState("");
-  const [activeReservation, setActiveReservation] =
-    useState<TableReservation | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const initialSchedule = getInitialSchedule();
-    setReservationDate(initialSchedule.date);
-    setReservationTime(initialSchedule.time);
-
-    const trackingToken = window.localStorage.getItem(storageKey);
-
-    if (!trackingToken) {
-      return;
-    }
-
-    void getTableReservationTracking(trackingToken)
-      .then((result) => {
-        setActiveReservation(result.reservation);
-      })
-      .catch(() => {
-        window.localStorage.removeItem(storageKey);
-      });
-  }, [storageKey]);
-
-  useEffect(() => {
-    const trackingToken = activeReservation?.trackingToken;
-
-    if (!trackingToken || isFinalReservationStatus(activeReservation.status)) {
-      return;
-    }
-
-    let disposed = false;
-
-    const intervalId = window.setInterval(() => {
-      void getTableReservationTracking(trackingToken)
-        .then((result) => {
-          if (!disposed) {
-            setActiveReservation(result.reservation);
-          }
-        })
-        .catch(() => {
-          // A transient network error must not interrupt automatic tracking.
-          // The manual refresh button remains available to surface errors.
-        });
-    }, 5_000);
-
-    return () => {
-      disposed = true;
-      window.clearInterval(intervalId);
-    };
-  }, [activeReservation?.status, activeReservation?.trackingToken]);
-
-  const selectedTable = useMemo(
-    () =>
-      availability?.tables.find((table) => table.id === selectedTableId) ??
-      null,
-    [availability, selectedTableId],
-  );
-
-  function resetAvailability() {
-    setAvailability(null);
-    setSelectedTableId("");
-    setError(null);
-  }
-
-  function getReservedFor(): string {
-    const value = new Date(`${reservationDate}T${reservationTime}:00`);
-
-    if (Number.isNaN(value.getTime())) {
-      throw new Error("Selecciona una fecha y hora válidas");
-    }
-
-    return value.toISOString();
-  }
-
-  async function loadAvailability() {
-    setBusy(true);
-    setError(null);
-    setSelectedTableId("");
-
-    try {
-      const result = await getReservationAvailability(
-        tenantCode,
-        branchCode,
-        getReservedFor(),
-        durationMinutes,
-        partySize,
-      );
-
-      setAvailability(result);
-    } catch (caught) {
-      setAvailability(null);
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "No se pudo consultar la disponibilidad",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function submitReservation() {
-    if (!selectedTable) {
-      setError("Selecciona una mesa disponible");
-      return;
-    }
-
-    if (customerName.trim().length < 2) {
-      setError("Ingresa el nombre de la persona responsable");
-      return;
-    }
-
-    if (customerPhone.trim().length < 6) {
-      setError("Ingresa un teléfono válido");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const result = await createTableReservation({
-        tenantCode,
-        branchCode,
-        tableId: selectedTable.id,
-        reservedFor: getReservedFor(),
-        durationMinutes,
-        partySize,
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim(),
-        customerNotes: customerNotes.trim() || undefined,
-      });
-
-      window.localStorage.setItem(storageKey, result.reservation.trackingToken);
-      setActiveReservation(result.reservation);
-      setView("SUCCESS");
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "No se pudo crear la reserva",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function refreshReservation() {
-    if (!activeReservation) {
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const result = await getTableReservationTracking(
-        activeReservation.trackingToken,
-      );
-      setActiveReservation(result.reservation);
-    } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "No se pudo actualizar la reserva",
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function openNewReservation() {
-    setView("FORM");
-    setModalOpen(true);
-    setError(null);
-  }
-
-  function openActiveReservation() {
-    setView("SUCCESS");
-    setModalOpen(true);
-    setError(null);
-  }
-
-  function startAnotherReservation() {
-    window.localStorage.removeItem(storageKey);
-    setActiveReservation(null);
-    setView("FORM");
-    setAvailability(null);
-    setSelectedTableId("");
-    setCustomerName("");
-    setCustomerPhone("");
-    setCustomerNotes("");
-    setError(null);
-  }
-
-  return (
-    <>
-      <div className="mt-5 flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={openNewReservation}
-          className="rounded-xl bg-zinc-950 px-5 py-3 text-sm font-bold text-white"
-        >
-          Reservar una mesa
-        </button>
-
-        {activeReservation && (
-          <button
-            type="button"
-            onClick={openActiveReservation}
-            className="rounded-xl border border-emerald-300 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-900"
-          >
-            Ver reserva {activeReservation.reservationCode}
-          </button>
-        )}
-      </div>
-
-      {modalOpen && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
-            <header className="sticky top-0 z-10 flex items-start justify-between border-b border-zinc-200 bg-white px-6 py-5">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500">
-                  Reserva de mesa
-                </p>
-                <h2 className="mt-1 text-2xl font-black">
-                  {view === "FORM"
-                    ? "Planifica tu visita"
-                    : "Detalle de la reserva"}
-                </h2>
-                <p className="mt-1 text-sm text-zinc-500">{timeZone}</p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-zinc-200 text-xl"
-                aria-label="Cerrar"
-              >
-                ×
-              </button>
-            </header>
-
-            {view === "FORM" ? (
-              <div className="space-y-6 p-6">
-                <section className="rounded-2xl border border-zinc-200 bg-zinc-50 p-5">
-                  <h3 className="font-black">Fecha, hora y grupo</h3>
-
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                    <label className="text-sm font-semibold">
-                      Fecha
-                      <input
-                        type="date"
-                        value={reservationDate}
-                        onChange={(event) => {
-                          setReservationDate(event.target.value);
-                          resetAvailability();
-                        }}
-                        className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-4 py-3"
-                      />
-                    </label>
-
-                    <label className="text-sm font-semibold">
-                      Hora
-                      <input
-                        type="time"
-                        step="900"
-                        value={reservationTime}
-                        onChange={(event) => {
-                          setReservationTime(event.target.value);
-                          resetAvailability();
-                        }}
-                        className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-4 py-3"
-                      />
-                    </label>
-
-                    <label className="text-sm font-semibold">
-                      Personas
-                      <input
-                        type="number"
-                        min="1"
-                        max="50"
-                        value={partySize}
-                        onChange={(event) => {
-                          setPartySize(Number(event.target.value));
-                          resetAvailability();
-                        }}
-                        className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-4 py-3"
-                      />
-                    </label>
-
-                    <label className="text-sm font-semibold">
-                      Duración estimada
-                      <select
-                        value={durationMinutes}
-                        onChange={(event) => {
-                          setDurationMinutes(Number(event.target.value));
-                          resetAvailability();
-                        }}
-                        className="mt-2 w-full rounded-xl border border-zinc-300 bg-white px-4 py-3"
-                      >
-                        <option value={60}>1 hora</option>
-                        <option value={90}>1 hora 30 min</option>
-                        <option value={120}>2 horas</option>
-                        <option value={150}>2 horas 30 min</option>
-                        <option value={180}>3 horas</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <button
-                    type="button"
-                    disabled={busy || !reservationDate || !reservationTime}
-                    onClick={() => void loadAvailability()}
-                    className="mt-5 w-full rounded-xl bg-zinc-950 px-5 py-3 font-bold text-white disabled:bg-zinc-300"
-                  >
-                    {busy ? "Consultando..." : "Buscar mesas disponibles"}
-                  </button>
-                </section>
-
-                {availability && (
-                  <section>
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <h3 className="font-black">Selecciona una mesa</h3>
-                        <p className="mt-1 text-sm text-zinc-500">
-                          {availability.available} de {availability.total}{" "}
-                          disponibles para este horario
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-emerald-100 px-3 py-1 text-sm font-bold text-emerald-800">
-                        {partySize} personas
-                      </span>
-                    </div>
-
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      {availability.tables.map((table) => {
-                        const selected = table.id === selectedTableId;
-
-                        return (
-                          <button
-                            key={table.id}
-                            type="button"
-                            disabled={!table.available}
-                            onClick={() => {
-                              setSelectedTableId(table.id);
-                              setError(null);
-                            }}
-                            className={`rounded-2xl border p-4 text-left transition ${
-                              selected
-                                ? "border-emerald-500 bg-emerald-50 ring-2 ring-emerald-100"
-                                : table.available
-                                  ? "border-zinc-200 bg-white hover:border-zinc-950"
-                                  : "cursor-not-allowed border-zinc-200 bg-zinc-100 opacity-55"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="text-lg font-black">
-                                  {table.code} · {table.name}
-                                </p>
-                                <p className="mt-1 text-sm text-zinc-500">
-                                  {table.zone || "Sin zona"} · Capacidad{" "}
-                                  {table.capacity}
-                                </p>
-                              </div>
-                              <span
-                                className={`rounded-full px-2 py-1 text-[10px] font-bold ${
-                                  table.available
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-zinc-200 text-zinc-600"
-                                }`}
-                              >
-                                {table.available
-                                  ? "DISPONIBLE"
-                                  : table.slotAvailability === "CAPACITY"
-                                    ? "CAPACIDAD"
-                                    : "RESERVADA"}
-                              </span>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </section>
-                )}
-
-                {selectedTable && (
-                  <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-                    <h3 className="font-black text-emerald-950">
-                      Datos de contacto
-                    </h3>
-                    <p className="mt-1 text-sm text-emerald-800">
-                      {selectedTable.code} · {selectedTable.name}
-                    </p>
-
-                    <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                      <label className="text-sm font-semibold">
-                        Nombre
-                        <input
-                          type="text"
-                          value={customerName}
-                          onChange={(event) =>
-                            setCustomerName(event.target.value)
-                          }
-                          placeholder="Nombre del responsable"
-                          className="mt-2 w-full rounded-xl border border-emerald-200 bg-white px-4 py-3"
-                        />
-                      </label>
-
-                      <label className="text-sm font-semibold">
-                        Teléfono
-                        <input
-                          type="tel"
-                          value={customerPhone}
-                          onChange={(event) =>
-                            setCustomerPhone(event.target.value)
-                          }
-                          placeholder="Ej.: 70000000"
-                          className="mt-2 w-full rounded-xl border border-emerald-200 bg-white px-4 py-3"
-                        />
-                      </label>
-                    </div>
-
-                    <label className="mt-4 block text-sm font-semibold">
-                      Nota opcional
-                      <textarea
-                        value={customerNotes}
-                        onChange={(event) =>
-                          setCustomerNotes(event.target.value)
-                        }
-                        placeholder="Cumpleaños, silla para bebé, indicaciones..."
-                        className="mt-2 min-h-24 w-full rounded-xl border border-emerald-200 bg-white px-4 py-3"
-                      />
-                    </label>
-
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void submitReservation()}
-                      className="mt-5 w-full rounded-xl bg-emerald-700 px-5 py-4 font-black text-white disabled:bg-zinc-300"
-                    >
-                      {busy
-                        ? "Reservando..."
-                        : "Confirmar solicitud de reserva"}
-                    </button>
-                  </section>
-                )}
-
-                {error && (
-                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                    {error}
-                  </div>
-                )}
-              </div>
-            ) : activeReservation ? (
-              <div className="p-6">
-                <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 text-center">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-200 text-2xl font-black text-emerald-900">
-                    ✓
-                  </div>
-                  <p className="mt-4 text-xs font-bold uppercase tracking-[0.2em] text-emerald-700">
-                    Código de reserva
-                  </p>
-                  <h3 className="mt-1 text-3xl font-black text-emerald-950">
-                    {activeReservation.reservationCode}
-                  </h3>
-                  <span
-                    className={`mt-4 inline-flex rounded-full px-3 py-1 text-sm font-bold ${getStatusClass(activeReservation.status)}`}
-                  >
-                    {getStatusLabel(activeReservation.status)}
-                  </span>
-                </div>
-
-                <div className="mt-5 space-y-3 rounded-2xl bg-zinc-50 p-5">
-                  <div className="flex justify-between gap-4">
-                    <span className="text-zinc-500">Mesa</span>
-                    <strong className="text-right">
-                      {activeReservation.table.code} ·{" "}
-                      {activeReservation.table.name}
-                    </strong>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <span className="text-zinc-500">Fecha</span>
-                    <strong className="text-right capitalize">
-                      {formatReservationDate(
-                        activeReservation.reservedFor,
-                        timeZone,
-                      )}
-                    </strong>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <span className="text-zinc-500">Personas</span>
-                    <strong>{activeReservation.partySize}</strong>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <span className="text-zinc-500">Responsable</span>
-                    <strong className="text-right">
-                      {activeReservation.customerName}
-                    </strong>
-                  </div>
-                </div>
-
-                {activeReservation.preorder ? (
-                  <div className="mt-5 rounded-2xl border border-sky-200 bg-sky-50 p-5">
-                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-sky-700">
-                      Pedido anticipado vinculado
-                    </p>
-                    <div className="mt-2 flex items-center justify-between gap-4">
-                      <div>
-                        <p className="text-lg font-black text-sky-950">
-                          Pedido #{activeReservation.preorder.orderNumber}
-                        </p>
-                        <p className="mt-1 text-sm text-sky-800">
-                          {activeReservation.preorder.currency}{" "}
-                          {activeReservation.preorder.total.toFixed(2)}
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-sky-800">
-                        {getPreorderStatusLabel(
-                          activeReservation.preorder.status,
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                ) : (
-                  onStartPreorder &&
-                  ["PENDING", "CONFIRMED"].includes(
-                    activeReservation.status,
-                  ) && (
-                    <div className="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-                      <p className="font-black text-emerald-950">
-                        ¿Quieres dejar listo tu pedido?
-                      </p>
-                      <p className="mt-1 text-sm text-emerald-800">
-                        Es opcional. Podrás elegir los productos ahora y el
-                        pedido quedará programado para la hora de tu reserva.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onStartPreorder(activeReservation);
-                          setModalOpen(false);
-                        }}
-                        className="mt-4 w-full rounded-xl bg-emerald-700 px-5 py-3 font-black text-white"
-                      >
-                        Agregar pedido anticipado
-                      </button>
-                    </div>
-                  )
-                )}
-
-                <p className="mt-5 text-center text-sm text-zinc-500">
-                  Conserva este código. El restaurante confirmará la reserva y
-                  el estado se actualizará automáticamente cada 5 segundos.
-                </p>
-
-                {error && (
-                  <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-                    {error}
-                  </div>
-                )}
-
-                <div className="mt-6 grid gap-3 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void refreshReservation()}
-                    className="rounded-xl border border-zinc-300 bg-white px-5 py-3 font-bold disabled:opacity-50"
-                  >
-                    {busy ? "Actualizando..." : "Actualizar estado"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setModalOpen(false)}
-                    className="rounded-xl bg-zinc-950 px-5 py-3 font-bold text-white"
-                  >
-                    Volver al menú
-                  </button>
-                </div>
-
-                {["COMPLETED", "CANCELLED", "NO_SHOW"].includes(
-                  activeReservation.status,
-                ) && (
-                  <button
-                    type="button"
-                    onClick={startAnotherReservation}
-                    className="mt-3 w-full rounded-xl px-5 py-3 text-sm font-bold text-zinc-600"
-                  >
-                    Crear una nueva reserva
-                  </button>
-                )}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      )}
-    </>
-  );
+ },[open]);
+
+ const selected=availability?.tables.find(t=>t.id===tableId&&t.available)||null;
+ const zones=useMemo(()=>Array.from(new Set((availability?.tables||[]).filter(t=>t.available).map(t=>t.zone||"Salón"))),[availability]);
+ const today=localParts(new Date(),timeZone).date;
+ const dates=Array.from({length:7},(_,i)=>{const value=new Date(`${today}T12:00:00Z`);value.setUTCDate(value.getUTCDate()+i);return value.toISOString().slice(0,10);});
+ const dateLabel=(value:string)=>new Intl.DateTimeFormat("es-BO",{weekday:"short",day:"numeric",month:"short",timeZone:"UTC"}).format(new Date(`${value}T12:00:00Z`));
+ const format=(value:string)=>new Date(value).toLocaleString("es-BO",{timeZone,day:"numeric",month:"long",hour:"2-digit",minute:"2-digit",hour12:false});
+ const displayName=restaurantName||tenantCode,displayBranch=branchName||branchCode;
+ function reset(){request.current++;setAvailability(null);setTableId("");setZone("");setError("");}
+ function close(){if(flight.current||contactFlight.current)return;setOpen(false);}
+ function contactValid(){if(contactSaved)return true;setError("Completa tus datos y espera a que se confirme el guardado automático.");return false;} async function load(){if(flight.current)return;flight.current=true;setBusy(true);setError("");const seq=++request.current;
+ try{const when=reservationInstant(date,time,timeZone);if(Date.parse(when)<=Date.now())throw Error("Elige una fecha y hora futuras.");const result=await getReservationAvailability(tenantCode,branchCode,when,duration,party);
+ if(seq!==request.current||!alive.current)return;if(result.tenant!==tenantCode||result.branch!==branchCode)throw Error("No pudimos validar la sucursal.");setAvailability(result);setTableId("");setZone("");setStep("table");
+ }catch(e){if(alive.current)setError(e instanceof Error?e.message:"No pudimos consultar las mesas. Intenta otra hora.");}finally{flight.current=false;if(alive.current)setBusy(false);}}
+ async function confirm(){if(flight.current||contactFlight.current||uncertain)return;if(!selected){setError("Selecciona una mesa disponible.");setStep("table");return;}if(!contactValid()){setStep("contact");return;}
+ flight.current=true;setBusy(true);setError("");let submitted=false;
+ try{let verified:CustomerRecoveryProfile;
+ try{verified=await getCustomerRecoveryProfile(tenantCode);if(verified.tenantCode!==tenantCode||verified.phone!==contactPhone||verified.fullName!==contactName)throw Error("Profile mismatch");}
+ catch(e){setProfile(null);setContactError(recoveryAccessError(e));setStep("contact");throw Error("Verifica tus datos de recuperación antes de confirmar la reserva.");}
+ const when=reservationInstant(date,time,timeZone);const latest=await getReservationAvailability(tenantCode,branchCode,when,duration,party);
+ if(latest.tenant!==tenantCode||latest.branch!==branchCode)throw Error("No pudimos validar la sucursal.");setAvailability(latest);
+ if(!latest.tables.some(t=>t.id===tableId&&t.available)){setTableId("");setStep("table");throw Error("La mesa ya no está disponible. Elige otra mesa u otro horario.");}
+ submitted=true;const result=await createTableReservation({tenantCode,branchCode,tableId,reservedFor:when,durationMinutes:duration,partySize:party,customerName:contactName,customerPhone:contactPhone,customerNotes:notes.trim()||undefined});
+ if(result.tenant!==tenantCode||result.branch!==branchCode)throw Error("No pudimos validar el resultado de la reserva.");
+ setActive(result.reservation);setStep("result");try{localStorage.setItem(storageKey,result.reservation.trackingToken);}catch{setError("Conserva el código de tu reserva; este navegador no permite guardar el acceso.");}
+ }catch(e){if(submitted){setUncertain(true);setError("No pudimos confirmar el resultado. Consulta con el restaurante antes de volver a reservar para evitar duplicados.");}else setError(e instanceof Error?e.message:"No pudimos comprobar la disponibilidad.");}finally{flight.current=false;if(alive.current)setBusy(false);}}
+ function next(){if(contactFlight.current)return;setError("");if(step==="welcome")setStep("schedule");else if(step==="schedule")void load();else if(step==="table"){if(selected)setStep("contact");}else if(step==="contact"){if(contactValid())setStep("review");}else if(step==="review")void confirm();}
+ function back(){if(busy||contactBusy)return;setError("");if(step==="welcome"||step==="result")close();else {const n=steps.indexOf(step);setStep(n>0?steps[n-1]:"welcome");}}
+ const validResult=active&&["CONFIRMED","SEATED"].includes(active.status);
+ return <>
+  <div className={styles.entry}><button type="button" className={styles.primary} onClick={()=>{setOpen(true);setError("");}}>Reservar una mesa</button>{active&&<button type="button" className={styles.secondary} onClick={()=>{setStep("result");setOpen(true);}}>Ver mi reserva</button>}</div>
+  <dialog ref={dialog} className={styles.dialog} aria-labelledby="reservation-title" onCancel={e=>{e.preventDefault();close();}} onClose={()=>setOpen(false)}>
+   <div className={styles.frame}>
+    <header className={styles.header}><button type="button" className={styles.iconButton} aria-label="Volver" disabled={busy||contactBusy} onClick={back}>←</button><h2 ref={heading} tabIndex={-1} id="reservation-title">{titles[step]}</h2><button type="button" className={styles.iconButton} aria-label="Cerrar reservas" disabled={busy||contactBusy} onClick={close}>×</button></header>
+    {steps.includes(step)&&<div className={styles.progress} aria-label={`Paso ${steps.indexOf(step)+1} de 4`}>{steps.map((s,i)=><span key={s} data-active={i<=steps.indexOf(step)}/>)}</div>}
+    <fieldset className={styles.body} data-scroll-body disabled={busy||contactBusy}>
+     {step!=="welcome"&&<p className={styles.branchLine}>{displayName} · {displayBranch}</p>}
+     {step==="welcome"&&<><div className={styles.hero}>{tenantCode==="POLLO001"&&<img src="/images/menu/pollo-broaster-v2.webp" alt="Pollo para disfrutar en el restaurante"/>}<div><span>BUENA COMIDA, MEJORES MOMENTOS</span><h3>Tu próxima visita<br/>empieza aquí.</h3></div></div><div className={styles.branchCard}>{tenantCode==="POLLO001"&&<img src="/images/menu/mr-pollo-logo-v1.png" alt="Mr. Pollo"/>}<h3>{displayName}</h3><p>{displayBranch}</p><span className={styles.tag}>Sucursal de este menú</span></div><p className={styles.muted}>Elige la fecha, consulta las mesas disponibles y envía tu reserva en pocos pasos.</p></>}
+     {step==="schedule"&&<><h3>¿Cuántas personas?</h3><div className={styles.stepper}><button aria-label="Quitar una persona" disabled={party<=1||busy} onClick={()=>{setParty(p=>p-1);reset();}}>−</button><output aria-live="polite">{party}</output><button aria-label="Agregar una persona" disabled={party>=50||busy} onClick={()=>{setParty(p=>p+1);reset();}}>+</button></div><h3>Selecciona la fecha</h3><div className={styles.dateStrip}>{dates.map(d=><button key={d} disabled={busy} aria-pressed={date===d} onClick={()=>{setDate(d);reset();}}>{dateLabel(d)}</button>)}</div><label className={styles.field}>Otra fecha<input type="date" value={date} min={today} disabled={busy} onChange={e=>{setDate(e.target.value);reset();}}/></label><div className={styles.columns}><label className={styles.field}>Horario<input type="time" step="900" value={time} disabled={busy} onChange={e=>{setTime(e.target.value);reset();}}/></label><label className={styles.field}>Duración<select value={duration} disabled={busy} onChange={e=>{setDuration(Number(e.target.value));reset();}}>{[60,90,120,150,180].map(n=><option key={n} value={n}>{n} minutos</option>)}</select></label></div><p className={styles.info}>Hora local de la sucursal. Consultaremos disponibilidad para {party} {party===1?"persona":"personas"} durante {duration} minutos.</p></>}
+     {step==="table"&&<><h3>Elige dónde disfrutar</h3><p className={styles.muted}>{availability?.available||0} mesas disponibles para tu grupo.</p><div className={styles.zones}><button aria-pressed={!zone} onClick={()=>setZone("")}>Todas las zonas</button>{zones.map(z=><button key={z} aria-pressed={zone===z} onClick={()=>{setZone(z);setTableId("");}}>{z}</button>)}</div><div className={styles.tables}>{availability?.tables.filter(t=>!zone||(t.zone||"Salón")===zone).map(t=><button key={t.id} className={styles.tableCard} disabled={!t.available} aria-pressed={tableId===t.id} onClick={()=>{setTableId(t.id);setError("");}}><span className={styles.tableIcon} aria-hidden="true">▤</span><strong>{t.name}</strong><span>{t.zone||"Salón"} · Hasta {t.capacity} personas</span><small>{!t.available?(t.slotAvailability==="CAPACITY"?"Capacidad insuficiente":"No disponible"):tableId===t.id?"✓ Seleccionada":"Disponible"}</small></button>)}</div>{!availability?.available&&<div className={styles.info}><p>No hay mesas disponibles para ese horario.</p><button className={styles.secondary} onClick={()=>setStep("schedule")}>Elegir otro horario</button></div>}<p className={styles.info}>La disponibilidad se comprueba otra vez antes de registrar tu reserva.</p></>}
+     {step==="contact"&&<><CheckoutContact name={name} phone={phone} pin={pin}
+ mode={contactMode} onMode={v=>{contactEdited.current=true;setContactMode(v);setName("");setPin("");setContactError(null);setEditingContact(false);}}
+ editing={editingContact} onEdit={()=>{setEditingContact(true);setPin("");setContactError(null);}} onCancelEdit={()=>{setName(profile?.fullName??"");setEditingContact(false);setPin("");setContactError(null);}} onSaveEdit={()=>void saveContact()} onName={v=>{contactEdited.current=true;setName(v);}} onPhone={v=>{contactEdited.current=true;if(profile){setName("");setProfile(null);setEditingContact(false);}setPhone(v);setPin("");}} onPin={setPin}
+ disabled={busy||contactBusy||contactLoading} saved={contactSaved} samePhone={samePhone} saving={contactBusy} error={contactError}
+ onRetry={()=>void saveContact()} retryDisabled={!contactReady||contactLoading} pending={!editingContact&&contactReady&&!contactSaved&&!contactBusy&&!contactLoading&&!contactError} message={contactMessage}
+ savedHint="Recuperación activada · Tus datos también sirven para hacer pedidos." namePlaceholder="¿A nombre de quién reservamos?"/><label className={styles.field}>Comentarios (opcional)<textarea maxLength={200} placeholder="Celebración, silla para bebé o alguna indicación…" value={notes} onChange={e=>setNotes(e.target.value)}/><small className={styles.counter}>{notes.length}/200</small></label></>}
+     {step==="review"&&<><h3>Todo listo para tu visita</h3><p className={styles.muted}>Revisa los datos antes de enviar tu solicitud.</p><div className={styles.summary}><button onClick={()=>setStep("schedule")}><span>Fecha y horario</span><strong>{dateLabel(date)} · {time}</strong><small>{duration} minutos · {party} personas · Editar</small></button><button onClick={()=>setStep("table")}><span>Zona y mesa</span><strong>{selected?.zone||"Salón"} · {selected?.name}</strong><small>Editar</small></button><button onClick={()=>setStep("contact")}><span>A nombre de</span><strong>{name}</strong><small>{phone} · Editar</small></button>{notes&&<p><span>Comentarios</span><strong>{notes}</strong></p>}</div><p className={styles.info}>El restaurante revisará tu solicitud. Podrás consultar su estado en «Ver mi reserva».</p></>}
+     {step==="result"&&active&&<><div className={styles.result} data-success={!!validResult}><div className={styles.resultIcon} aria-hidden="true">{validResult?"✓":active.status==="PENDING"?"◷":"•"}</div><h3>{validResult?"¡Reserva confirmada!":active.status==="PENDING"?"¡Solicitud recibida!":labels[active.status]}</h3><p>{active.status==="PENDING"?"Esperamos la confirmación del restaurante.":validResult?"Te esperamos para disfrutar.":"Consulta los detalles de tu reserva."}</p></div><div className={styles.code}><span>Código de reserva</span><strong>{active.reservationCode}</strong></div><dl className={styles.details}><div><dt>Estado</dt><dd>{labels[active.status]}</dd></div><div><dt>Fecha y hora</dt><dd>{format(active.reservedFor)}</dd></div><div><dt>Duración</dt><dd>{active.durationMinutes} minutos</dd></div><div><dt>Personas</dt><dd>{active.partySize}</dd></div><div><dt>Mesa</dt><dd>{active.table.name} · {active.table.zone||"Salón"}</dd></div><div><dt>Responsable</dt><dd>{active.customerName}</dd></div></dl><section className={styles.whatsappNotice} aria-label="Información de WhatsApp"><div><h3>Tus datos por WhatsApp</h3><span>Pendiente de habilitar</span></div><p>Cuando habilitemos el servicio, el envío incluirá:</p><ul><li><strong>Enlace del pedido</strong><small>{active.preorder?"Tu pedido ya está vinculado a esta reserva.":"Disponible cuando agregues un pedido a tu reserva."}</small></li><li><strong>Código de recuperación</strong><small>El código que elegiste al guardar tus datos.</small></li><li><strong>Código de reserva</strong><small>{active.reservationCode}</small></li></ul><p className={styles.whatsappPending}>Por ahora no se envían mensajes automáticos. Conserva tu código y consulta «Ver mi reserva».</p></section>{active.preorder?<p className={styles.info}>Pedido anticipado #{active.preorder.orderNumber} · {active.preorder.currency} {active.preorder.total.toFixed(2)}</p>:onStartPreorder&&["PENDING","CONFIRMED"].includes(active.status)&&<div className={styles.preorder}><h3>¿Quieres pedir por adelantado?</h3><p>Es opcional. Tu pedido quedará vinculado a esta reserva.</p><button className={styles.secondary} onClick={()=>{onStartPreorder(active);setOpen(false);}}>Agregar pedido ahora</button></div>}<p className={styles.muted}>Conserva tu código. El estado se actualiza automáticamente.</p></>}
+     {error&&<p className={styles.error} role="alert">{error}</p>}
+    </fieldset>
+    <footer className={styles.footer}>{step==="result"?<><button className={styles.primary} onClick={close}>Volver al menú</button>{active&&terminal(active.status)&&<button className={styles.secondary} onClick={()=>{setStep("welcome");reset();setUncertain(false);}}>Crear otra reserva</button>}</>:<button className={styles.primary} disabled={busy||contactBusy||uncertain||((step==="contact"||step==="review")&&!contactSaved)||(step==="table"&&!selected)||(step==="schedule"&&(!date||!time))} onClick={next}>{contactBusy?"Guardando tus datos…":busy?(step==="review"?"Confirmando…":"Consultando mesas…"):step==="welcome"?"Reservar ahora →":step==="review"?"Confirmar reserva":"Continuar →"}</button>}</footer>
+   </div>
+  </dialog>
+ </>;
 }

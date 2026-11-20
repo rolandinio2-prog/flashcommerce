@@ -24,3 +24,16 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ENTRY04C: the Customer menu owns page gestures; map SDKs keep map zoom. */
+html[data-customer-page-zoom="fixed"], html[data-customer-page-zoom="fixed"] body { touch-action: pan-x pan-y; }
+@media (pointer: coarse) {
+  html[data-customer-page-zoom="fixed"] input,
+  html[data-customer-page-zoom="fixed"] select,
+  html[data-customer-page-zoom="fixed"] textarea { font-size: max(1rem, 16px); }
+}
+
+/* ENTRY04F: apply before hydration, including modal content in the top layer. */
+html:has([data-customer-order-page="true"]), html:has([data-customer-order-page="true"]) body, [data-customer-order-page="true"] { touch-action: pan-x pan-y; }
+[data-customer-order-page="true"] button, [data-customer-order-page="true"] a { touch-action: pan-x pan-y; }
+@media (pointer:coarse) { [data-customer-order-page="true"] input, [data-customer-order-page="true"] select, [data-customer-order-page="true"] textarea { font-size: max(1rem,16px); } }

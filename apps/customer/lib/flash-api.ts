@@ -5,6 +5,8 @@ export interface FlashCartProduct {
 }
 
 export interface FlashCartItem {
+  includedQuantity?: number;
+  riceChoice?: 'WHITE' | 'CHAUFA' | '';
   product: FlashCartProduct;
   quantity: number;
   unitPrice: number;
@@ -32,6 +34,7 @@ export interface FlashCart {
   items: FlashCartItem[];
 
   summary: {
+    sauces?: { selected: number; includedLimit: number; included: number; extra: number; extraTotal: number; missing: number; discountTotal: number };
     totalItems: number;
     total: number;
   };
@@ -79,6 +82,126 @@ export type OrderPaymentStatus =
   | "REFUNDED"
   | "REVIEW_REQUIRED";
 
+export type StaffRole =
+  | "ADMIN"
+  | "MANAGER"
+  | "CASHIER"
+  | "KITCHEN"
+  | "WAITER";
+
+export interface StaffSessionUser {
+  sessionId: string;
+  userId: string;
+  tenantId: string;
+  tenantCode: string;
+  branchId: string;
+  branchCode: string;
+  userCode: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  role: StaffRole;
+  passwordChangeRequired: boolean;
+  expiresAt: string;
+}
+
+export interface StaffUserSummary {
+  id: string;
+  userCode: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  identityDocument: string | null;
+  phone: string | null;
+  email: string | null;
+  role: StaffRole;
+  status: "ACTIVE" | "INACTIVE";
+  createdAt: string;
+  lastLoginAt: string | null;
+  passwordChangeRequired: boolean;
+}
+
+export interface DeliveryAdminDriverSummary {
+  id: string;
+  code: string;
+  displayName: string;
+  firstName: string | null;
+  lastName: string | null;
+  identityDocument: string | null;
+  phone: string;
+  email: string | null;
+  vehiclePlate: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  activeAssignments: number;
+  passwordConfigured: boolean;
+  passwordChangeRequired: boolean;
+  sessionActive: boolean;
+  createdAt: string;
+}
+
+export interface CreatedDeliveryDriverCredentials {
+  driver: DeliveryAdminDriverSummary;
+  credentials: {
+    driverCode: string;
+    temporaryPassword: string;
+  };
+}
+
+export type StaffTrackingDeliveryStatus =
+  | "PICKED_UP"
+  | "EN_ROUTE"
+  | "ARRIVED"
+  | "DELIVERED";
+
+export interface StaffTrackingDelivery {
+  id: string;
+  trackingToken: string;
+  status: StaffTrackingDeliveryStatus;
+  order: {
+    id: string;
+    orderNumber: string;
+    status: FlashOrderStatus;
+    paymentStatus: OrderPaymentStatus;
+    currency: string;
+    total: number;
+  };
+  recipient: { name: string; phone: string };
+  destination: { address: string; reference: string | null };
+  quote: {
+    deliveryFee: number;
+    distanceMeters: number | null;
+    eta: { minMinutes: number | null; maxMinutes: number | null };
+  };
+  assignment: {
+    id: string;
+    number: number | null;
+    status: string | null;
+    assignedAt: string | null;
+    acceptedAt: string | null;
+    completedAt: string | null;
+    driver: { id: string; code: string | null; name: string | null } | null;
+  } | null;
+  timeline: {
+    pickedUpAt: string | null;
+    enRouteAt: string | null;
+    arrivedAt: string | null;
+    deliveredAt: string | null;
+  };
+  latestGps: { capturedAt: string | null; receivedAt: string | null } | null;
+  podVerified: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StaffTrackingResponse {
+  tenant: { id: string; code: string };
+  branch: { id: string; code: string };
+  generatedAt: string;
+  summary: { active: number; delivered: number };
+  active: StaffTrackingDelivery[];
+  delivered: StaffTrackingDelivery[];
+}
+
 export type OrderOrigin =
   | "LEGACY"
   | "PUBLIC_MENU"
@@ -113,12 +236,15 @@ export interface FlashOrderFulfillment {
 }
 
 export interface FlashOrderFulfillmentInput {
+  requireRecoveryProfile?: boolean;
+  deliveryQuoteToken?: string;
   scheduledFor?: string;
   customerName?: string;
   customerPhone?: string;
   tableCode?: string;
   tableContextToken?: string;
   reservationTrackingToken?: string;
+  additionalToTrackingToken?: string;
   deliveryAddress?: string;
   deliveryLatitude?: number;
   deliveryLongitude?: number;
@@ -156,6 +282,7 @@ export interface DiningTableContextResponse {
   timeZone: string;
   validOn: string;
   expiresAt: string;
+  sessionBound: boolean;
   table: DiningTable;
 }
 
@@ -163,6 +290,7 @@ export interface CreatedOrder {
   id: string;
   orderNumber: string;
   trackingToken: string;
+  orderGroup: string | null;
   orderType: FlashOrderType;
   status: FlashOrderStatus;
   paymentStatus: OrderPaymentStatus;
@@ -170,6 +298,14 @@ export interface CreatedOrder {
   currency: string;
 
   fulfillment: FlashOrderFulfillment;
+
+  deliveryRelationship:
+    | {
+        mode:
+          | "JOINED_EXISTING"
+          | "SEPARATE_DELIVERY";
+      }
+    | null;
 
   reservation: {
     id: string;
@@ -222,9 +358,23 @@ export interface CreatedOrder {
 }
 
 export interface PublicDeliveryLocation {
+  routeIdentity?: string | null;
+  routeStatus?: 'READY' | 'UNAVAILABLE' | 'MISSING_ORIGIN' | 'HIDDEN';
+  branchOrigin?: {name: string; latitude: number; longitude: number} | null;
+  order: {
+    number: string;
+    status: string;
+    paymentStatus: string;
+  };
+
   delivery: {
     status: string;
   };
+
+  destination: {
+    latitude: number;
+    longitude: number;
+  } | null;
 
   location: {
     latitude: number;
@@ -234,20 +384,67 @@ export interface PublicDeliveryLocation {
     speedMps: number | null;
     capturedAt: string;
   } | null;
+
+  route: {
+    distanceMeters: number;
+    durationSeconds: number;
+    encodedPolyline: string;
+  } | null;
 }
 
 function getApiUrl(): string {
-  const apiUrl = process.env.NEXT_PUBLIC_FLASH_API_URL;
-
-  if (!apiUrl) {
-    throw new Error("NEXT_PUBLIC_FLASH_API_URL is not configured");
+  if (typeof window !== "undefined") {
+    return "";
   }
 
-  return apiUrl;
+  const apiUrl =
+    process.env.FLASH_API_INTERNAL_URL?.trim() ||
+    process.env.FLASH_API_URL?.trim();
+
+  if (!apiUrl) {
+    throw new Error(
+      "FLASH_API_INTERNAL_URL or FLASH_API_URL is not configured",
+    );
+  }
+
+  return apiUrl.replace(/\/+$/, "");
+}
+
+export class FlashApiError extends Error {
+  constructor(message: string, public status: number, public retryAfterSeconds: number | null) { super(message); this.name = 'FlashApiError'; }
+}
+
+export function normalizeRecoveryContactPhone(value: string): string {
+  return value.replace(/\D/g, '').replace(/^(?:00591|591)([67]\d{7})$/, '$1');
+}
+
+export function recoveryAccessError(error: unknown): string {
+  if (error instanceof FlashApiError) {
+    if (error.status === 429) return error.retryAfterSeconds
+      ? 'Demasiados intentos. Espera ' + Math.ceil(error.retryAfterSeconds / 60) + ' minuto(s) antes de intentar de nuevo.'
+      : 'Demasiados intentos. Espera unos minutos antes de intentar de nuevo.';
+    if (error.status === 401) return 'Verifica tu teléfono y código de recuperación. Si ya te registraste, usa tu código actual. Si la sesión no se conserva, abre FastPay en Safari o Chrome.';
+    if (error.status === 400) return 'Revisa tu nombre, teléfono y código de 6 dígitos.';
+    if (error.status === 409) return 'Esta cuenta necesita revisión. Solicita ayuda al comercio.';
+  }
+  return 'No pudimos verificar el acceso en este momento. Comprueba tu conexión. Tus pedidos existentes se conservan.';
+}
+
+export interface CustomerRecoveryProfile { fullName: string; phone: string; tenantCode: string; }
+export function getCustomerRecoveryProfile(tenantCode: string) {
+  return apiRequest<CustomerRecoveryProfile>('/api/v1/orders/recovery/profile?tenant=' + encodeURIComponent(tenantCode), {cache: 'no-store'});
+}
+export function registerCustomerRecovery(tenantCode: string, fullName: string, phone: string, pin?: string) {
+  return apiRequest<{authenticated: boolean}>('/api/v1/orders/recovery/register', {method:'POST', body:JSON.stringify({tenantCode,fullName,phone,pin})});
+}
+
+export function updateCustomerRecoveryName(tenantCode: string, fullName: string, phone: string, pin: string) {
+  return apiRequest<{authenticated: boolean}>('/api/v1/orders/recovery/profile/name', {method:'POST', body:JSON.stringify({tenantCode,fullName,phone,pin})});
 }
 
 async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiUrl()}${path}`, {
+    credentials: "same-origin",
     ...options,
 
     headers: {
@@ -258,9 +455,11 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let message = `Flash API error: ${response.status}`;
+    let retryAfterSeconds = Number(response.headers.get("Retry-After")) || null;
 
     try {
       const error = await response.json();
+      if (Number.isFinite(error?.retryAfterSeconds) && error.retryAfterSeconds > 0) retryAfterSeconds = error.retryAfterSeconds;
 
       if (typeof error?.message === "string") {
         message = error.message;
@@ -269,7 +468,7 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
       // Conservamos el mensaje HTTP.
     }
 
-    throw new Error(message);
+    throw new FlashApiError(message, response.status, retryAfterSeconds);
   }
 
   if (response.status === 204) {
@@ -307,6 +506,7 @@ export function addCartItem(
   cartToken: string,
   productId: string,
   quantity = 1,
+  riceChoice?: 'WHITE' | 'CHAUFA' | '',
 ): Promise<CartMutationItem> {
   return apiRequest<CartMutationItem>(`/api/v1/carts/${cartToken}/items`, {
     method: "POST",
@@ -314,6 +514,7 @@ export function addCartItem(
     body: JSON.stringify({
       productId,
       quantity,
+      riceChoice,
     }),
   });
 }
@@ -322,6 +523,7 @@ export function updateCartItem(
   cartToken: string,
   productId: string,
   quantity: number,
+  riceChoice?: 'WHITE' | 'CHAUFA' | '',
 ): Promise<CartMutationItem> {
   return apiRequest<CartMutationItem>(
     `/api/v1/carts/${cartToken}/items/${productId}`,
@@ -330,6 +532,7 @@ export function updateCartItem(
 
       body: JSON.stringify({
         quantity,
+        riceChoice,
       }),
     },
   );
@@ -338,6 +541,7 @@ export function updateCartItem(
 export function removeCartItem(
   cartToken: string,
   productId: string,
+  riceChoice?: 'WHITE' | 'CHAUFA' | '',
 ): Promise<{
   removed: boolean;
   productId: string;
@@ -345,7 +549,7 @@ export function removeCartItem(
   return apiRequest<{
     removed: boolean;
     productId: string;
-  }>(`/api/v1/carts/${cartToken}/items/${productId}`, {
+  }>(`/api/v1/carts/${cartToken}/items/${productId}?riceChoice=${encodeURIComponent(riceChoice ?? "")}`, {
     method: "DELETE",
   });
 }
@@ -362,6 +566,8 @@ export interface DeliveryAddressSuggestion {
 }
 
 export interface DeliveryAddressLocation {
+  requiresMapConfirmation?: boolean;
+  selectedOnMap?: boolean;
   placeId: string;
   formattedAddress: string;
 
@@ -387,6 +593,17 @@ export interface DeliveryAddressGeocodeResponse {
   tenant: string;
   branch: string;
   location: DeliveryAddressLocation | null;
+}
+
+export function getDeliveryMapContext(tenantCode: string, branchCode: string, signal?: AbortSignal) {
+  return apiRequest<{ tenant: string; branch: string; center: { latitude: number; longitude: number } | null }>('/api/v1/delivery/address/map-context', {
+    method: 'POST', signal, body: JSON.stringify({ tenantCode, branchCode }),
+  });
+}
+export function reverseDeliveryAddress(tenantCode: string, branchCode: string, point: { latitude: number; longitude: number }, signal?: AbortSignal) {
+  return apiRequest<DeliveryAddressGeocodeResponse>('/api/v1/delivery/address/reverse', {
+    method: 'POST', signal, body: JSON.stringify({ tenantCode, branchCode, ...point }),
+  });
 }
 
 export function autocompleteDeliveryAddress(
@@ -455,6 +672,20 @@ export function geocodeDeliveryAddress(
 // CREAR PEDIDO
 // =========================================================
 
+export interface DeliveryCheckoutPreview {
+  quoteToken: string; expiresAt: string; coverage: true;
+  tenant: string; branch: string; currency: string;
+  zone: { code: string; name: string }; minimumOrder: number;
+  subtotal: number; discountTotal: number; deliveryFee: number; total: number;
+  eta: { minMinutes: number; maxMinutes: number };
+  deliveryMode: 'JOINED_EXISTING' | 'SEPARATE_DELIVERY';
+}
+export function quoteDeliveryCheckout(cartToken: string, fulfillment: FlashOrderFulfillmentInput): Promise<DeliveryCheckoutPreview> {
+  return apiRequest<DeliveryCheckoutPreview>('/api/v1/orders/delivery-quote', {
+    method: 'POST', body: JSON.stringify({ ...fulfillment, cartToken, orderType: 'DELIVERY' }),
+  });
+}
+
 export function createOrder(
   cartToken: string,
   orderType: FlashOrderType,
@@ -473,6 +704,93 @@ export function createOrder(
 
 export function getOrderTracking(trackingToken: string): Promise<CreatedOrder> {
   return apiRequest<CreatedOrder>(`/api/v1/orders/track/${trackingToken}`);
+}
+
+// =========================================================
+// RECUPERACION DURABLE DE PEDIDOS DEL CLIENTE
+// =========================================================
+
+export interface CustomerRecoveryEnrollmentResponse {
+  authenticated: true;
+  tenantCode: string;
+  recoveredOrderCount: number;
+}
+
+export interface CustomerRecoveryLoginResponse {
+  authenticated: true;
+  tenantCode: string;
+}
+
+export interface CustomerRecoveryOrdersResponse {
+  authenticated: true;
+  tenantCode: string;
+  branchCode: string;
+  orderTrackingTokens: string[];
+  nextCursor?: string | null;
+}
+
+export function enrollCustomerRecovery(
+  trackingToken: string,
+  phone: string,
+  pin: string,
+): Promise<CustomerRecoveryEnrollmentResponse> {
+  return apiRequest<CustomerRecoveryEnrollmentResponse>(
+    "/api/v1/orders/recovery/enroll",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        trackingToken,
+        phone,
+        pin,
+      }),
+    },
+  );
+}
+
+export function loginCustomerRecovery(
+  tenantCode: string,
+  phone: string,
+  pin: string,
+): Promise<CustomerRecoveryLoginResponse> {
+  return apiRequest<CustomerRecoveryLoginResponse>(
+    "/api/v1/orders/recovery/login",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        tenantCode,
+        phone,
+        pin,
+      }),
+    },
+  );
+}
+
+export function getCustomerRecoveryOrders(
+  tenantCode: string,
+  branchCode: string,
+  cursor?: string,
+): Promise<CustomerRecoveryOrdersResponse> {
+  const params = new URLSearchParams({
+    tenant: tenantCode,
+    branch: branchCode,
+  });
+
+  return apiRequest<CustomerRecoveryOrdersResponse>(
+    `/api/v1/orders/recovery/orders?${params.toString()}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+    {
+      cache: "no-store",
+    },
+  );
+}
+
+export function logoutCustomerRecovery(): Promise<{
+  authenticated: false;
+}> {
+  return apiRequest<{
+    authenticated: false;
+  }>("/api/v1/orders/recovery/logout", {
+    method: "POST",
+  });
 }
 
 export function getOrderDeliveryLocation(
@@ -517,6 +835,8 @@ export interface PaymentAttempt {
   providerPaymentId: string | null;
   providerTransactionId: string | null;
   qrPayload: string | null;
+  qrContentType: "TEXT" | "IMAGE_BASE64" | null;
+  qrMimeType: "image/png" | "image/jpeg" | null;
   expiresAt: string | null;
   paidAt: string | null;
   verifiedAt: string | null;
@@ -539,11 +859,13 @@ export interface OrderPaymentResponse {
 
 export function createQrPayment(
   trackingToken: string,
+  customerPhone?: string,
 ): Promise<CreateQrPaymentResponse> {
   return apiRequest<CreateQrPaymentResponse>(
     `/api/v1/payments/orders/${encodeURIComponent(trackingToken)}/qr`,
     {
       method: "POST",
+      body: customerPhone ? JSON.stringify({ customerPhone }) : undefined,
     },
   );
 }
@@ -557,14 +879,293 @@ export function getOrderPayment(
 }
 
 // =========================================================
+// STAFF / OPERADORES
+// =========================================================
+
+export function getStaffBootstrapStatus(
+  tenantCode: string,
+  branchCode: string,
+): Promise<{
+  tenantCode: string;
+  branchCode: string;
+  bootstrapRequired: boolean;
+}> {
+  const params = new URLSearchParams({
+    tenant: tenantCode,
+    branch: branchCode,
+  });
+
+  return apiRequest(`/api/v1/staff/bootstrap-status?${params.toString()}`);
+}
+
+export interface CreatedStaffCredentials {
+  user: StaffUserSummary;
+  credentials: {
+    userCode: string;
+    temporaryPassword: string;
+  };
+}
+
+export function bootstrapStaffAdmin(
+  input: {
+    tenantCode: string;
+    branchCode: string;
+    firstName: string;
+    lastName: string;
+    identityDocument?: string;
+    phone?: string;
+    email?: string;
+  },
+  opsAccessKey: string,
+): Promise<CreatedStaffCredentials> {
+  return apiRequest<CreatedStaffCredentials>(
+    "/api/v1/staff/bootstrap-admin",
+    {
+      method: "POST",
+      headers: {
+        "X-Ops-Key": opsAccessKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function loginStaff(
+  tenantCode: string,
+  branchCode: string,
+  userCode: string,
+  password: string,
+): Promise<{ authenticated: true; user: StaffSessionUser }> {
+  return apiRequest("/api/v1/staff/auth/login", {
+    method: "POST",
+    body: JSON.stringify({
+      tenantCode,
+      branchCode,
+      userCode,
+      password,
+    }),
+  });
+}
+
+export function getStaffSession(): Promise<{
+  authenticated: true;
+  user: StaffSessionUser;
+}> {
+  return apiRequest("/api/v1/staff/auth/me");
+}
+
+export function getStaffTrackingDeliveries(): Promise<StaffTrackingResponse> {
+  return apiRequest<StaffTrackingResponse>(
+    "/api/v1/staff/tracking/deliveries",
+  );
+}
+
+export interface StaffDeliveryHandoffResponse {
+  changed: boolean;
+  action: "PICKED_UP" | "UNCHANGED";
+  delivery: {
+    id: string;
+    status: "PICKED_UP";
+    pickedUpAt?: string;
+  };
+  order: {
+    id: string;
+    number: string;
+    status: OperationalOrderStatus;
+  };
+  assignment: {
+    id: string;
+    number: number;
+    status: string;
+    acceptedAt: string | null;
+    driver: {
+      id: string;
+      code: string;
+      name: string;
+    };
+  };
+}
+
+export function handoffOperationalDelivery(
+  deliveryId: string,
+): Promise<StaffDeliveryHandoffResponse> {
+  return apiRequest<StaffDeliveryHandoffResponse>(
+    `/api/v1/staff/ops/deliveries/${encodeURIComponent(deliveryId)}/handoff`,
+    {
+      method: "PATCH",
+    },
+  );
+}
+
+export function changeStaffPassword(
+  newPassword: string,
+): Promise<{ changed: true; user: StaffSessionUser }> {
+  return apiRequest("/api/v1/staff/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({ newPassword }),
+  });
+}
+
+export function recoverStaffAdmin(
+  tenantCode: string,
+  branchCode: string,
+  userCode: string,
+  opsAccessKey: string,
+): Promise<{
+  user: { userCode: string; displayName: string };
+  credentials: { userCode: string; temporaryPassword: string };
+}> {
+  return apiRequest("/api/v1/staff/auth/recover-admin", {
+    method: "POST",
+    headers: {
+      "X-Ops-Key": opsAccessKey,
+    },
+    body: JSON.stringify({ tenantCode, branchCode, userCode }),
+  });
+}
+
+export function logoutStaff(): Promise<{ loggedOut: true }> {
+  return apiRequest("/api/v1/staff/auth/logout", {
+    method: "POST",
+  });
+}
+
+export function getStaffUsers(): Promise<{
+  tenantCode: string;
+  branchCode: string;
+  users: StaffUserSummary[];
+}> {
+  return apiRequest("/api/v1/staff/users");
+}
+
+export function createStaffUser(input: {
+  firstName: string;
+  lastName: string;
+  identityDocument?: string;
+  phone?: string;
+  email?: string;
+  role: StaffRole;
+}): Promise<CreatedStaffCredentials> {
+  return apiRequest<CreatedStaffCredentials>("/api/v1/staff/users", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function resetStaffCredentials(
+  userId: string,
+): Promise<CreatedStaffCredentials> {
+  return apiRequest<CreatedStaffCredentials>(
+    `/api/v1/staff/users/${encodeURIComponent(userId)}/reset-credentials`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function updateStaffUserStatus(
+  userId: string,
+  status: "ACTIVE" | "INACTIVE",
+): Promise<{
+  changed: boolean;
+  user: {
+    id: string;
+    userCode: string;
+    displayName: string;
+    status: "ACTIVE" | "INACTIVE";
+  };
+}> {
+  return apiRequest(
+    `/api/v1/staff/users/${encodeURIComponent(userId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    },
+  );
+}
+
+// =========================================================
+// REPARTIDORES / DELIVERY ADMIN
+// =========================================================
+
+export function getDeliveryAdminDrivers(): Promise<{
+  tenantCode: string;
+  branchCode: string;
+  drivers: DeliveryAdminDriverSummary[];
+}> {
+  return apiRequest("/api/v1/staff/drivers");
+}
+
+export function createDeliveryAdminDriver(input: {
+  firstName: string;
+  lastName: string;
+  identityDocument: string;
+  phone: string;
+  email?: string;
+  vehiclePlate: string;
+}): Promise<CreatedDeliveryDriverCredentials> {
+  return apiRequest<CreatedDeliveryDriverCredentials>(
+    "/api/v1/staff/drivers",
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function updateDeliveryAdminDriverProfile(
+  driverId: string,
+  input: {
+    firstName: string;
+    lastName: string;
+    identityDocument: string;
+    phone: string;
+    email?: string;
+    vehiclePlate: string;
+  },
+): Promise<{ changed: true; driver: DeliveryAdminDriverSummary }> {
+  return apiRequest(
+    `/api/v1/staff/drivers/${encodeURIComponent(driverId)}/profile`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export function resetDeliveryAdminDriverCredentials(
+  driverId: string,
+): Promise<{
+  driver: { id: string; code: string; displayName: string };
+  credentials: { driverCode: string; temporaryPassword: string };
+}> {
+  return apiRequest(
+    `/api/v1/staff/drivers/${encodeURIComponent(driverId)}/reset-credentials`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function updateDeliveryAdminDriverStatus(
+  driverId: string,
+  status: "ACTIVE" | "INACTIVE",
+): Promise<{ changed: true; driver: DeliveryAdminDriverSummary }> {
+  return apiRequest(
+    `/api/v1/staff/drivers/${encodeURIComponent(driverId)}/status`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    },
+  );
+}
+
+// =========================================================
 // PAGO EN EFECTIVO - SOLO OPERACIONES
 // =========================================================
 
 export interface ConfirmOperationalCashPaymentInput {
-  tenantCode: string;
-  branchCode: string;
   cashReceivedAmount: string;
-  cashierReference: string;
   terminalReference: string;
 }
 
@@ -578,7 +1179,6 @@ export function confirmOperationalCashPayment(
   orderId: string,
   input: ConfirmOperationalCashPaymentInput,
   idempotencyKey: string,
-  cashierAccessKey: string,
 ): Promise<ConfirmOperationalCashPaymentResponse> {
   return apiRequest<ConfirmOperationalCashPaymentResponse>(
     `/api/v1/ops/payments/orders/${encodeURIComponent(orderId)}/cash`,
@@ -586,7 +1186,6 @@ export function confirmOperationalCashPayment(
       method: "POST",
 
       headers: {
-        "X-Cashier-Key": cashierAccessKey,
         "Idempotency-Key": idempotencyKey,
       },
 
@@ -668,6 +1267,30 @@ export interface OperationalOrder {
 
   tableSession: OperationalTableSession | null;
 
+  delivery: {
+    id: string;
+    status: OperationalDeliveryStatus;
+
+    relationshipRole:
+      | "PRIMARY"
+      | "ADDITIONAL"
+      | null;
+
+    memberCount: number;
+    isShared: boolean;
+
+    assignment: {
+      id: string;
+      status: string | null;
+      acceptedAt: string | null;
+      driver: {
+        id: string;
+        code: string | null;
+        name: string | null;
+      } | null;
+    } | null;
+  } | null;
+
   items: OperationalOrderItem[];
   createdAt: string;
   updatedAt: string;
@@ -680,6 +1303,58 @@ export interface OperationalOrdersResponse {
   orders: OperationalOrder[];
 }
 
+export type OperationalDeliveryStatus =
+  | "CREATED"
+  | "WAITING_ASSIGNMENT"
+  | "ASSIGNED"
+  | "ACCEPTED"
+  | "PICKED_UP"
+  | "EN_ROUTE"
+  | "ARRIVED"
+  | "DELIVERED"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface OperationalDelivery {
+  id: string;
+  trackingToken: string;
+  status: OperationalDeliveryStatus;
+
+  order: {
+    id: string;
+    orderNumber: string;
+    status: OperationalOrderStatus;
+    paymentStatus: OrderPaymentStatus;
+    total: number;
+  };
+
+  assignment: unknown | null;
+}
+
+export interface OperationalDeliveriesResponse {
+  tenant: string;
+  branch: string;
+  status: string | null;
+  total: number;
+  deliveries: OperationalDelivery[];
+}
+
+export interface OperationalDeliveryDriver {
+  id: string;
+  code: string;
+  displayName: string;
+  phone: string;
+  status: string;
+  branchStatus: string;
+  activeAssignments: number;
+}
+
+export interface OperationalDeliveryDriversResponse {
+  tenant: string;
+  branch: string;
+  total: number;
+  drivers: OperationalDeliveryDriver[];
+}
 export interface UpdatedOrderStatus {
   id: string;
   orderNumber: string;
@@ -735,6 +1410,16 @@ export interface OperationalTableQrContextResponse {
   expiresAt: string;
   contextToken: string;
   menuUrl: string;
+  permanentUrl: string;
+  tableSession: {
+    id: string;
+    status: "OPEN";
+  } | null;
+  currentOrder: {
+    orderNumber: string;
+    trackingToken: string;
+    status: FlashOrderStatus;
+  } | null;
   table: DiningTable;
 }
 
@@ -823,6 +1508,77 @@ export function getOperationalOrders(
   );
 }
 
+export function getOperationalDeliveries(
+  tenantCode: string,
+  branchCode: string,
+  opsAccessKey: string,
+  status?: OperationalDeliveryStatus,
+): Promise<OperationalDeliveriesResponse> {
+  const params = new URLSearchParams({
+    tenant: tenantCode,
+    branch: branchCode,
+  });
+
+  if (status) {
+    params.set("status", status);
+  }
+
+  return apiRequest<OperationalDeliveriesResponse>(
+    `/api/v1/ops/deliveries?${params.toString()}`,
+    {
+      headers: {
+        "X-Ops-Key": opsAccessKey,
+      },
+    },
+  );
+}
+export function getOperationalDeliveryDrivers(
+  tenantCode: string,
+  branchCode: string,
+  opsAccessKey: string,
+): Promise<OperationalDeliveryDriversResponse> {
+  const params = new URLSearchParams({
+    tenant: tenantCode,
+    branch: branchCode,
+  });
+
+  return apiRequest<OperationalDeliveryDriversResponse>(
+    `/api/v1/ops/delivery-drivers?${params.toString()}`,
+    {
+      headers: {
+        "X-Ops-Key": opsAccessKey,
+      },
+    },
+  );
+}
+
+export function assignOperationalDelivery(
+  deliveryId: string,
+  driverId: string,
+  tenantCode: string,
+  branchCode: string,
+  opsAccessKey: string,
+): Promise<unknown> {
+  const params = new URLSearchParams({
+    tenant: tenantCode,
+    branch: branchCode,
+  });
+
+  return apiRequest<unknown>(
+    `/api/v1/ops/deliveries/${encodeURIComponent(deliveryId)}/assignment?${params.toString()}`,
+    {
+      method: "PATCH",
+
+      headers: {
+        "X-Ops-Key": opsAccessKey,
+      },
+
+      body: JSON.stringify({
+        driverId,
+      }),
+    },
+  );
+}
 export function updateOperationalOrderStatus(
   orderId: string,
   status: OperationalOrderStatus,
@@ -1145,3 +1901,125 @@ export function checkInOperationalReservation(
     },
   );
 }
+
+export interface PublicDeliveryPod {
+  delivery: {
+    id: string;
+    status: "ARRIVED";
+  };
+
+  pod: {
+    status: "ACTIVE";
+    code: string;
+  };
+}
+
+export function getOrderDeliveryPod(
+  trackingToken: string,
+): Promise<PublicDeliveryPod> {
+  const normalizedTrackingToken =
+    trackingToken.trim();
+
+  if (!normalizedTrackingToken) {
+    return Promise.reject(
+      new Error(
+        "trackingToken is required",
+      ),
+    );
+  }
+
+  return apiRequest<PublicDeliveryPod>(
+    `/api/v1/orders/track/${encodeURIComponent(
+      normalizedTrackingToken,
+    )}/delivery-pod`,
+  );
+}
+
+export interface AdminDevQrPaymentStatus {
+  enabled: boolean;
+  developmentOnly: true;
+  provider: "BCP_QR";
+  environment: string;
+}
+
+export interface AdminDevQrPaymentResult {
+  changed: boolean;
+  order: {
+    number: string;
+    status: string;
+    paymentStatus: string;
+  };
+  payment: {
+    attemptNumber: number;
+    status: string;
+    provider: string;
+  };
+}
+
+export function getAdminDevQrPaymentStatus(): Promise<AdminDevQrPaymentStatus> {
+  return apiRequest<AdminDevQrPaymentStatus>(
+    "/api/v1/staff/admin/dev-payments/status",
+  );
+}
+
+export function simulateAdminDevQrPayment(
+  orderNumber: string,
+): Promise<AdminDevQrPaymentResult> {
+  return apiRequest<AdminDevQrPaymentResult>(
+    `/api/v1/staff/admin/dev-payments/orders/${encodeURIComponent(
+      orderNumber,
+    )}/simulate-qr-paid`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export function linkCustomerRecoveryOrders(tenantCode: string, branchCode: string, trackingTokens: string[]) {
+  return apiRequest<{linked:number}>("/api/v1/orders/recovery/link", {method:"POST",body:JSON.stringify({tenantCode,branchCode,trackingTokens})});
+}
+
+export interface StaffBranchLocation {
+  tenantCode:string;branchCode:string;branchName:string;address:string;
+  latitude:number|null;longitude:number|null;deliveryEnabled:boolean;revision:string;
+}
+export function getStaffBranchLocation(signal?:AbortSignal) {
+  return apiRequest<StaffBranchLocation>('/api/v1/staff/branch-location',{cache:'no-store',signal});
+}
+export function saveStaffBranchLocation(input:{address:string;latitude:number;longitude:number;revision:string}) {
+  return apiRequest<StaffBranchLocation>('/api/v1/staff/branch-location',{method:'PATCH',body:JSON.stringify(input)});
+}
+
+export interface OperationsCapabilities {
+  version: 'operations.access.v1';
+  tenantCode: string;
+  branchCode: string;
+  permissions: string[];
+  orderStatuses: string[];
+}
+export function getOperationsCapabilities(): Promise<OperationsCapabilities> {
+  return apiRequest<OperationsCapabilities>('/api/v1/ops/access', { cache: 'no-store' });
+}
+
+export type BranchServiceKey = 'ORDERING'|'DELIVERY'|'TAKEAWAY'|'PICKUP'|'DINE_IN'|'RESERVATIONS';
+export type BranchServiceState = 'ENABLED'|'DRAINING'|'DISABLED';
+export interface BranchServices {
+  tenantCode:string;branchCode:string;revision:string;
+  states:Record<BranchServiceKey,BranchServiceState>;
+  labels:Record<BranchServiceKey,string>;active:Record<BranchServiceKey,number>;
+  deliveryConfigured:boolean;
+}
+export interface BranchCatalogProduct {id:string;name:string;category:string;price:string;currency:string;available:boolean;priceLocked:boolean;revision:string;}
+export function getBranchServices(signal?:AbortSignal){return apiRequest<BranchServices>('/api/v1/ops/branch-configuration/services',{cache:'no-store',signal});}
+export function saveBranchServices(value:{revision:string;states:BranchServices['states'];reason:string}){return apiRequest('/api/v1/ops/branch-configuration/services',{method:'PATCH',body:JSON.stringify(value)});}
+export function getBranchCatalog(signal?:AbortSignal){return apiRequest<{products:BranchCatalogProduct[]}>('/api/v1/ops/branch-configuration/products',{cache:'no-store',signal});}
+export function saveBranchCatalogProduct(id:string,value:{revision:string;price:string;available:boolean;reason:string}){return apiRequest('/api/v1/ops/branch-configuration/products/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify(value)});}
+export function getPublicBranchServices(tenant:string,branch:string,signal?:AbortSignal){return apiRequest<{available:Record<BranchServiceKey,boolean>}>('/api/v1/catalog/services?tenant='+encodeURIComponent(tenant)+'&branch='+encodeURIComponent(branch),{cache:'no-store',signal});}
+
+export interface ProductCategoryOption {id:string;name:string;slug:string;}
+export interface ProductCreation {requestId:string;name:string;description:string;categoryId:string;price:string;available:boolean;presentations:{label:string;price:string}[];reason:string;}
+export interface ProductDeletion {canDelete:boolean;reasons:string[];revision:string;products:{id:string;name:string}[];count:number;}
+export function getProductCreationOptions(signal?:AbortSignal){return apiRequest<{categories:ProductCategoryOption[]}>('/api/v1/ops/branch-configuration/product-creation-options',{cache:'no-store',signal});}
+export function createBranchProduct(value:ProductCreation){return apiRequest('/api/v1/ops/branch-configuration/products',{method:'POST',body:JSON.stringify(value)});}
+export function getProductDeletion(id:string,signal?:AbortSignal){return apiRequest<ProductDeletion>('/api/v1/ops/branch-configuration/products/'+encodeURIComponent(id)+'/deletion',{cache:'no-store',signal});}
+export function deleteBranchProduct(id:string,value:{requestId:string;revision:string;reason:string}){return apiRequest('/api/v1/ops/branch-configuration/products/'+encodeURIComponent(id),{method:'DELETE',body:JSON.stringify(value)});}
