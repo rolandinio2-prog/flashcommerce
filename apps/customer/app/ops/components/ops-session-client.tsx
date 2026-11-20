@@ -288,6 +288,27 @@ export default function OpsSessionClient({
             </p>
           </div>
 
+          <details className="mb-5 rounded-xl border border-zinc-300 bg-white p-4">
+            <summary className="cursor-pointer font-bold">Cambiar negocio o sucursal</summary>
+            <form action="/ops" method="get" className="mt-4 grid gap-3">
+              <label className="grid gap-1 text-sm font-semibold">
+                Código del negocio
+                <input name="tenantCode" defaultValue={tenantCode} required minLength={2} maxLength={50}
+                  pattern="[A-Za-z0-9_-]{2,50}" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+                  className="min-w-0 rounded-lg border border-zinc-300 px-3 py-3 text-base" />
+              </label>
+              <label className="grid gap-1 text-sm font-semibold">
+                Código de sucursal
+                <input name="branchCode" defaultValue={branchCode} required minLength={2} maxLength={50}
+                  pattern="[A-Za-z0-9_-]{2,50}" autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+                  className="min-w-0 rounded-lg border border-zinc-300 px-3 py-3 text-base" />
+              </label>
+              <button type="submit" className="rounded-lg bg-zinc-950 px-4 py-3 font-bold text-white">
+                Continuar con este negocio
+              </button>
+            </form>
+          </details>
+
           {createdCredentials && (
             <div className="mb-5 rounded-2xl border border-green-300 bg-green-50 p-5 text-green-950">
               <p className="font-black">Administrador creado</p>
@@ -623,8 +644,8 @@ export default function OpsSessionClient({
         <CommercialLinksPanel key={`${sessionUser.tenantCode}:${sessionUser.branchCode}:${sessionUser.sessionId}`} />
       )}
       <OpsOrdersClient
-        tenantCode={tenantCode}
-        branchCode={branchCode}
+        tenantCode={sessionUser.tenantCode}
+        branchCode={sessionUser.branchCode}
         operator={sessionUser}
       />
     </>

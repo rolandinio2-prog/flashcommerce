@@ -1,3 +1,4 @@
+import { assertPosCartAccess } from '../order/pos-cart-access';
 import { ConflictException, Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { DatabaseService } from '../database/database.service';
@@ -27,6 +28,8 @@ export class DraftService {
         join public.tenants t on t.id=c.tenant_id join public.branches b on b.id=c.branch_id and b.tenant_id=c.tenant_id
         where c.cart_token=$1::uuid and t.code=$2 and b.code=$3 and ${active} for update of c`,[token,tenant,branch]);
       const cart=found.rows[0];if(!cart)throw unavailable();
+      // Public recovery drafts never adopt a staff-owned POS cart.
+      await assertPosCartAccess(client,cart.id);
       const account=await client.query(`select s.customer_account_id from public.customer_sessions s
         join public.customer_accounts a on a.id=s.customer_account_id and a.tenant_id=s.tenant_id
         where s.token_hash=$1 and s.tenant_id=$2 and s.revoked_at is null and s.expires_at>now() and a.status='ACTIVE'`,[this.sessionHash(cookie),cart.tenant_id]);

@@ -1,3 +1,6 @@
+import { posCartRevision } from '../order/pos-cart-revision';
+import type { StaffSessionPrincipal } from '../staff/staff.types';
+import { assertPosCartAccess } from '../order/pos-cart-access';
 import { saucePricing, priceSauceLines } from './sauce-pricing';
 import {
   BadRequestException,
@@ -79,11 +82,11 @@ export class CartService {
     };
   }
 
-  async addItem(cartToken: string, productId: string | undefined, quantity: number | undefined, choice?: unknown) {
-    return this.mutateItem(cartToken, productId, quantity ?? 1, choice, 'add');
+  async addItem(cartToken: string, productId: string | undefined, quantity: number | undefined, choice?: unknown, staff?: StaffSessionPrincipal) {
+    return this.mutateItem(cartToken, productId, quantity ?? 1, choice, 'add', staff);
   }
 
-  private async mutateItem(cartToken: string, productId: string | undefined, quantity: number, choice: unknown, operation: 'add' | 'set' | 'remove') {
+  private async mutateItem(cartToken: string, productId: string | undefined, quantity: number, choice: unknown, operation: 'add' | 'set' | 'remove', staff?: StaffSessionPrincipal) {
     const rice = riceChoice(choice);
     if (!cartToken?.trim() || !productId?.trim()) throw new BadRequestException('Cart and product are required');
     if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new BadRequestException('quantity must be a positive integer');
@@ -93,6 +96,7 @@ export class CartService {
         "select id::text,tenant_id::text,branch_id::text from public.carts where cart_token=$1::uuid and status='OPEN' and expires_at>now() for update", [cartToken]);
       const cart = carts.rows[0];
       if (!cart) throw new NotFoundException('Open cart not found');
+      await assertPosCartAccess(client, cart.id, staff);
       // Freeze the current allowance before changing grouped quantities. The cart lock serializes this with checkout.
       await this.persistSauceAllocations(cartToken, client, cart);
       if (operation === 'remove') {
@@ -147,7 +151,7 @@ export class CartService {
     return snapshot;
   }
 
-  async getCart(cartToken: string, queryClient: Pick<DatabaseService, 'query'> = this.databaseService) {
+  async getCart(cartToken: string, queryClient: Pick<DatabaseService, 'query'> = this.databaseService, staff?: StaffSessionPrincipal) {
   if (!cartToken?.trim()) {
     throw new BadRequestException('cartToken is required');
   }
@@ -266,7 +270,9 @@ export class CartService {
     0,
   );
 
+  if(queryClient===this.databaseService) await assertPosCartAccess(queryClient,cart.id,staff);
   return {
+    revision: posCartRevision(itemsResult.rows),
     id: cart.id,
     token: cart.token,
     status: cart.status,
@@ -295,10 +301,10 @@ export class CartService {
   };
 }
 
-async updateItem(cartToken: string, productId: string, quantity: number | undefined, choice?: unknown) {
-  return this.mutateItem(cartToken, productId, quantity as number, choice, 'set');
+async updateItem(cartToken: string, productId: string, quantity: number | undefined, choice?: unknown, staff?: StaffSessionPrincipal) {
+  return this.mutateItem(cartToken, productId, quantity as number, choice, 'set', staff);
 }
-async removeItem(cartToken: string, productId: string, choice?: unknown) {
-  return this.mutateItem(cartToken, productId, 1, choice, 'remove');
+async removeItem(cartToken: string, productId: string, choice?: unknown, staff?: StaffSessionPrincipal) {
+  return this.mutateItem(cartToken, productId, 1, choice, 'remove', staff);
 }
 }

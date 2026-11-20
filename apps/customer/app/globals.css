@@ -37,3 +37,35 @@ html[data-customer-page-zoom="fixed"], html[data-customer-page-zoom="fixed"] bod
 html:has([data-customer-order-page="true"]), html:has([data-customer-order-page="true"]) body, [data-customer-order-page="true"] { touch-action: pan-x pan-y; }
 [data-customer-order-page="true"] button, [data-customer-order-page="true"] a { touch-action: pan-x pan-y; }
 @media (pointer:coarse) { [data-customer-order-page="true"] input, [data-customer-order-page="true"] select, [data-customer-order-page="true"] textarea { font-size: max(1rem,16px); } }
+
+/* Ops: declare page gesture ownership before React hydration, including portals. */
+html:has([data-ops-page-zoom="fixed"]),
+html:has([data-ops-page-zoom="fixed"]) body,
+[data-ops-page-zoom="fixed"],
+html:has([data-ops-page-zoom="fixed"]) button,
+html:has([data-ops-page-zoom="fixed"]) a,
+html:has([data-ops-page-zoom="fixed"]) input,
+html:has([data-ops-page-zoom="fixed"]) select,
+html:has([data-ops-page-zoom="fixed"]) textarea,
+html:has([data-ops-page-zoom="fixed"]) [role="dialog"],
+html:has([data-ops-page-zoom="fixed"]) dialog {
+  touch-action: pan-x pan-y;
+}
+@media (pointer: coarse) {
+  html:has([data-ops-page-zoom="fixed"]) input,
+  html:has([data-ops-page-zoom="fixed"]) select,
+  html:has([data-ops-page-zoom="fixed"]) textarea {
+    font-size: max(1rem, 16px);
+  }
+}
+
+/* Use the available mobile width without covering the iPhone safe areas. */
+@media (max-width: 1023px) {
+  [data-ops-page-zoom="fixed"] { width: 100%; min-width: 0; }
+  [data-ops-page-zoom="fixed"] .mx-auto.px-6 {
+    max-width: 100%;
+    padding-left: max(8px, env(safe-area-inset-left, 0px));
+    padding-right: max(8px, env(safe-area-inset-right, 0px));
+  }
+  [data-ops-page-zoom="fixed"] .p-6 { padding: 12px; }
+}

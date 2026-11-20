@@ -15,6 +15,7 @@ export interface FlashCartItem {
 }
 
 export interface FlashCart {
+  revision: string;
   id: string;
   token: string;
   status: string;
@@ -442,7 +443,7 @@ export function updateCustomerRecoveryName(tenantCode: string, fullName: string,
   return apiRequest<{authenticated: boolean}>('/api/v1/orders/recovery/profile/name', {method:'POST', body:JSON.stringify({tenantCode,fullName,phone,pin})});
 }
 
-async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
+export async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiUrl()}${path}`, {
     credentials: "same-origin",
     ...options,
@@ -2023,3 +2024,16 @@ export function getProductCreationOptions(signal?:AbortSignal){return apiRequest
 export function createBranchProduct(value:ProductCreation){return apiRequest('/api/v1/ops/branch-configuration/products',{method:'POST',body:JSON.stringify(value)});}
 export function getProductDeletion(id:string,signal?:AbortSignal){return apiRequest<ProductDeletion>('/api/v1/ops/branch-configuration/products/'+encodeURIComponent(id)+'/deletion',{cache:'no-store',signal});}
 export function deleteBranchProduct(id:string,value:{requestId:string;revision:string;reason:string}){return apiRequest('/api/v1/ops/branch-configuration/products/'+encodeURIComponent(id),{method:'DELETE',body:JSON.stringify(value)});}
+
+export interface CashSummary {
+ date: string; timezone: string; kind: 'CURRENT_STATE_REPORT';
+ totals: Array<{currency: string; category: string; count: string; amount: string}>;
+ reviewRequired: Array<{orderNumber: string; status: string; currency: string; total: string}>;
+ reviewRequiredCount: string; limit: number; note: string;
+}
+export function getCashSummary(date: string): Promise<CashSummary> {
+ return apiRequest<CashSummary>('/api/v1/ops/payments/summary?date='+encodeURIComponent(date), {cache:'no-store'});
+}
+export function reconcileCashSummaryOrder(orderNumber: string): Promise<unknown> {
+ return apiRequest('/api/v1/ops/payments/'+encodeURIComponent(orderNumber)+'/reconcile', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+}

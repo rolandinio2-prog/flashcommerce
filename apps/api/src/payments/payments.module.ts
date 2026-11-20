@@ -1,3 +1,7 @@
+import { CashClosingController } from './cash-closing.controller';
+import { CashClosingService } from './cash-closing.service';
+import { CashSummaryController } from './cash-summary.controller';
+import { CashSummaryService } from './cash-summary.service';
 import { OperationsModule } from '../operations/operations.module';
 import { Module } from '@nestjs/common';
 
@@ -17,12 +21,14 @@ import { PaymentsService } from './payments.service';
 @Module({
   imports: [OperationsModule, StaffModule],
   controllers: [
+    CashClosingController,
+    CashSummaryController,
     PaymentsController,
     OpsPaymentsController,
     BcpPaymentCallbackController,
     AdminDevQrPaymentController,
   ],
-  providers: [ PaymentsService, MockQrProvider, BcpQrProvider, OpsAccessGuard, AdminDevQrPaymentService ],
+  providers: [ CashClosingService, CashSummaryService, PaymentsService, MockQrProvider, BcpQrProvider, OpsAccessGuard, AdminDevQrPaymentService ],
   exports: [PaymentsService],
 })
 export class PaymentsModule {}

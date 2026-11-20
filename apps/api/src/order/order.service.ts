@@ -1,3 +1,6 @@
+import { posCartRevision } from './pos-cart-revision';
+import { assertPosCartAccess } from './pos-cart-access';
+import { normalizePosCheckout, type PosCheckoutInput } from './pos-checkout';
 import { assertDeliveryQrPaid } from '../payments/delivery-payment-policy';
 import { lockBranchAdmission } from '../branch-operations/service-policy';
 import type { StaffSessionPrincipal } from '../staff/staff.types';
@@ -425,7 +428,26 @@ export class OrderService {
     return result.order;
   }
 
-  private async checkout(input: CreateOrderInput, customerRecoverySessionToken: string | null | undefined, quoteOnly: boolean) {
+  async createPosOrder(input:PosCheckoutInput,staff:StaffSessionPrincipal):Promise<unknown> {
+    const value=normalizePosCheckout(input);
+    const replay=async()=>{
+      const result=await this.databaseService.query<{order_id:string;tracking_token:string;checkout_hash:string}>('select o.id::text as order_id,o.tracking_token::text,d.checkout_hash from public.pos_drafts d join public.carts c on c.id=d.cart_id join public.orders o on o.id=d.order_id where c.cart_token=$1::uuid and d.tenant_id=$2::uuid and d.branch_id=$3::uuid and d.staff_user_id=$4::uuid',[value.cartToken,staff.tenantId,staff.branchId,staff.userId]);
+      const row=result.rows[0];if(!row)return null;
+      if(row.checkout_hash!==value.intentHash)throw new ConflictException('El pedido ya fue creado con otros datos.');
+      return {...await this.getOrderTracking(row.tracking_token),id:row.order_id};
+    };
+    const saved=await replay();if(saved)return saved;
+    try {
+      const result=await this.checkout(value,undefined,false,{staff,intentHash:value.intentHash,expectedTotal:value.expectedTotal,expectedRevision:value.expectedRevision});
+      if(result.kind!=='order')throw new Error('POS invariant');return result.order;
+    } catch(error){
+      // Only read a committed concurrent result; never retry checkout writes.
+      if(error instanceof ConflictException){const saved=await replay();if(saved)return saved;}
+      throw error;
+    }
+  }
+
+  private async checkout(input: CreateOrderInput, customerRecoverySessionToken: string | null | undefined, quoteOnly: boolean,pos?:{staff:StaffSessionPrincipal;intentHash:string;expectedTotal:number;expectedRevision:string}) {
     // Quote mode must never enter reservation/table-session mutation paths.
     if (quoteOnly && (input.orderType !== 'DELIVERY' || input.tableCode || input.tableContextToken || input.reservationTrackingToken)) {
       throw new BadRequestException('Contexto no válido para cotizar un envío.');
@@ -618,8 +640,8 @@ export class OrderService {
       // ==================================================
 
       case 'TAKEAWAY': {
-        if (!customerName) throw new BadRequestException('customerName is required for TAKEAWAY');
-        if (!customerPhone || !/^[0-9]{7,15}$/.test(customerPhone.replace(/\D/g, ''))) throw new BadRequestException('A valid customerPhone is required for TAKEAWAY');
+        if (!pos && !customerName) throw new BadRequestException('customerName is required for TAKEAWAY');
+        if (!pos && (!customerPhone || !/^[0-9]{7,15}$/.test(customerPhone.replace(/\D/g, '')))) throw new BadRequestException('A valid customerPhone is required for TAKEAWAY');
         break;
       }
 
@@ -881,6 +903,8 @@ export class OrderService {
         throw new NotFoundException('Cart not found');
       }
 
+      await assertPosCartAccess(client,cart.id,pos?.staff);
+      if(pos && (cart.tenant_id!==pos.staff.tenantId || cart.branch_id!==pos.staff.branchId)) throw new NotFoundException("Cart not found");
       await lockBranchAdmission(client, cart.tenant_id, cart.branch_id, ['ORDERING', orderType]);
 
       if (cart.status !== 'OPEN') {
@@ -1488,7 +1512,7 @@ export class OrderService {
 
                 bp.price::text as price,
                 bp.currency,
-                bp.is_available,
+                (bp.is_available and p.active) as is_available,
                 bp.available_quantity
 
               from public.cart_items ci
@@ -1513,6 +1537,7 @@ export class OrderService {
       );
 
       const items = itemsResult.rows;
+      if(pos && posCartRevision(items)!==pos.expectedRevision)throw new ConflictException("Los productos cambiaron. Revisa el carrito.");
       const quantitiesByProduct = prepareRiceItems(items);
 
       if (items.length === 0) {
@@ -1618,10 +1643,11 @@ export class OrderService {
 
       // Gate 7B.1: una reserva confirmada ya no confirma por si sola
       // el pedido. Todo pedido nuevo espera confirmacion de pago.
+      if(pos && Math.round(total*100)!==Math.round(pos.expectedTotal*100))throw new ConflictException("El total cambió. Revisa el carrito.");
       const initialOrderStatus: OrderStatus = 'PENDING';
       const initialPaymentStatus: OrderPaymentStatus = 'PENDING';
 
-      const orderOrigin: OrderOrigin = reservationContext
+      const orderOrigin: OrderOrigin = pos ? 'OPS_STAFF' : reservationContext
         ? 'RESERVATION_PREORDER'
         : tableContext
           ? 'TABLE_QR'
@@ -1763,6 +1789,7 @@ export class OrderService {
       );
 
       const order = orderResult.rows[0];
+      if(pos)await client.query("update public.pos_drafts set order_id=$2::uuid,checkout_hash=$3 where cart_id=$1::uuid",[cart.id,order.id,pos.intentHash]);
 
       let createdDelivery: CreatedDelivery | null = null;
 

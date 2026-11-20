@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import OpsPosCheckout from './ops-pos-checkout';
+
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   confirmOperationalCashPayment,
@@ -16,6 +18,10 @@ import {
   type StaffSessionUser,
 } from "../../../lib/flash-api";
 
+import OpsCashPanel from './ops-cash-panel';
+import OpsCashWorkbench from './ops-cash-workbench';
+import OpsCashProducts from './ops-cash-products';
+import { canReceiveCashPayment, cashOrderFingerprint } from './ops-cash-eligibility';
 import OpsTablesPanel from "./ops-tables-panel";
 import OpsReservationsPanel from "./ops-reservations-panel";
 
@@ -59,7 +65,7 @@ interface StatusColumn {
   title: string;
 }
 
-type OpsTab = "ORDERS" | "TABLES" | "RESERVATIONS";
+type OpsTab = "ORDERS" | "TABLES" | "RESERVATIONS" | "CASH";
 
 const STATUS_COLUMNS: StatusColumn[] = [
   {
@@ -168,20 +174,7 @@ function isOrderPaymentVerified(order: OperationalOrder): boolean {
   );
 }
 
-function canReceiveCashPayment(order: OperationalOrder): boolean {
-  if (!["DINE_IN", "TAKEAWAY", "PICKUP"].includes(order.orderType)) return false;
-  if (order.status !== "PENDING" && order.status !== "CONFIRMED") {
-    return false;
-  }
 
-  return ![
-    "NOT_REQUIRED",
-    "PAID",
-    "REFUND_PENDING",
-    "REFUNDED",
-    "REVIEW_REQUIRED",
-  ].includes(order.paymentStatus);
-}
 // =========================================================
 // 2. FORMATO DE HORAS
 //
@@ -294,6 +287,9 @@ export default function OpsOrdersClient({
   const [cashIdempotencyKey, setCashIdempotencyKey] = useState("");
 
   const [cashBusy, setCashBusy] = useState(false);
+  const cashActionLock = useRef(false);
+  const [cashReview, setCashReview] = useState(false);
+  const [cashSummaryRevision, setCashSummaryRevision] = useState(0);
 
   const [cashError, setCashError] = useState<string | null>(null);
 
@@ -452,9 +448,11 @@ export default function OpsOrdersClient({
   }
 
   function openCashPayment(order: OperationalOrderWithFulfillment) {
+    if (!canOperateCash || !canReceiveCashPayment(order) || !order.items.length || cashActionLock.current) return;
+    setCashReview(false);
     setCashOrder(order);
 
-    setCashReceivedAmount(order.total.toFixed(2));
+    setCashReceivedAmount("");
 
     setCashIdempotencyKey(window.crypto.randomUUID());
 
@@ -463,7 +461,7 @@ export default function OpsOrdersClient({
   }
 
   function closeCashPayment() {
-    if (cashBusy) {
+    if (cashBusy || cashActionLock.current) {
       return;
     }
 
@@ -474,10 +472,17 @@ export default function OpsOrdersClient({
   }
 
   async function submitCashPayment() {
-    if (!cashOrder) {
+    if (!cashOrder || cashActionLock.current) {
       return;
     }
 
+    const currentOrder = orders.find(order => order.id === cashOrder.id);
+    if (!canOperateCash || !currentOrder || !canReceiveCashPayment(currentOrder) || !currentOrder.items.length ||
+        cashOrderFingerprint(currentOrder) !== cashOrderFingerprint(cashOrder)) {
+      setCashReview(false);
+      setCashError("El pedido o tus permisos cambiaron. Cierra este cobro y revisa el pedido actualizado.");
+      return;
+    }
     const normalizedAmount = cashReceivedAmount.trim().replace(",", ".");
 
     if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(normalizedAmount)) {
@@ -504,6 +509,8 @@ export default function OpsOrdersClient({
       return;
     }
 
+    if (!cashReview) { setCashReview(true); return; }
+    cashActionLock.current = true;
     setCashBusy(true);
     setCashError(null);
 
@@ -542,6 +549,7 @@ export default function OpsOrdersClient({
       setCashReceivedAmount("");
       setCashIdempotencyKey("");
 
+      setCashSummaryRevision(value => value + 1);
       await loadOrders();
     } catch (error) {
       const message =
@@ -549,6 +557,7 @@ export default function OpsOrdersClient({
 
       setCashError(message);
     } finally {
+      cashActionLock.current = false;
       setCashBusy(false);
     }
   }
@@ -571,7 +580,7 @@ export default function OpsOrdersClient({
                 ? "KDS"
                 : activeTab === "TABLES"
                   ? "Mesas"
-                  : "Reservas"}
+                  : activeTab === "CASH" ? "Caja" : "Reservas"}
             </h1>
 
             <p className="mt-1 text-sm text-zinc-500">
@@ -616,6 +625,9 @@ export default function OpsOrdersClient({
             Pedidos
           </button>
 
+          {capabilities?.permissions.includes("payments.read") && (
+            <button type="button" onClick={() => setActiveTab("CASH")} aria-pressed={activeTab === "CASH"} className="rounded-xl border px-4 py-3 font-bold">Caja</button>
+          )}
           {capabilities?.permissions.includes("tables.read") && (
           <button
             type="button"
@@ -688,7 +700,13 @@ export default function OpsOrdersClient({
       )}
 
       <div className="mx-auto max-w-[1600px] px-6 py-6">
-        {activeTab === "TABLES" && capabilities?.permissions.includes("tables.read") ? (
+        {activeTab === "CASH" && capabilities?.permissions.includes("payments.read") ? (
+          <>
+            {capabilities.permissions.includes('orders.create') && <OpsPosCheckout onComplete={async()=>{setCashSummaryRevision(value=>value+1);await loadOrders();}} />}
+            <OpsCashWorkbench orders={orders} canCollect={canOperateCash} busy={cashBusy || busyOrderId !== null} onCollect={openCashPayment} />
+            <OpsCashPanel key={cashSummaryRevision} canReconcile={capabilities.permissions.includes("payments.reconcile")} />
+          </>
+        ) : activeTab === "TABLES" && capabilities?.permissions.includes("tables.read") ? (
           <OpsTablesPanel
             tenantCode={tenantCode}
             branchCode={branchCode}
@@ -1152,6 +1170,7 @@ export default function OpsOrdersClient({
               </button>
             </div>
 
+            <OpsCashProducts order={cashOrder} />
             <div className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
               <div className="flex items-center justify-between gap-4">
                 <span className="text-sm text-zinc-600">Total del pedido</span>
@@ -1174,10 +1193,12 @@ export default function OpsOrdersClient({
 
               <input
                 autoFocus
+                disabled={cashBusy || cashReview}
                 type="text"
                 inputMode="decimal"
                 value={cashReceivedAmount}
                 onChange={(event) => {
+                  setCashReview(false);
                   setCashReceivedAmount(event.target.value);
                   setCashError(null);
                 }}
@@ -1225,6 +1246,7 @@ export default function OpsOrdersClient({
                 <input
                   type="text"
                   value={terminalReference}
+                    disabled={cashBusy || cashReview}
                   onChange={(event) => {
                     setTerminalReference(event.target.value);
                     setCashError(null);
@@ -1236,6 +1258,12 @@ export default function OpsOrdersClient({
               </label>
             </div>
 
+            {cashReview && <div role="status" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <p className="font-bold">Revisa antes de confirmar</p>
+              <p>Recibido: {cashOrder.currency} {parsedCashReceived.toFixed(2)} · Cambio: {cashOrder.currency} {calculatedCashChange?.toFixed(2)}</p>
+              <p>Confirma únicamente después de recibir el dinero. Se cobra el pedido completo.</p>
+              <button type="button" disabled={cashBusy} onClick={() => setCashReview(false)} className="mt-3 rounded-lg border px-3 py-2 font-bold">Corregir importe</button>
+            </div>}
             {cashError && (
               <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
                 {cashError}
@@ -1261,7 +1289,7 @@ export default function OpsOrdersClient({
                 }
                 className="rounded-xl bg-zinc-950 px-4 py-3 font-bold text-white disabled:bg-zinc-400"
               >
-                {cashBusy ? "Registrando..." : "Confirmar efectivo"}
+                {cashBusy ? "Registrando..." : cashReview ? "Confirmar efectivo" : "Revisar cobro"}
               </button>
             </div>
           </form>

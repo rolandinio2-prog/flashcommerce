@@ -65,6 +65,17 @@ interface SetStaffStatusBody {
 export class StaffController {
   constructor(private readonly staffService: StaffService) {}
 
+  private sessionCookieOptions() {
+    // Only explicitly local development/test may use HTTP cookies.
+    // Configured HTTPS always requires Secure; never trust request headers.
+    const localMode = ['development', 'test'].includes(process.env.NODE_ENV || '');
+    const configuredHttps = [
+      process.env.FLASH_CUSTOMER_URL || '',
+      ...(process.env.FLASH_ALLOWED_ORIGINS || '').split(','),
+    ].some(origin => origin.trim().toLowerCase().startsWith('https://'));
+    return { httpOnly: true, sameSite: 'lax' as const, secure: !localMode || configuredHttps, path: '/' };
+  }
+
   @Get('bootstrap-status')
   getBootstrapStatus(
     @Query('tenant') tenantCode?: string,
@@ -119,9 +130,7 @@ export class StaffController {
     });
 
     response.cookie(this.staffService.getSessionCookieName(), result.token, {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
+      ...this.sessionCookieOptions(),
       maxAge: this.staffService.getSessionDurationMs(),
     });
 
@@ -161,9 +170,7 @@ export class StaffController {
     const result = await this.staffService.logout(request.staff.sessionId);
 
     response.clearCookie(this.staffService.getSessionCookieName(), {
-      httpOnly: true,
-      sameSite: 'lax',
-      path: '/',
+      ...this.sessionCookieOptions(),
     });
 
     return result;
