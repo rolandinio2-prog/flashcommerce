@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 
 import "./globals.css";
+import DriverPageZoomGuard from "./components/driver-page-zoom-guard";
 
 export const metadata: Metadata = {
-  title: "FlashDelivery Driver",
-  description: "Aplicacion operativa para repartidores FlashDelivery",
+  title: "FastPay | Repartidor",
+  description: "Gestión de recogidas y entregas",
 };
 
 export default function RootLayout({
@@ -13,8 +14,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
-      <body>{children}</body>
+    <html lang="es" data-driver-page-zoom="fixed">
+      <body><DriverPageZoomGuard />{children}</body>
     </html>
   );
 }
