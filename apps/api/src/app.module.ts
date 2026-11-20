@@ -15,6 +15,8 @@ import { TablesModule } from './tables/tables.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DeliveryModule } from './delivery/delivery.module';
+import { StaffModule } from './staff/staff.module';
+import { BranchOperationsModule } from './branch-operations/branch-operations.module';
 
 @Module({
   imports: [
@@ -39,6 +41,8 @@ import { DeliveryModule } from './delivery/delivery.module';
     ReservationsModule,
     PaymentsModule,
     DeliveryModule,
+    StaffModule,
+    BranchOperationsModule,
   ],
 
   controllers: [AppController],

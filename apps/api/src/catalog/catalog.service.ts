@@ -1,11 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 
 interface CatalogRow {
+  has_garnishes: boolean;
+  garnish_parent_id: string | null;
+  garnish_label: string | null;
+  garnish_image_url: string | null;
+  garnish_sort_order: number;
   category_id: string;
   category_name: string;
   category_slug: string;
   sort_order: number;
+  has_presentations: boolean;
+  presentation_parent_id: string | null;
+  presentation_label: string | null;
+  presentation_sort_order: number;
   product_id: string;
   sku: string | null;
   product_name: string;
@@ -22,7 +31,35 @@ interface CatalogRow {
 export class CatalogService {
   constructor(private readonly databaseService: DatabaseService) {}
 
-  async getCatalog(tenantCode: string, branchCode: string) {
+  private requireCode(value: string | undefined): string {
+    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value)) {
+      throw new BadRequestException('A valid commerce and branch identifier is required');
+    }
+    return value;
+  }
+
+  async getBranches(tenantCode: string | undefined) {
+    const tenant = this.requireCode(tenantCode);
+    const result = await this.databaseService.query<{
+      tenant_code: string; tenant_name: string; branch_code: string; branch_name: string;
+    }>(`
+      select t.code as tenant_code, t.name as tenant_name,
+             b.code as branch_code, b.name as branch_name
+      from public.tenants t
+      inner join public.branches b on b.tenant_id = t.id
+      where t.code = $1 and t.status = 'ACTIVE' and b.status = 'ACTIVE'
+      order by b.name, b.code
+    `, [tenant]);
+    if (!result.rows.length) throw new NotFoundException('Commerce unavailable');
+    return {
+      tenant: { code: result.rows[0].tenant_code, name: result.rows[0].tenant_name },
+      branches: result.rows.map(row => ({ code: row.branch_code, name: row.branch_name })),
+    };
+  }
+
+  async getCatalog(tenantCode: string | undefined, branchCode: string | undefined) {
+    tenantCode = this.requireCode(tenantCode);
+    branchCode = this.requireCode(branchCode);
     const branchResult = await this.databaseService.query<{
       tenant_code: string;
       tenant_name: string;
@@ -67,6 +104,12 @@ export class CatalogService {
 
           p.id::text as product_id,
           p.sku,
+          false as has_garnishes,
+          p.garnish_parent_id::text,p.garnish_label,p.garnish_image_url,p.garnish_sort_order,
+          exists(select 1 from public.products child join public.branch_products child_bp on child_bp.tenant_id=child.tenant_id and child_bp.product_id=child.id and child_bp.branch_id=bp.branch_id where child.tenant_id=p.tenant_id and child.presentation_parent_id=p.id) as has_presentations,
+          p.presentation_parent_id::text,
+          p.presentation_label,
+          p.presentation_sort_order,
           p.name as product_name,
           p.description,
           p.image_url,
@@ -121,6 +164,16 @@ export class CatalogService {
         products: Array<{
           id: string;
           sku: string | null;
+          hasPresentations: boolean;
+          hasGarnishes: boolean;
+          garnishParentId: string | null;
+          garnishLabel: string | null;
+          garnishImageUrl: string | null;
+          garnishSortOrder: number;
+
+        presentationParentId: string | null;
+          presentationLabel: string | null;
+          presentationSortOrder: number;
           name: string;
           description: string | null;
           imageUrl: string | null;
@@ -147,6 +200,15 @@ export class CatalogService {
       categories.get(row.category_id)!.products.push({
         id: row.product_id,
         sku: row.sku,
+        hasPresentations: row.has_presentations,
+        hasGarnishes: row.has_garnishes,
+        garnishParentId: row.garnish_parent_id,
+        garnishLabel: row.garnish_label,
+        garnishImageUrl: row.garnish_image_url,
+        garnishSortOrder: row.garnish_sort_order,
+        presentationParentId: row.presentation_parent_id,
+        presentationLabel: row.presentation_label,
+        presentationSortOrder: row.presentation_sort_order,
         name: row.product_name,
         description: row.description,
         imageUrl: row.image_url,

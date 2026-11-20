@@ -1,3 +1,4 @@
+import { lockBranchAdmission } from '../branch-operations/service-policy';
 import {
   BadRequestException,
   ConflictException,
@@ -158,6 +159,12 @@ export interface AssignOrderTableResponse {
   };
 }
 
+export interface TableContextCurrentOrder {
+  orderNumber: string;
+  trackingToken: string;
+  status: OperationalOrderStatus;
+}
+
 export interface OperationalTableQrContextResponse {
   tenant: string;
   branch: string;
@@ -166,6 +173,12 @@ export interface OperationalTableQrContextResponse {
   expiresAt: string;
   contextToken: string;
   menuUrl: string;
+  permanentUrl: string;
+  tableSession: {
+    id: string;
+    status: 'OPEN';
+  } | null;
+  currentOrder: TableContextCurrentOrder | null;
   table: {
     id: string;
     code: string;
@@ -182,6 +195,7 @@ export interface PublicTableContextResponse {
   timeZone: string;
   validOn: string;
   expiresAt: string;
+  sessionBound: boolean;
   table: {
     id: string;
     code: string;
@@ -190,6 +204,27 @@ export interface PublicTableContextResponse {
     zone: string | null;
     availability: TableAvailability;
   };
+}
+
+export interface PermanentTableQrResolutionResponse {
+  tenant: string;
+  branch: string;
+  validOn: string;
+  expiresAt: string;
+  menuUrl: string;
+  table: {
+    id: string;
+    code: string;
+    name: string;
+  };
+}
+
+interface PermanentQrDiningTableRow {
+  id: string;
+  code: string;
+  name: string;
+  tenant_code: string;
+  branch_code: string;
 }
 
 interface OperationalDiningTableRow {
@@ -283,6 +318,13 @@ interface TableContextRow {
   capacity: number;
   zone: string | null;
   availability: TableAvailability;
+  table_session_id: string | null;
+}
+
+interface TableContextOrderRow {
+  order_number: string;
+  tracking_token: string;
+  status: OperationalOrderStatus;
 }
 
 @Injectable()
@@ -409,6 +451,58 @@ export class TablesService {
     };
   }
 
+  private async getTableContextCurrentOrder(
+    tableSessionId: string | null,
+  ): Promise<TableContextCurrentOrder | null> {
+    if (!tableSessionId) {
+      return null;
+    }
+
+    const result =
+      await this.databaseService.query<TableContextOrderRow>(
+        `
+          select
+            o.order_number::text,
+            o.tracking_token::text,
+            o.status
+
+          from public.orders o
+
+          where o.table_session_id = $1::uuid
+            and o.order_type = 'DINE_IN'
+            and o.status <> 'CANCELLED'
+
+          order by
+            case
+              when o.status in (
+                'PENDING',
+                'CONFIRMED',
+                'PREPARING',
+                'READY'
+              )
+                then 0
+              else 1
+            end,
+            o.created_at desc
+
+          limit 1
+        `,
+        [tableSessionId],
+      );
+
+    const order = result.rows[0];
+
+    if (!order) {
+      return null;
+    }
+
+    return {
+      orderNumber: order.order_number,
+      trackingToken: order.tracking_token,
+      status: order.status,
+    };
+  }
+
   // =======================================================
   // 2. QR CONTEXTUAL DIARIO POR MESA
   // =======================================================
@@ -433,6 +527,8 @@ export class TablesService {
             dt.name,
             dt.capacity,
             dt.zone,
+            dt.public_qr_token::text as public_qr_token,
+            ts.id::text as table_session_id,
 
             case
               when ts.id is null
@@ -477,11 +573,31 @@ export class TablesService {
       );
     }
 
+    const permanentQrToken =
+      (
+        table as TableContextRow & {
+          public_qr_token: string;
+        }
+      ).public_qr_token;
+
+    if (!permanentQrToken) {
+      throw new NotFoundException(
+        'Permanent QR token is not configured for this table',
+      );
+    }
+
+    const currentOrder =
+      await this.getTableContextCurrentOrder(
+        table.table_session_id,
+      );
+
     const context = issueTableContext({
       tenant,
       branch,
       tableId: table.id,
       tableCode: table.code,
+      tableSessionId:
+        table.table_session_id ?? undefined,
     });
 
     const customerUrl = new URL(
@@ -497,6 +613,15 @@ export class TablesService {
       context.token,
     );
 
+    const permanentUrl = new URL(
+      process.env.FLASH_TABLE_QR_PUBLIC_BASE_URL?.trim() ||
+        'https://q.fastpay.com.bo',
+    );
+
+    permanentUrl.pathname = `/t/${permanentQrToken}`;
+    permanentUrl.search = '';
+    permanentUrl.hash = '';
+
     return {
       tenant,
       branch,
@@ -505,7 +630,111 @@ export class TablesService {
       expiresAt: context.expiresAt,
       contextToken: context.token,
       menuUrl: customerUrl.toString(),
-      table,
+      permanentUrl: permanentUrl.toString(),
+      tableSession:
+        table.table_session_id === null
+          ? null
+          : {
+              id: table.table_session_id,
+              status: 'OPEN',
+            },
+      currentOrder,
+      table: {
+        id: table.id,
+        code: table.code,
+        name: table.name,
+        capacity: table.capacity,
+        zone: table.zone,
+        availability: table.availability,
+      },
+    };
+  }
+
+  async resolvePermanentTableQr(
+    publicQrToken: string,
+  ): Promise<PermanentTableQrResolutionResponse> {
+    const normalizedToken =
+      publicQrToken.trim();
+
+    if (!normalizedToken) {
+      throw new BadRequestException(
+        'public table QR token is required',
+      );
+    }
+
+    const result =
+      await this.databaseService.query<PermanentQrDiningTableRow>(
+        `
+          select
+            dt.id::text,
+            dt.code,
+            dt.name,
+            t.code as tenant_code,
+            b.code as branch_code
+
+          from public.dining_tables dt
+
+          inner join public.tenants t
+            on t.id = dt.tenant_id
+
+          inner join public.branches b
+            on b.tenant_id = dt.tenant_id
+           and b.id = dt.branch_id
+
+          where dt.public_qr_token = $1::uuid
+            and dt.is_active = true
+
+          limit 1
+        `,
+        [normalizedToken],
+      );
+
+    const table =
+      result.rows[0];
+
+    if (!table) {
+      throw new NotFoundException(
+        'Permanent table QR does not reference an active table',
+      );
+    }
+
+    // The permanent QR identifies only the physical table.
+    // Do NOT bind this issued context to the current table
+    // session. Order checkout may reuse the OPEN session via
+    // the validated table context, while the printed QR stays
+    // valid across future table sessions.
+    const context =
+      issueTableContext({
+        tenant: table.tenant_code,
+        branch: table.branch_code,
+        tableId: table.id,
+        tableCode: table.code,
+      });
+
+    const customerUrl = new URL(
+      process.env.FLASH_CUSTOMER_URL?.trim() ||
+        'http://localhost:3000',
+    );
+
+    customerUrl.pathname = '/';
+    customerUrl.search = '';
+    customerUrl.hash = '';
+    customerUrl.searchParams.set(
+      'tableContext',
+      context.token,
+    );
+
+    return {
+      tenant: table.tenant_code,
+      branch: table.branch_code,
+      validOn: context.validOn,
+      expiresAt: context.expiresAt,
+      menuUrl: customerUrl.toString(),
+      table: {
+        id: table.id,
+        code: table.code,
+        name: table.name,
+      },
     };
   }
 
@@ -538,6 +767,7 @@ export class TablesService {
             dt.name,
             dt.capacity,
             dt.zone,
+            ts.id::text as table_session_id,
 
             case
               when ts.id is null
@@ -584,6 +814,19 @@ export class TablesService {
       );
     }
 
+    if (
+      payload.tableSessionId &&
+      table.table_session_id !== payload.tableSessionId
+    ) {
+      throw new BadRequestException(
+        'table context session is no longer open',
+      );
+    }
+
+    const sessionBound =
+      Boolean(payload.tableSessionId) &&
+      table.table_session_id === payload.tableSessionId;
+
     return {
       tenant: payload.tenant,
       branch: payload.branch,
@@ -591,7 +834,15 @@ export class TablesService {
       validOn: payload.validOn,
       expiresAt:
         getTableContextExpiration(payload.validOn),
-      table,
+      sessionBound,
+      table: {
+        id: table.id,
+        code: table.code,
+        name: table.name,
+        capacity: table.capacity,
+        zone: table.zone,
+        availability: table.availability,
+      },
     };
   }
 
@@ -849,6 +1100,8 @@ export class TablesService {
             'Table not found for this tenant and branch',
           );
         }
+
+        await lockBranchAdmission(client, table.tenant_id, table.branch_id, ['DINE_IN']);
 
         if (!table.is_active) {
           throw new ConflictException(

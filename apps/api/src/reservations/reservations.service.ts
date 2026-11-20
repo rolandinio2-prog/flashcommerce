@@ -1,3 +1,4 @@
+import { lockBranchAdmission } from '../branch-operations/service-policy';
 import {
   BadRequestException,
   ConflictException,
@@ -348,6 +349,7 @@ export class ReservationsService {
     const window = this.parseFutureWindow(reservedForInput, durationMinutes);
 
     const branchRow = await this.getBranch(tenant, branch);
+    await this.databaseService.withTransaction(c => lockBranchAdmission(c, branchRow.tenant_id, branchRow.branch_id, ['DINE_IN','RESERVATIONS']));
 
     const result = await this.databaseService.query<ReservationAvailabilityRow>(
       `
@@ -519,6 +521,8 @@ export class ReservationsService {
             'Table not found for this tenant and branch',
           );
         }
+
+        await lockBranchAdmission(client, table.tenant_id, table.branch_id, ['DINE_IN','RESERVATIONS']);
 
         if (!table.is_active) {
           throw new ConflictException(`${table.name} is not active`);

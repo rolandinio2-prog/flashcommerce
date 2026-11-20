@@ -1,3 +1,4 @@
+import { OperationsModule } from '../operations/operations.module';
 import { Module } from '@nestjs/common';
 
 import { OrderController } from './order.controller';
@@ -6,7 +7,7 @@ import { DeliveryModule } from '../delivery/delivery.module';
 import { OrderService } from './order.service';
 
 @Module({
-  imports: [DeliveryModule],
+  imports: [OperationsModule, DeliveryModule],
 
   controllers: [OrderController, OpsOrderController],
 

@@ -1,9 +1,11 @@
+import { OperationsModule } from '../operations/operations.module';
 import { Module } from '@nestjs/common';
 
 import { PaymentsModule } from '../payments/payments.module';
 import { DeliveryAddressService } from './delivery-address.service';
 import { DeliveryController } from './delivery.controller';
 import { DeliveryService } from './delivery.service';
+import { DeliveryDispatchQueueService } from './delivery-dispatch-queue.service';
 import { DriverAccessGuard } from './driver-access.guard';
 import { DriverAuthController } from './driver-auth.controller';
 import { DriverAuthService } from './driver-auth.service';
@@ -22,10 +24,15 @@ import { OpsDeliveryController } from './ops-delivery.controller';
 import { GeoProfileResolver } from './geo-profile-resolver.service';
 import { GeoUsageMeterService } from './geo-usage-meter.service';
 
+import { DeliveryMonitorController } from './delivery-monitor.controller';
+import { DeliveryMonitorService } from './delivery-monitor.service';
+import { DeliveryMonitorRealtimeSessionService } from './delivery-monitor-realtime-session.service';
+
 @Module({
-  imports: [PaymentsModule],
+  imports: [OperationsModule, PaymentsModule],
 
   controllers: [
+    DeliveryMonitorController,
     DeliveryController,
     OpsDeliveryController,
     DriverController,
@@ -33,8 +40,11 @@ import { GeoUsageMeterService } from './geo-usage-meter.service';
   ],
 
   providers: [
+    DeliveryMonitorService,
+    DeliveryMonitorRealtimeSessionService,
     GeoProfileResolver,
     DeliveryService,
+    DeliveryDispatchQueueService,
     DeliveryAddressService,
     GeoUsageMeterService,
 

@@ -41,6 +41,7 @@ export interface GeoGeocodeAddressInput {
 }
 
 export interface GeoResolvedLocation {
+  requiresMapConfirmation?: boolean;
   placeId: string;
   formattedAddress: string;
   location: GeoPoint;

@@ -1,6 +1,9 @@
+import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
   Controller,
+  Req,
   Get,
   Param,
   ParseUUIDPipe,
@@ -15,25 +18,25 @@ interface UpdateOrderStatusBody {
 }
 
 @Controller('ops/orders')
+@OperationsAccess()
 export class OpsOrderController {
   constructor(private readonly orderService: OrderService) {}
 
   @Get()
+  @OperationPermission('orders.read')
   getOperationalOrders(
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
+    @Req() request: StaffAuthenticatedRequest,
   ) {
     return this.orderService.getOperationalOrders(
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 
   @Patch(':orderId/status')
+  @OperationPermission('orders.status')
   updateOrderStatus(
+    @Req() request: StaffAuthenticatedRequest,
     @Param('orderId', new ParseUUIDPipe())
     orderId: string,
 
@@ -43,6 +46,7 @@ export class OpsOrderController {
     return this.orderService.updateOrderStatus(
       orderId,
       body?.status,
+      request.staff,
     );
   }
 
@@ -54,20 +58,16 @@ export class OpsOrderController {
   // =======================================================
 
   @Patch(':orderId/table-session/close')
+  @OperationPermission('tables.manage')
   closeTableSession(
+    @Req() request: StaffAuthenticatedRequest,
     @Param('orderId', new ParseUUIDPipe())
     orderId: string,
-
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
   ) {
     return this.orderService.closeTableSession(
       orderId,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 }

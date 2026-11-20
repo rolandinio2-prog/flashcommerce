@@ -1,12 +1,16 @@
+import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
   Controller,
+  Req,
   Get,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
+  Redirect,
 } from '@nestjs/common';
 
 import {
@@ -31,6 +35,31 @@ export class TablesController {
   constructor(
     private readonly tablesService: TablesService,
   ) {}
+
+  // =======================================================
+  // GET /api/v1/tables/public-qr/:publicQrToken
+  //
+  // Resolves the permanent physical-table QR into a fresh
+  // signed daily table context and redirects to Customer.
+  // Scanning is read-only and never creates a table session.
+  // =======================================================
+
+  @Get('public-qr/:publicQrToken')
+  @Redirect()
+  async resolvePermanentTableQr(
+    @Param('publicQrToken', new ParseUUIDPipe())
+    publicQrToken: string,
+  ): Promise<{ url: string; statusCode: number }> {
+    const resolution =
+      await this.tablesService.resolvePermanentTableQr(
+        publicQrToken,
+      );
+
+    return {
+      url: resolution.menuUrl,
+      statusCode: 307,
+    };
+  }
 
   // =======================================================
   // GET /api/v1/tables/context?token=...
@@ -78,6 +107,7 @@ export class TablesController {
 // =========================================================
 
 @Controller('ops/tables')
+@OperationsAccess()
 export class OpsTablesController {
   constructor(
     private readonly tablesService: TablesService,
@@ -92,16 +122,13 @@ export class OpsTablesController {
   // =======================================================
 
   @Get()
+  @OperationPermission('tables.read')
   getOperationalTables(
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
+    @Req() request: StaffAuthenticatedRequest,
   ): Promise<OperationalTablesResponse> {
     return this.tablesService.getOperationalTables(
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 
@@ -111,20 +138,16 @@ export class OpsTablesController {
   // =======================================================
 
   @Get(':tableId/qr-context')
+  @OperationPermission('tables.read')
   getTableQrContext(
+    @Req() request: StaffAuthenticatedRequest,
     @Param('tableId', new ParseUUIDPipe())
     tableId: string,
-
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
   ): Promise<OperationalTableQrContextResponse> {
     return this.tablesService.getOperationalTableQrContext(
       tableId,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 
@@ -133,20 +156,16 @@ export class OpsTablesController {
   // =======================================================
 
   @Post(':tableId/occupy')
+  @OperationPermission('tables.manage')
   occupyTable(
+    @Req() request: StaffAuthenticatedRequest,
     @Param('tableId', new ParseUUIDPipe())
     tableId: string,
-
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
   ): Promise<OccupyOperationalTableResponse> {
     return this.tablesService.occupyTable(
       tableId,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 }
@@ -156,6 +175,7 @@ export class OpsTablesController {
 // =========================================================
 
 @Controller('ops/table-sessions')
+@OperationsAccess()
 export class OpsTableSessionsController {
   constructor(
     private readonly tablesService: TablesService,
@@ -166,20 +186,16 @@ export class OpsTableSessionsController {
   // =======================================================
 
   @Patch(':sessionId/close')
+  @OperationPermission('tables.manage')
   closeTableSession(
+    @Req() request: StaffAuthenticatedRequest,
     @Param('sessionId', new ParseUUIDPipe())
     sessionId: string,
-
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
   ): Promise<CloseOperationalTableSessionResponse> {
     return this.tablesService.closeTableSession(
       sessionId,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 }
@@ -189,6 +205,7 @@ export class OpsTableSessionsController {
 // =========================================================
 
 @Controller('ops/orders')
+@OperationsAccess()
 export class OpsOrderTableAssignmentsController {
   constructor(
     private readonly tablesService: TablesService,
@@ -200,24 +217,20 @@ export class OpsOrderTableAssignmentsController {
   // =======================================================
 
   @Patch(':orderId/table-session')
+  @OperationPermission('tables.manage')
   assignOrderToTable(
+    @Req() request: StaffAuthenticatedRequest,
     @Param('orderId', new ParseUUIDPipe())
     orderId: string,
 
     @Body('tableId', new ParseUUIDPipe())
     tableId: string,
-
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
   ): Promise<AssignOrderTableResponse> {
     return this.tablesService.assignOrderToTable(
       orderId,
       tableId,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 }

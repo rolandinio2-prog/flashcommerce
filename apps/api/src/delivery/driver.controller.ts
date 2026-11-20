@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Req,
+  ForbiddenException,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -50,6 +51,7 @@ export class DriverController {
           identity.phone,
 
         status: 'ACTIVE',
+        passwordChangeRequired: identity.passwordChangeRequired,
       },
 
       credential: {
@@ -65,9 +67,27 @@ export class DriverController {
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      this.requireIdentity(request);
+      this.requireOperationalIdentity(request);
 
     return this.deliveryService.getDriverActiveDeliveries(
+      identity.tenantId,
+      identity.driverId,
+    );
+  }
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Get('deliveries/:deliveryId/map-route')
+  getDeliveryMapRoute(
+    @Param('deliveryId')
+    deliveryId: string,
+
+    @Req()
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity =
+      this.requireOperationalIdentity(request);
+
+    return this.deliveryService.getDriverDeliveryMapRoute(
+      deliveryId,
       identity.tenantId,
       identity.driverId,
     );
@@ -81,7 +101,7 @@ export class DriverController {
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      this.requireIdentity(request);
+      this.requireOperationalIdentity(request);
 
     return this.deliveryService.acceptDriverDelivery(
       deliveryId,
@@ -100,7 +120,7 @@ export class DriverController {
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      this.requireIdentity(request);
+      this.requireOperationalIdentity(request);
 
     return this.deliveryService.pickupDriverDelivery(
       deliveryId,
@@ -118,7 +138,7 @@ export class DriverController {
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      this.requireIdentity(request);
+      this.requireOperationalIdentity(request);
 
     return this.deliveryService.startDriverDelivery(
       deliveryId,
@@ -136,7 +156,7 @@ export class DriverController {
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      this.requireIdentity(request);
+      this.requireOperationalIdentity(request);
 
     return this.deliveryService.arriveDriverDelivery(
       deliveryId,
@@ -167,7 +187,7 @@ export class DriverController {
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      this.requireIdentity(request);
+      this.requireOperationalIdentity(request);
 
     return this.deliveryService.recordDriverLocation(
       deliveryId,
@@ -198,7 +218,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity = this.requireIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.collectDriverCodCash(
       deliveryId,
@@ -223,7 +243,7 @@ export class DriverController {
     request: DriverAuthenticatedRequest,
   ) {
     const identity =
-      this.requireIdentity(request);
+      this.requireOperationalIdentity(request);
 
     return this.deliveryService.deliverDriverDelivery(
       deliveryId,
@@ -233,6 +253,20 @@ export class DriverController {
       body?.pod,
     );
   }
+  private requireOperationalIdentity(
+    request: DriverAuthenticatedRequest,
+  ) {
+    const identity = this.requireIdentity(request);
+
+    if (identity.passwordChangeRequired) {
+      throw new ForbiddenException(
+        'Driver password change is required',
+      );
+    }
+
+    return identity;
+  }
+
   private requireIdentity(
     request: DriverAuthenticatedRequest,
   ) {

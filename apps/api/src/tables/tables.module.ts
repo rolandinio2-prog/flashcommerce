@@ -1,3 +1,4 @@
+import { OperationsModule } from '../operations/operations.module';
 import { Module } from '@nestjs/common';
 
 import {
@@ -13,6 +14,7 @@ import { TablesService } from './tables.service';
 // =========================================================
 
 @Module({
+  imports: [OperationsModule],
   controllers: [
     TablesController,
     OpsTablesController,

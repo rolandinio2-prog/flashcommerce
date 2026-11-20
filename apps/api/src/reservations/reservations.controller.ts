@@ -1,6 +1,9 @@
+import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
   Controller,
+  Req,
   Get,
   Param,
   ParseUUIDPipe,
@@ -80,17 +83,15 @@ export class ReservationsController {
 // =========================================================
 
 @Controller("ops/reservations")
+@OperationsAccess()
 export class OpsReservationsController {
   constructor(private readonly reservationsService: ReservationsService) {}
 
   // GET /api/v1/ops/reservations
   @Get()
+  @OperationPermission('reservations.read')
   getOperationalReservations(
-    @Query("tenant")
-    tenantCode?: string,
-
-    @Query("branch")
-    branchCode?: string,
+    @Req() request: StaffAuthenticatedRequest,
 
     @Query("from")
     from?: string,
@@ -102,8 +103,8 @@ export class OpsReservationsController {
     status?: string,
   ): Promise<OperationalReservationsResponse> {
     return this.reservationsService.getOperationalReservations(
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
       from,
       to,
       status,
@@ -112,43 +113,35 @@ export class OpsReservationsController {
 
   // PATCH /api/v1/ops/reservations/:id/status
   @Patch(":reservationId/status")
+  @OperationPermission('reservations.manage')
   updateReservationStatus(
+    @Req() request: StaffAuthenticatedRequest,
     @Param("reservationId", new ParseUUIDPipe())
     reservationId: string,
 
     @Body()
     body: UpdateReservationStatusInput,
-
-    @Query("tenant")
-    tenantCode?: string,
-
-    @Query("branch")
-    branchCode?: string,
   ): Promise<UpdateReservationStatusResponse> {
     return this.reservationsService.updateReservationStatus(
       reservationId,
       body?.status,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 
   // POST /api/v1/ops/reservations/:id/check-in
   @Post(":reservationId/check-in")
+  @OperationPermission('reservations.manage')
   checkInReservation(
+    @Req() request: StaffAuthenticatedRequest,
     @Param("reservationId", new ParseUUIDPipe())
     reservationId: string,
-
-    @Query("tenant")
-    tenantCode?: string,
-
-    @Query("branch")
-    branchCode?: string,
   ): Promise<CheckInReservationResponse> {
     return this.reservationsService.checkInReservation(
       reservationId,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 }

@@ -1,3 +1,5 @@
+import { assertLocalCashAllowed, rejectCashOnDelivery } from './delivery-payment-policy';
+import type { StaffSessionPrincipal } from '../staff/staff.types';
 import {
   BadRequestException,
   ConflictException,
@@ -66,6 +68,7 @@ interface PaymentOrderRow {
   status: OrderStatus;
   payment_status: OrderPaymentStatus;
   order_origin: OrderOrigin;
+  order_type?: string;
   total: string;
   currency: string;
   reservation_id: string | null;
@@ -255,6 +258,377 @@ export class PaymentsService {
   // CREAR O REUTILIZAR INTENTO QR
   // =====================================================
 
+
+  // =====================================================
+  // OPS REVIEW_REQUIRED RECONCILIATION - PROVIDER TRUTH
+  // R6.13.4.8.3
+  // =====================================================
+  async reconcileReviewRequiredByOrderNumber(orderNumber: string, principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>) {
+    const normalizedOrderNumber = String(orderNumber ?? '').trim();
+
+    if (!normalizedOrderNumber || normalizedOrderNumber.length > 64) {
+      throw new BadRequestException('orderNumber is invalid');
+    }
+
+    const snapshot = await this.databaseService.withTransaction(
+      async (client) => {
+        const orderResult = await client.query<{
+          id: string;
+          order_number: string;
+          status: OrderStatus;
+          payment_status: OrderPaymentStatus;
+          reservation_id: string | null;
+          reservation_status: string | null;
+        }>(
+          `
+            select
+              o.id::text,
+              o.order_number::text,
+              o.status,
+              o.payment_status,
+              o.reservation_id::text,
+              r.status as reservation_status
+            from public.orders o
+            left join public.table_reservations r
+              on r.id = o.reservation_id
+            where o.order_number::text = $1
+            and o.tenant_id = $2::uuid and o.branch_id = $3::uuid
+            order by o.created_at desc
+            limit 2
+          `,
+          [normalizedOrderNumber, principal.tenantId, principal.branchId],
+        );
+
+        if (orderResult.rows.length === 0) {
+          throw new NotFoundException('Order was not found');
+        }
+
+        if (orderResult.rows.length !== 1) {
+          throw new ConflictException('Order number is ambiguous');
+        }
+
+        const order = orderResult.rows[0];
+
+        const paymentResult = await client.query<{
+          id: string;
+          tenant_id: string;
+          branch_id: string;
+          order_id: string;
+          provider: string;
+          status: PaymentAttemptStatus;
+          provider_payment_id: string | null;
+          provider_transaction_id: string | null;
+          paid_at: string | Date | null;
+          verified_at: string | Date | null;
+        }>(
+          `
+            select
+              id::text,
+              tenant_id::text,
+              branch_id::text,
+              order_id::text,
+              provider,
+              status,
+              provider_payment_id,
+              provider_transaction_id,
+              paid_at,
+              verified_at
+            from public.order_payments
+            where order_id = $1::uuid
+              and method = 'QR'
+              and provider = 'BCP_QR'
+            order by attempt_number desc
+            limit 1
+          `,
+          [order.id],
+        );
+
+        const payment = paymentResult.rows[0];
+
+        if (!payment) {
+          throw new ConflictException('BCP QR payment was not found');
+        }
+
+        if (
+          order.payment_status === 'PAID' &&
+          payment.status === 'PAID'
+        ) {
+          return {
+            action: 'ALREADY_PAID' as const,
+            orderNumber: order.order_number,
+            orderStatus: order.status,
+            paymentStatus: order.payment_status,
+            providerPaymentId: null as string | null,
+          };
+        }
+
+        if (
+          order.payment_status !== 'REVIEW_REQUIRED' ||
+          payment.status !== 'REVIEW_REQUIRED'
+        ) {
+          throw new ConflictException('Payment is not eligible for reconciliation');
+        }
+
+        if (!payment.provider_payment_id) {
+          throw new ConflictException('BCP provider reference is unavailable');
+        }
+
+        return {
+          action: 'QUERY_PROVIDER' as const,
+          orderNumber: order.order_number,
+          orderStatus: order.status,
+          paymentStatus: order.payment_status,
+          providerPaymentId: payment.provider_payment_id,
+        };
+      },
+    );
+
+    if (snapshot.action === 'ALREADY_PAID') {
+      return {
+        changed: false,
+        action: 'UNCHANGED' as const,
+        orderNumber: snapshot.orderNumber,
+        orderStatus: snapshot.orderStatus,
+        paymentStatus: 'PAID' as const,
+        providerStatus: 'PAID' as const,
+      };
+    }
+
+    let providerTruth;
+
+    try {
+      providerTruth = await this.bcpQrProvider.getPaymentStatus(
+        snapshot.providerPaymentId,
+      );
+    } catch {
+      return {
+        changed: false,
+        action: 'REVIEW_REQUIRED' as const,
+        orderNumber: snapshot.orderNumber,
+        orderStatus: snapshot.orderStatus,
+        paymentStatus: 'REVIEW_REQUIRED' as const,
+        providerStatus: 'UNKNOWN' as const,
+      };
+    }
+
+    const providerStatus =
+      String(providerTruth.status ?? '').trim().toUpperCase();
+
+    if (
+      providerStatus === 'EXPIRED' ||
+      providerStatus === 'CANCELLED'
+    ) {
+      return this.applyBcpTerminalReconciliationByOrderNumber(
+        String(orderNumber),
+        providerStatus,
+        principal,
+      );
+    }
+    if (providerStatus !== 'PAID') {
+      return {
+        changed: false,
+        action: 'REVIEW_REQUIRED' as const,
+        orderNumber: snapshot.orderNumber,
+        orderStatus: snapshot.orderStatus,
+        paymentStatus: 'REVIEW_REQUIRED' as const,
+        providerStatus,
+      };
+    }
+
+    const providerTransactionId =
+      providerTruth.providerTransactionId?.trim() || '';
+
+    const paidAt = providerTruth.paidAt
+      ? new Date(providerTruth.paidAt)
+      : null;
+
+    if (
+      !providerTransactionId ||
+      !paidAt ||
+      Number.isNaN(paidAt.getTime())
+    ) {
+      return {
+        changed: false,
+        action: 'REVIEW_REQUIRED' as const,
+        orderNumber: snapshot.orderNumber,
+        orderStatus: snapshot.orderStatus,
+        paymentStatus: 'REVIEW_REQUIRED' as const,
+        providerStatus: 'UNKNOWN' as const,
+      };
+    }
+
+    return this.databaseService.withTransaction(async (client) => {
+      const orderResult = await client.query<{
+        id: string;
+        order_number: string;
+        status: OrderStatus;
+        payment_status: OrderPaymentStatus;
+        reservation_id: string | null;
+        reservation_status: string | null;
+      }>(
+        `
+          select
+            o.id::text,
+            o.order_number::text,
+            o.status,
+            o.payment_status,
+            o.reservation_id::text,
+            r.status as reservation_status
+          from public.orders o
+          left join public.table_reservations r
+            on r.id = o.reservation_id
+          where o.order_number::text = $1
+            and o.tenant_id = $2::uuid and o.branch_id = $3::uuid
+          limit 1
+          for update of o
+        `,
+        [snapshot.orderNumber, principal.tenantId, principal.branchId],
+      );
+
+      const order = orderResult.rows[0];
+
+      if (!order) {
+        throw new ConflictException('Order changed during reconciliation');
+      }
+
+      const paymentResult = await client.query<{
+        id: string;
+        tenant_id: string;
+        branch_id: string;
+        order_id: string;
+        provider: string;
+        status: PaymentAttemptStatus;
+        provider_payment_id: string | null;
+      }>(
+        `
+          select
+            id::text,
+            tenant_id::text,
+            branch_id::text,
+            order_id::text,
+            provider,
+            status,
+            provider_payment_id
+          from public.order_payments
+          where order_id = $1::uuid
+            and method = 'QR'
+            and provider = 'BCP_QR'
+          order by attempt_number desc
+          limit 1
+          for update
+        `,
+        [order.id],
+      );
+
+      const payment = paymentResult.rows[0];
+
+      if (!payment) {
+        throw new ConflictException('Payment changed during reconciliation');
+      }
+
+      if (
+        order.payment_status === 'PAID' &&
+        payment.status === 'PAID'
+      ) {
+        return {
+          changed: false,
+          action: 'UNCHANGED' as const,
+          orderNumber: order.order_number,
+          orderStatus: order.status,
+          paymentStatus: 'PAID' as const,
+          providerStatus: 'PAID' as const,
+        };
+      }
+
+      if (
+        order.payment_status !== 'REVIEW_REQUIRED' ||
+        payment.status !== 'REVIEW_REQUIRED'
+      ) {
+        throw new ConflictException('Payment state changed during reconciliation');
+      }
+
+      if (payment.provider_payment_id !== snapshot.providerPaymentId) {
+        throw new ConflictException('Provider reference changed during reconciliation');
+      }
+
+      const paidPaymentResult = await client.query<{
+        status: PaymentAttemptStatus;
+      }>(
+        `
+          update public.order_payments
+          set
+            status = 'PAID',
+            provider_transaction_id = $2,
+            paid_at = $3::timestamptz,
+            verified_at = now(),
+            updated_at = now()
+          where id = $1::uuid
+            and status = 'REVIEW_REQUIRED'
+          returning status
+        `,
+        [payment.id, providerTransactionId, paidAt.toISOString()],
+      );
+
+      if (paidPaymentResult.rows.length !== 1) {
+        throw new ConflictException('Payment changed concurrently');
+      }
+
+      const reservationAllowsConfirmation =
+        !order.reservation_id ||
+        order.reservation_status === 'CONFIRMED' ||
+        order.reservation_status === 'SEATED';
+
+      const updatedOrderResult = await client.query<{
+        status: OrderStatus;
+        payment_status: OrderPaymentStatus;
+      }>(
+        `
+          update public.orders
+          set
+            payment_status = 'PAID',
+            status = case
+              when status = 'PENDING'
+                and $2::boolean
+                then 'CONFIRMED'
+              else status
+            end
+          where id = $1::uuid
+          returning status, payment_status
+        `,
+        [order.id, reservationAllowsConfirmation],
+      );
+
+      const updatedOrder = updatedOrderResult.rows[0];
+
+      if (!updatedOrder) {
+        throw new ConflictException('Order changed concurrently');
+      }
+
+      await this.insertPaymentEvent(client, {
+        tenantId: payment.tenant_id,
+        branchId: payment.branch_id,
+        paymentId: payment.id,
+        eventType: 'RECONCILIATION',
+        source: 'RECONCILIATION',
+        processingStatus: 'PROCESSED',
+        payload: {
+          reason: 'OPS_PROVIDER_TRUTH_RECONCILIATION',
+          provider: 'BCP_QR',
+          providerStatus: 'PAID',
+          orderNumber: order.order_number,
+        },
+      });
+
+      return {
+        changed: true,
+        action: 'RECONCILED' as const,
+        orderNumber: order.order_number,
+        orderStatus: updatedOrder.status,
+        paymentStatus: updatedOrder.payment_status,
+        providerStatus: 'PAID' as const,
+      };
+    });
+  }
   async handleBcpQrCallback(
     authorization: string | undefined,
     input: BcpQrCallbackInput,
@@ -793,7 +1167,7 @@ export class PaymentsService {
       },
     );
   }
-  async createQrPayment(trackingToken: string) {
+  async createQrPayment(trackingToken: string, customerPhoneInput?: unknown) {
     const configuredProvider = this.getPaymentProvider();
 
     const expiresAt = new Date(Date.now() + this.getQrTtlSeconds() * 1000);
@@ -803,6 +1177,28 @@ export class PaymentsService {
         const order = await this.loadOrderForPayment(client, trackingToken);
 
         this.assertOrderCanReceivePayment(order);
+
+        // Validate before reserving an attempt; the order row is already locked.
+        const prepareContact = async (providerName: string): Promise<void> => {
+          if (providerName !== 'BCP_QR') return;
+          const existingPhone = order.customer_phone?.trim() || '';
+          const phone = existingPhone ||
+            (typeof customerPhoneInput === 'string' ? customerPhoneInput.trim() : '');
+          if (!/^\+?[0-9 ()-]{7,25}$/.test(phone) ||
+              !/^[0-9]{7,15}$/.test(phone.replace(/\D/g, ''))) {
+            throw new BadRequestException('Ingresa un telefono valido de 7 a 15 digitos para generar el QR.');
+          }
+          if (!order.branch_name?.trim()) {
+            throw new ServiceUnavailableException('La sucursal debe completar sus datos para habilitar el pago QR.');
+          }
+          if (!existingPhone) {
+            await client.query(
+              'update public.orders set customer_phone = $4 where id = $1::uuid and tenant_id = $2::uuid and branch_id = $3::uuid',
+              [order.id, order.tenant_id, order.branch_id, phone],
+            );
+            order.customer_phone = phone;
+          }
+        };
 
         const activeResult = await client.query<PaymentAttemptRow>(
           `
@@ -889,6 +1285,9 @@ export class PaymentsService {
         }
 
         if (activePayment) {
+          if (activePayment.status === 'CREATED' && !activePayment.provider_payment_id) {
+            await prepareContact(activePayment.provider);
+          }
           return {
             order,
             payment: activePayment,
@@ -897,6 +1296,8 @@ export class PaymentsService {
               !activePayment.provider_payment_id,
           };
         }
+
+        await prepareContact(configuredProvider.name);
 
         const attemptResult = await client.query<{
           attempt_number: number;
@@ -1209,6 +1610,7 @@ export class PaymentsService {
     trackingToken: string,
     idempotencyKeyInput?: string,
   ) {
+    rejectCashOnDelivery();
     const idempotencyToken =
       this.requireIdempotencyToken(idempotencyKeyInput);
 
@@ -1785,6 +2187,7 @@ export class PaymentsService {
     client: PoolClient,
     input: DriverCodCashCollectionInput,
   ) {
+    rejectCashOnDelivery();
     const cashReceivedAmount = this.requireCashAmount(input.cashReceivedAmount);
 
     const idempotencyToken = this.requireIdempotencyToken(input.idempotencyKey);
@@ -3526,6 +3929,7 @@ export class PaymentsService {
                 o.status,
                 o.payment_status,
                 o.order_origin,
+                o.order_type,
                 o.total::text,
                 o.currency,
                 o.reservation_id::text,
@@ -3560,6 +3964,7 @@ export class PaymentsService {
         throw new NotFoundException('Order not found in cashier branch');
       }
 
+      assertLocalCashAllowed(order.order_type ?? '');
       const idempotencyKey = `cash:${order.id}:${idempotencyToken}`;
 
       const existingResult = await client.query<
@@ -4162,7 +4567,7 @@ export class PaymentsService {
   // CONFIRMACIÃ“N MOCK - SOLO LABORATORIO
   // =====================================================
 
-  async confirmMockPayment(paymentId: string, labAccessKey?: string) {
+  async confirmMockPayment(paymentId: string, labAccessKey: string | undefined, principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>) {
     this.assertMockConfirmationAllowed(labAccessKey);
     this.getMockProvider();
 
@@ -4241,10 +4646,11 @@ export class PaymentsService {
                   o.reservation_id
 
               where p.id = $1::uuid
+                and p.tenant_id = $2::uuid and p.branch_id = $3::uuid
 
               for update of p, o
             `,
-        [paymentId],
+        [paymentId, principal.tenantId, principal.branchId],
       );
 
       const row = result.rows[0];
@@ -5192,6 +5598,141 @@ export class PaymentsService {
         id: `E-${randomUUID()}`,
       },
     };
+  }
+  private async applyBcpTerminalReconciliationByOrderNumber(
+    orderNumber: string,
+    terminalStatus: 'EXPIRED' | 'CANCELLED',
+    principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
+  ) {
+    return this.databaseService.withTransaction(async (client) => {
+      const lockedResult = await client.query<{
+        tenant_id: string;
+        branch_id: string;
+        payment_id: string;
+        payment_status: PaymentAttemptStatus;
+        payment_provider: string;
+        order_id: string;
+        order_status: OrderStatus;
+        order_payment_status: OrderPaymentStatus;
+      }>(
+        `
+          select
+            p.tenant_id::text as tenant_id,
+            p.branch_id::text as branch_id,
+            p.id::text as payment_id,
+            p.status as payment_status,
+            p.provider as payment_provider,
+            o.id::text as order_id,
+            o.status as order_status,
+            o.payment_status as order_payment_status
+          from public.orders o
+          inner join public.order_payments p
+            on p.tenant_id = o.tenant_id
+           and p.branch_id = o.branch_id
+           and p.order_id = o.id
+          where o.order_number::text = $1
+            and o.tenant_id = $2::uuid and o.branch_id = $3::uuid
+            and p.method = 'QR'
+            and upper(p.provider) = 'BCP_QR'
+          order by p.attempt_number desc
+          limit 1
+          for update of o, p
+        `,
+        [orderNumber, principal.tenantId, principal.branchId],
+      );
+
+      const row = lockedResult.rows[0];
+
+      if (!row) {
+        throw new NotFoundException('Order payment not found for reconciliation');
+      }
+
+      if (String(row.payment_provider).trim().toUpperCase() !== 'BCP_QR') {
+        throw new ConflictException('Payment provider changed during reconciliation');
+      }
+
+      if (
+        row.payment_status === terminalStatus &&
+        row.order_payment_status === terminalStatus
+      ) {
+        return {
+          reconciled: true as const,
+          providerStatus: terminalStatus,
+          paymentStatus: row.payment_status,
+          orderStatus: row.order_status,
+          orderPaymentStatus: row.order_payment_status,
+        };
+      }
+
+      if (row.payment_status !== 'REVIEW_REQUIRED') {
+        throw new ConflictException('Payment status changed during reconciliation');
+      }
+
+      if (row.order_payment_status !== 'REVIEW_REQUIRED') {
+        throw new ConflictException('Order payment status changed during reconciliation');
+      }
+
+      const paymentUpdate = await client.query(
+        `
+          update public.order_payments
+          set
+            status = $2,
+            updated_at = now()
+          where id = $1::uuid
+            and status = 'REVIEW_REQUIRED'
+          returning id::text
+        `,
+        [row.payment_id, terminalStatus],
+      );
+
+      if (paymentUpdate.rowCount !== 1) {
+        throw new ConflictException('Payment terminal reconciliation write was not applied');
+      }
+
+      const orderUpdate = await client.query<{
+        status: OrderStatus;
+        payment_status: OrderPaymentStatus;
+      }>(
+        `
+          update public.orders
+          set
+            payment_status = $2,
+            updated_at = now()
+          where id = $1::uuid
+            and payment_status = 'REVIEW_REQUIRED'
+          returning status, payment_status
+        `,
+        [row.order_id, terminalStatus],
+      );
+
+      if (orderUpdate.rowCount !== 1) {
+        throw new ConflictException('Order terminal payment reconciliation write was not applied');
+      }
+
+      const updatedOrder = orderUpdate.rows[0];
+
+      await this.insertPaymentEvent(client, {
+        tenantId: row.tenant_id,
+        branchId: row.branch_id,
+        paymentId: row.payment_id,
+        eventType: terminalStatus === 'EXPIRED' ? 'PAYMENT_EXPIRED' : 'PAYMENT_CANCELLED',
+        source: 'RECONCILIATION',
+        processingStatus: 'PROCESSED',
+        payload: {
+          reason: 'BCP_PROVIDER_TERMINAL_STATUS_CONFIRMED',
+          provider: 'BCP_QR',
+          providerStatus: terminalStatus,
+        },
+      });
+
+      return {
+        reconciled: true as const,
+        providerStatus: terminalStatus,
+        paymentStatus: terminalStatus,
+        orderStatus: updatedOrder.status,
+        orderPaymentStatus: updatedOrder.payment_status,
+      };
+    });
   }
   private async insertPaymentEvent(
     client: PoolClient,

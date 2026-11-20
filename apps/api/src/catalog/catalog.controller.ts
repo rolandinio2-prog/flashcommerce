@@ -5,10 +5,15 @@ import { CatalogService } from './catalog.service';
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
 
+  @Get('branches')
+  getBranches(@Query('tenant') tenantCode?: string) {
+    return this.catalogService.getBranches(tenantCode);
+  }
+
   @Get()
   getCatalog(
-    @Query('tenant') tenantCode = 'POLLO001',
-    @Query('branch') branchCode = 'SUC001',
+    @Query('tenant') tenantCode?: string,
+    @Query('branch') branchCode?: string,
   ) {
     return this.catalogService.getCatalog(tenantCode, branchCode);
   }

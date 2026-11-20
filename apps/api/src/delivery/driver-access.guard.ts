@@ -18,6 +18,7 @@ export interface AuthenticatedDriverContext {
   driverCode: string;
   displayName: string;
   phone: string;
+  passwordChangeRequired: boolean;
 
   expiresAt: string | Date | null;
 }
@@ -90,6 +91,7 @@ export class DriverAccessGuard implements CanActivate {
         driver_code: string;
         display_name: string;
         phone: string;
+        password_change_required: boolean;
 
         expires_at: string | Date | null;
       }>(
@@ -112,6 +114,7 @@ export class DriverAccessGuard implements CanActivate {
 
             drv.display_name,
             drv.phone,
+            drv.password_change_required,
 
             c.expires_at
 
@@ -181,6 +184,9 @@ export class DriverAccessGuard implements CanActivate {
 
       phone:
         credential.phone,
+
+      passwordChangeRequired:
+        credential.password_change_required,
 
       expiresAt:
         credential.expires_at,

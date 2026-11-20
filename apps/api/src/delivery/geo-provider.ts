@@ -1,5 +1,6 @@
 import type {
   GeoAutocompleteInput,
+  GeoPoint,
   GeoAutocompleteSuggestion,
   GeoGeocodeAddressInput,
   GeoResolvedLocation,
@@ -24,6 +25,8 @@ export interface GeoProvider {
   geocodeAddress(
     input: GeoGeocodeAddressInput,
   ): Promise<GeoResolvedLocation | null>;
+
+  reverseGeocode(input: { location: GeoPoint; languageCode?: string; regionCode?: string }): Promise<GeoResolvedLocation | null>;
 
   calculateRoute(
     input: GeoRouteInput,

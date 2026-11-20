@@ -1,3 +1,5 @@
+import { requestGoogleIpv4 } from './google-http';
+import { readableAddress } from './readable-address';
 import {
   BadGatewayException,
   BadRequestException,
@@ -41,13 +43,19 @@ const AUTOCOMPLETE_FIELD_MASK = [
 const GEOCODE_ADDRESS_FIELD_MASK = [
   'results.placeId',
   'results.formattedAddress',
+  'results.addressComponents',
   'results.location',
+  'results.types',
+  'results.granularity',
 ].join(',');
 
 const GEOCODE_PLACE_FIELD_MASK = [
   'placeId',
   'formattedAddress',
+  'addressComponents',
   'location',
+  'types',
+  'granularity',
 ].join(',');
 
 const ROUTE_FIELD_MASK = [
@@ -344,6 +352,20 @@ export class GoogleGeoProvider implements GeoProvider {
     );
   }
 
+  async reverseGeocode(input: { location: GeoPoint; languageCode?: string; regionCode?: string }): Promise<GeoResolvedLocation | null> {
+    const point = this.requirePoint(input.location, 'Geo reverse location');
+    const url = new URL('https://geocode.googleapis.com/v4/geocode/location');
+    url.searchParams.set('location.latitude', String(point.latitude));
+    url.searchParams.set('location.longitude', String(point.longitude));
+    this.applyLocaleQuery(url, input.languageCode, input.regionCode);
+    const payload = await this.requestJson(url.toString(), { method: 'GET' }, GEOCODE_ADDRESS_FIELD_MASK, 'Google reverse geocoding');
+    const root = this.requireRecord(payload, 'Google reverse geocoding');
+    if (root.results === undefined) return null;
+    if (!Array.isArray(root.results)) throw new BadGatewayException('Google reverse geocoding returned invalid data');
+    if (root.results.length === 0) return null;
+    return this.parseResolvedLocation(this.requireRecord(root.results[0], 'Google reverse result'), 'Google reverse geocoding');
+  }
+
   async calculateRoute(
     input: GeoRouteInput,
   ): Promise<GeoRouteResult> {
@@ -478,7 +500,7 @@ export class GoogleGeoProvider implements GeoProvider {
 
     try {
       response =
-        await fetch(
+        await requestGoogleIpv4(
           url,
           {
             ...init,
@@ -643,11 +665,10 @@ export class GoogleGeoProvider implements GeoProvider {
         `${operation} placeId`,
       );
 
-    const formattedAddress =
-      this.requireProviderString(
-        result.formattedAddress,
-        `${operation} formattedAddress`,
-      );
+    const readable = readableAddress(result.addressComponents);
+    // Keep validating the provider contract, but never display postal/plus codes.
+    this.requireProviderString(result.formattedAddress, `${operation} formattedAddress`);
+
 
     const locationRecord =
       this.requireRecord(
@@ -663,8 +684,10 @@ export class GoogleGeoProvider implements GeoProvider {
 
     return {
       placeId,
-      formattedAddress,
+      formattedAddress: readable.text,
       location,
+      requiresMapConfirmation: !readable.hasDetail || result.granularity === 'APPROXIMATE' || !Array.isArray(result.types) ||
+        !result.types.some(type => ['street_address', 'premise', 'subpremise', 'establishment', 'point_of_interest', 'intersection'].includes(String(type))),
     };
   }
 

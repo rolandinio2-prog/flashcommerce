@@ -1,65 +1,56 @@
+import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
   Controller,
+  Req,
   Get,
   Param,
   Patch,
   Query,
-  UseGuards,
 } from '@nestjs/common';
 
 import { DeliveryService } from './delivery.service';
-import { OpsAccessGuard } from './ops-access.guard';
 
 @Controller('ops')
-@UseGuards(OpsAccessGuard)
+@OperationsAccess()
 export class OpsDeliveryController {
   constructor(
     private readonly deliveryService: DeliveryService,
   ) {}
 
   @Get('deliveries')
+  @OperationPermission('delivery.read')
   getOperationalDeliveries(
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
+    @Req() request: StaffAuthenticatedRequest,
 
     @Query('status')
     status?: string,
   ) {
     return this.deliveryService.getOperationalDeliveries(
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
       status,
     );
   }
 
   @Get('delivery-drivers')
+  @OperationPermission('delivery.read')
   getOperationalDrivers(
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
+    @Req() request: StaffAuthenticatedRequest,
   ) {
     return this.deliveryService.getOperationalDrivers(
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
     );
   }
 
   @Patch('deliveries/:deliveryId/assignment')
+  @OperationPermission('delivery.assign')
   assignOperationalDelivery(
+    @Req() request: StaffAuthenticatedRequest,
     @Param('deliveryId')
     deliveryId: string,
-
-    @Query('tenant')
-    tenantCode?: string,
-
-    @Query('branch')
-    branchCode?: string,
 
     @Body()
     body?: {
@@ -69,8 +60,8 @@ export class OpsDeliveryController {
   ) {
     return this.deliveryService.assignOperationalDelivery(
       deliveryId,
-      tenantCode,
-      branchCode,
+      request.staff.tenantCode,
+      request.staff.branchCode,
       body?.driverId,
       body?.expectedAssignmentId,
     );

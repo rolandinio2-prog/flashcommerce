@@ -1,9 +1,11 @@
+import { saucePricing, priceSauceLines } from './sauce-pricing';
 import {
   BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { riceChoice, validateRice, riceName } from './rice-choice';
 
 interface CreatedCartRow {
   id: string;
@@ -11,24 +13,6 @@ interface CreatedCartRow {
   status: string;
   currency: string;
   expires_at: string | Date;
-}
-
-interface ProductContextRow {
-  tenant_id: string;
-  cart_id: string;
-  product_id: string;
-  sku: string | null;
-  name: string;
-  price: string;
-  currency: string;
-  available_quantity: number | null;
-}
-
-interface CartItemRow {
-  product_id: string;
-  quantity: number;
-  unit_price: string;
-  currency: string;
 }
 
 @Injectable()
@@ -95,177 +79,80 @@ export class CartService {
     };
   }
 
-  async addItem(
-    cartToken: string,
-    productId: string | undefined,
-    quantity: number | undefined,
-  ) {
-    if (!cartToken?.trim()) {
-      throw new BadRequestException('cartToken is required');
-    }
-
-    if (!productId?.trim()) {
-      throw new BadRequestException('productId is required');
-    }
-
-    const requestedQuantity = quantity ?? 1;
-
-    if (
-      !Number.isInteger(requestedQuantity) ||
-      requestedQuantity <= 0
-    ) {
-      throw new BadRequestException(
-        'quantity must be a positive integer',
-      );
-    }
-
-    const productResult =
-      await this.databaseService.query<ProductContextRow>(
-        `
-          select
-            c.tenant_id::text,
-            c.id::text as cart_id,
-
-            p.id::text as product_id,
-            p.sku,
-            p.name,
-
-            bp.price::text as price,
-            bp.currency,
-            bp.available_quantity
-
-          from public.carts c
-
-          inner join public.products p
-            on p.tenant_id = c.tenant_id
-           and p.id = $2::uuid
-           and p.active = true
-
-          inner join public.branch_products bp
-            on bp.tenant_id = c.tenant_id
-           and bp.branch_id = c.branch_id
-           and bp.product_id = p.id
-           and bp.is_available = true
-
-          where c.cart_token = $1::uuid
-            and c.status = 'OPEN'
-            and c.expires_at > now()
-
-          limit 1
-        `,
-        [
-          cartToken.trim(),
-          productId.trim(),
-        ],
-      );
-
-    const product = productResult.rows[0];
-
-    if (!product) {
-      throw new NotFoundException(
-        'Open cart or available product not found',
-      );
-    }
-
-    const currentItemResult =
-      await this.databaseService.query<{
-        quantity: number;
-      }>(
-        `
-          select quantity
-          from public.cart_items
-          where tenant_id = $1::uuid
-            and cart_id = $2::uuid
-            and product_id = $3::uuid
-          limit 1
-        `,
-        [
-          product.tenant_id,
-          product.cart_id,
-          product.product_id,
-        ],
-      );
-
-    const currentQuantity =
-      currentItemResult.rows[0]?.quantity ?? 0;
-
-    const newQuantity =
-      currentQuantity + requestedQuantity;
-
-    if (
-      product.available_quantity !== null &&
-      newQuantity > product.available_quantity
-    ) {
-      throw new BadRequestException(
-        `Only ${product.available_quantity} units are available`,
-      );
-    }
-
-    const itemResult =
-      await this.databaseService.query<CartItemRow>(
-        `
-          insert into public.cart_items (
-            tenant_id,
-            cart_id,
-            product_id,
-            quantity,
-            unit_price,
-            currency
-          )
-          values (
-            $1::uuid,
-            $2::uuid,
-            $3::uuid,
-            $4,
-            $5,
-            $6
-          )
-
-          on conflict (cart_id, product_id)
-          do update set
-            quantity = excluded.quantity,
-            unit_price = excluded.unit_price,
-            currency = excluded.currency,
-            updated_at = now()
-
-          returning
-            product_id::text,
-            quantity,
-            unit_price::text,
-            currency
-        `,
-        [
-          product.tenant_id,
-          product.cart_id,
-          product.product_id,
-          newQuantity,
-          product.price,
-          product.currency,
-        ],
-      );
-
-    const item = itemResult.rows[0];
-
-    return {
-      product: {
-        id: item.product_id,
-        sku: product.sku,
-        name: product.name,
-      },
-      quantity: item.quantity,
-      unitPrice: Number(item.unit_price),
-      currency: item.currency,
-      lineTotal:
-        Number(item.unit_price) * item.quantity,
-    };
+  async addItem(cartToken: string, productId: string | undefined, quantity: number | undefined, choice?: unknown) {
+    return this.mutateItem(cartToken, productId, quantity ?? 1, choice, 'add');
   }
 
-  async getCart(cartToken: string) {
+  private async mutateItem(cartToken: string, productId: string | undefined, quantity: number, choice: unknown, operation: 'add' | 'set' | 'remove') {
+    const rice = riceChoice(choice);
+    if (!cartToken?.trim() || !productId?.trim()) throw new BadRequestException('Cart and product are required');
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) throw new BadRequestException('quantity must be a positive integer');
+    return this.databaseService.withTransaction(async client => {
+      // Serialize all changes to this cart with checkout, including distinct rice lines.
+      const carts = await client.query<{id: string; tenant_id: string; branch_id: string}>(
+        "select id::text,tenant_id::text,branch_id::text from public.carts where cart_token=$1::uuid and status='OPEN' and expires_at>now() for update", [cartToken]);
+      const cart = carts.rows[0];
+      if (!cart) throw new NotFoundException('Open cart not found');
+      // Freeze the current allowance before changing grouped quantities. The cart lock serializes this with checkout.
+      await this.persistSauceAllocations(cartToken, client, cart);
+      if (operation === 'remove') {
+        const removed = await client.query('delete from public.cart_items where tenant_id=$1::uuid and cart_id=$2::uuid and product_id=$3::uuid and rice_choice=$4 returning id', [cart.tenant_id,cart.id,productId,rice]);
+        if (!removed.rows.length) throw new NotFoundException('Cart item not found');
+        await this.persistSauceAllocations(cartToken, client, cart);
+        return {removed:true,productId,riceChoice:rice};
+      }
+      const products = await client.query<{name:string;sku:string|null;price:string;currency:string;available_quantity:number|null;selection_required:boolean;legacy_combination:boolean;requires_rice:boolean}>(`
+        select p.name,p.sku,bp.price::text,bp.currency,bp.available_quantity,
+          (p.garnish_parent_id is not null) as legacy_combination,
+          exists(select 1 from public.products child join public.branch_products cb on cb.tenant_id=child.tenant_id and cb.product_id=child.id and cb.branch_id=bp.branch_id where child.tenant_id=p.tenant_id and child.presentation_parent_id=p.id) as selection_required,
+          exists(select 1 from public.product_categories rc where rc.tenant_id=p.tenant_id and rc.id=p.category_id and rc.slug='pollos') as requires_rice
+        from public.products p join public.branch_products bp on bp.tenant_id=p.tenant_id and bp.product_id=p.id
+        where p.tenant_id=$1::uuid and bp.branch_id=$2::uuid and p.id=$3::uuid and p.active and bp.is_available
+      `, [cart.tenant_id,cart.branch_id,productId]);
+      const product = products.rows[0];
+      if (!product) throw new NotFoundException('Available product not found');
+      if (product.legacy_combination) throw new BadRequestException('Esta combinación ya no se ofrece. Elige el tamaño y el arroz del pollo.');
+      if (product.selection_required) throw new BadRequestException('Selecciona el tamaño antes de agregar el producto.');
+      const lines = await client.query<{quantity:number;rice_choice:string}>('select quantity,rice_choice from public.cart_items where tenant_id=$1::uuid and cart_id=$2::uuid and product_id=$3::uuid', [cart.tenant_id,cart.id,productId]);
+      const current = lines.rows.find(line => line.rice_choice === rice);
+      if (operation === 'set' && !current) throw new NotFoundException('Cart item not found');
+      // Older carts may be reduced or removed; increasing requires an explicit rice choice.
+      if (!(operation === 'set' && current && quantity < current.quantity && !rice)) validateRice(product.requires_rice,rice);
+      const newQuantity = operation === 'add' ? (current?.quantity ?? 0) + quantity : quantity;
+      const totalQuantity = lines.rows.reduce((sum,line) => sum + line.quantity,0) - (current?.quantity ?? 0) + newQuantity;
+      if (!Number.isSafeInteger(newQuantity) || newQuantity > 2147483647) throw new BadRequestException('Invalid quantity');
+      if (product.available_quantity !== null && totalQuantity > product.available_quantity) throw new BadRequestException(`Only ${product.available_quantity} units are available`);
+      await client.query(`insert into public.cart_items (tenant_id,cart_id,product_id,quantity,unit_price,currency,rice_choice)
+        values ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7)
+        on conflict (cart_id,product_id,rice_choice) do update set quantity=excluded.quantity,sauce_included_quantity=case when public.cart_items.sauce_included_quantity is null then null else least(public.cart_items.sauce_included_quantity,excluded.quantity) end,unit_price=excluded.unit_price,currency=excluded.currency,updated_at=now()`,
+        [cart.tenant_id,cart.id,productId,newQuantity,product.price,product.currency,rice]);
+      const updated = await this.persistSauceAllocations(cartToken, client, cart);
+      const item = updated.items.find(line => line.product.id === productId && line.riceChoice === rice);
+      if (!item) throw new Error('Updated cart line missing');
+      return {product:item.product,productId,riceChoice:rice,quantity:item.quantity,unitPrice:item.unitPrice,currency:item.currency,lineTotal:item.lineTotal,includedQuantity:item.includedQuantity};
+    });
+  }
+
+  private async persistSauceAllocations(cartToken: string, client: Pick<DatabaseService, 'query'>, cart: { id: string; tenant_id: string }) {
+    const snapshot = await this.getCart(cartToken, client);
+    if (snapshot.tenant.code === 'POLLO001' && snapshot.branch.code === 'SUC001') {
+      for (const item of snapshot.items) {
+        if (!item.product.sku?.startsWith('SALSA-')) continue;
+        await client.query(
+          'update public.cart_items set sauce_included_quantity=$5 where tenant_id=$1::uuid and cart_id=$2::uuid and product_id=$3::uuid and rice_choice=$4 and sauce_included_quantity is distinct from $5',
+          [cart.tenant_id, cart.id, item.product.id, item.riceChoice, item.includedQuantity],
+        );
+      }
+    }
+    return snapshot;
+  }
+
+  async getCart(cartToken: string, queryClient: Pick<DatabaseService, 'query'> = this.databaseService) {
   if (!cartToken?.trim()) {
     throw new BadRequestException('cartToken is required');
   }
 
-  const cartResult = await this.databaseService.query<{
+  const cartResult = await queryClient.query<{
     id: string;
     token: string;
     status: string;
@@ -311,7 +198,9 @@ export class CartService {
     throw new NotFoundException('Cart not found');
   }
 
-  const itemsResult = await this.databaseService.query<{
+  const itemsResult = await queryClient.query<{
+    sauce_included_quantity: number | null;
+    requires_rice: boolean;
     product_id: string;
     sku: string | null;
     name: string;
@@ -319,14 +208,18 @@ export class CartService {
     unit_price: string;
     currency: string;
     line_total: string;
+    rice_choice: string;
   }>(
     `
       select
+        exists(select 1 from public.product_categories rc where rc.tenant_id=p.tenant_id and rc.id=p.category_id and rc.slug='pollos') as requires_rice,
         ci.product_id::text,
+        ci.rice_choice,
         p.sku,
         p.name,
 
         ci.quantity,
+        ci.sauce_included_quantity,
         ci.unit_price::text,
         ci.currency,
 
@@ -341,22 +234,25 @@ export class CartService {
 
       where ci.cart_id = $1::uuid
 
-      order by ci.created_at
+      order by ci.created_at, ci.id
     `,
     [cart.id],
   );
 
-  const items = itemsResult.rows.map((item) => ({
+  const pricedRows = priceSauceLines(cart.tenant_code, cart.branch_code, itemsResult.rows.map(item => ({ ...item, price: item.unit_price })));
+  const items = pricedRows.map((item) => ({
+    riceChoice: item.rice_choice,
     product: {
       id: item.product_id,
       sku: item.sku,
-      name: item.name,
+      name: riceName(item.name, riceChoice(item.rice_choice)),
     },
 
     quantity: item.quantity,
     unitPrice: Number(item.unit_price),
     currency: item.currency,
-    lineTotal: Number(item.line_total),
+    lineTotal: item.lineTotal,
+    includedQuantity: item.includedQuantity,
   }));
 
   const totalItems = items.reduce(
@@ -364,7 +260,8 @@ export class CartService {
     0,
   );
 
-  const total = items.reduce(
+  const sauces = saucePricing(cart.tenant_code, cart.branch_code, itemsResult.rows.map(item => ({ ...item, price: item.unit_price })));
+  const subtotal = items.reduce(
     (sum, item) => sum + item.lineTotal,
     0,
   );
@@ -390,163 +287,18 @@ export class CartService {
 
     summary: {
       totalItems,
-      total,
+      subtotal,
+      discountTotal: sauces.discountTotal,
+      total: subtotal,
+      sauces,
     },
   };
 }
 
-async updateItem(
-  cartToken: string,
-  productId: string,
-  quantity: number | undefined,
-) {
-  if (
-    !Number.isInteger(quantity) ||
-    quantity === undefined ||
-    quantity <= 0
-  ) {
-    throw new BadRequestException(
-      'quantity must be a positive integer',
-    );
-  }
-
-  const contextResult =
-    await this.databaseService.query<{
-      tenant_id: string;
-      cart_id: string;
-      price: string;
-      currency: string;
-      available_quantity: number | null;
-    }>(
-      `
-        select
-          c.tenant_id::text,
-          c.id::text as cart_id,
-          bp.price::text,
-          bp.currency,
-          bp.available_quantity
-
-        from public.carts c
-
-        inner join public.branch_products bp
-          on bp.tenant_id = c.tenant_id
-         and bp.branch_id = c.branch_id
-         and bp.product_id = $2::uuid
-         and bp.is_available = true
-
-        where c.cart_token = $1::uuid
-          and c.status = 'OPEN'
-          and c.expires_at > now()
-
-        limit 1
-      `,
-      [cartToken, productId],
-    );
-
-  const context = contextResult.rows[0];
-
-  if (!context) {
-    throw new NotFoundException(
-      'Open cart or available product not found',
-    );
-  }
-
-  if (
-    context.available_quantity !== null &&
-    quantity > context.available_quantity
-  ) {
-    throw new BadRequestException(
-      `Only ${context.available_quantity} units are available`,
-    );
-  }
-
-  const result =
-    await this.databaseService.query<{
-      product_id: string;
-      quantity: number;
-      unit_price: string;
-      currency: string;
-    }>(
-      `
-        update public.cart_items
-        set
-          quantity = $4,
-          unit_price = $5,
-          currency = $6,
-          updated_at = now()
-
-        where tenant_id = $1::uuid
-          and cart_id = $2::uuid
-          and product_id = $3::uuid
-
-        returning
-          product_id::text,
-          quantity,
-          unit_price::text,
-          currency
-      `,
-      [
-        context.tenant_id,
-        context.cart_id,
-        productId,
-        quantity,
-        context.price,
-        context.currency,
-      ],
-    );
-
-  const item = result.rows[0];
-
-  if (!item) {
-    throw new NotFoundException(
-      'Product is not in the cart',
-    );
-  }
-
-  return {
-    productId: item.product_id,
-    quantity: item.quantity,
-    unitPrice: Number(item.unit_price),
-    currency: item.currency,
-    lineTotal:
-      Number(item.unit_price) * item.quantity,
-  };
+async updateItem(cartToken: string, productId: string, quantity: number | undefined, choice?: unknown) {
+  return this.mutateItem(cartToken, productId, quantity as number, choice, 'set');
 }
-
-async removeItem(
-  cartToken: string,
-  productId: string,
-) {
-  const result =
-    await this.databaseService.query<{
-      product_id: string;
-    }>(
-      `
-        delete from public.cart_items ci
-
-        using public.carts c
-
-        where c.id = ci.cart_id
-          and c.tenant_id = ci.tenant_id
-          and c.cart_token = $1::uuid
-          and c.status = 'OPEN'
-          and ci.product_id = $2::uuid
-
-        returning ci.product_id::text
-      `,
-      [cartToken, productId],
-    );
-
-  if (!result.rows[0]) {
-    throw new NotFoundException(
-      'Cart item not found',
-    );
-  }
-
-  return {
-    removed: true,
-    productId: result.rows[0].product_id,
-  };
+async removeItem(cartToken: string, productId: string, choice?: unknown) {
+  return this.mutateItem(cartToken, productId, 1, choice, 'remove');
 }
-
 }

@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { CartService } from './cart.service';
 
@@ -17,10 +18,12 @@ interface CreateCartBody {
 interface AddCartItemBody {
   productId?: string;
   quantity?: number;
+  riceChoice?: string;
 }
 
 interface UpdateCartItemBody {
   quantity?: number;
+  riceChoice?: string;
 }
 
 @Controller('carts')
@@ -44,6 +47,7 @@ export class CartController {
       cartToken,
       body?.productId,
       body?.quantity,
+      body?.riceChoice,
     );
   }
 
@@ -64,6 +68,7 @@ export class CartController {
         cartToken,
         productId,
         body?.quantity,
+      body?.riceChoice,
     );
     }
 
@@ -71,10 +76,12 @@ export class CartController {
     removeItem(
     @Param('cartToken') cartToken: string,
     @Param('productId') productId: string,
+    @Query('riceChoice') rice: string | undefined,
     ) {
     return this.cartService.removeItem(
         cartToken,
         productId,
+        rice,
     );
 }
 }

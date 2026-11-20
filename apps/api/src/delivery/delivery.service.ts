@@ -1,3 +1,4 @@
+import { assertDeliveryQrPaid } from '../payments/delivery-payment-policy';
 import {
   BadRequestException,
   ConflictException,
@@ -16,6 +17,9 @@ import { PaymentsService } from '../payments/payments.service';
 import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
 import { GeoUsageMeterService } from './geo-usage-meter.service';
 import type { GeoPoint, GeoRouteResult } from './geo.types';
+import {DeliveryBaseRouteCache} from './delivery-base-route';
+import { buildJourney, DriverJourneyNavigation, JOURNEY_SAMPLE_LIMIT } from './driver-journey';
+import type { JourneySample } from './driver-journey';
 import {
   deriveDeliveryPod,
   verifyDeliveryPod,
@@ -59,6 +63,8 @@ const DELIVERY_MAP_ROUTE_CACHE_MAX_ENTRIES = 250;
 
 @Injectable()
 export class DeliveryService {
+  private readonly deliveryBaseRoutes = new DeliveryBaseRouteCache();
+  private readonly driverJourneyNavigation = new DriverJourneyNavigation();
   private readonly deliveryMapRouteCache =
     new Map<string, DeliveryMapRouteCacheEntry>();
 
@@ -894,72 +900,13 @@ export class DeliveryService {
           );
         }
 
-        if (
-          ![
-            'CONFIRMED',
-            'PREPARING',
-            'READY',
-          ].includes(delivery.order_status)
-        ) {
+        if (delivery.order_status !== 'READY') {
           throw new ConflictException(
-            `Order ${delivery.order_number} is not dispatchable from ${delivery.order_status}`,
+            `Order ${delivery.order_number} is not dispatchable until READY`,
           );
         }
 
-        const paymentVerified =
-          [
-            'PAID',
-            'NOT_REQUIRED',
-          ].includes(
-            delivery.payment_status,
-          );
-
-        let explicitDriverCod = false;
-
-        if (
-          !paymentVerified &&
-          delivery.payment_status ===
-            'AWAITING_CONFIRMATION'
-        ) {
-          const codResult =
-            await client.query<{
-              eligible: boolean;
-            }>(
-              `
-                select exists (
-                  select 1
-
-                  from public.order_payments p
-
-                  where p.tenant_id = $1::uuid
-                    and p.branch_id = $2::uuid
-                    and p.order_id = $3::uuid
-                    and p.method = 'CASH'
-                    and p.provider = 'DRIVER_COD'
-                    and p.status =
-                      'AWAITING_CONFIRMATION'
-                ) as eligible
-              `,
-              [
-                branch.tenant_id,
-                branch.branch_id,
-                delivery.order_id,
-              ],
-            );
-
-          explicitDriverCod =
-            codResult.rows[0]?.eligible ??
-            false;
-        }
-
-        if (
-          !paymentVerified &&
-          !explicitDriverCod
-        ) {
-          throw new ConflictException(
-            'Delivery cannot be assigned until payment is verified or explicit cash on delivery is selected',
-          );
-        }
+        await assertDeliveryQrPaid(client, {tenant_id: branch.tenant_id, branch_id: branch.branch_id, order_id: delivery.order_id});
 
         if (
           delivery.status !== 'WAITING_ASSIGNMENT' &&
@@ -1164,14 +1111,30 @@ export class DeliveryService {
                 and db.status = 'ENABLED'
                 and drv.status = 'ACTIVE'
 
+                and not exists (
+                  select 1
+
+                  from public.delivery_assignments busy
+
+                  where busy.tenant_id = db.tenant_id
+                    and busy.branch_id = db.branch_id
+                    and busy.driver_id = drv.id
+                    and busy.delivery_id <> $4::uuid
+                    and busy.status in (
+                      'ASSIGNED',
+                      'ACCEPTED'
+                    )
+                )
+
               limit 1
 
-              for share of db, drv
+              for update of db
             `,
             [
               branch.tenant_id,
               branch.branch_id,
               driverId,
+              delivery.id,
             ],
           );
 
@@ -1581,6 +1544,28 @@ export class DeliveryService {
 
         order_number: string;
         order_status: string;
+        order_payment_status: string;
+
+        relationship_role:
+          | 'PRIMARY'
+          | 'ADDITIONAL';
+
+        member_count: number;
+
+        member_orders: Array<{
+          number: string;
+          status: string;
+          paymentStatus: string;
+          relationshipRole:
+            | 'PRIMARY'
+            | 'ADDITIONAL';
+        }>;
+
+        payment_method: string | null;
+        payment_provider: string | null;
+        payment_attempt_status: string | null;
+        payment_amount: string | null;
+        payment_currency: string | null;
 
         assignment_id: string;
         assignment_number: number;
@@ -1591,6 +1576,12 @@ export class DeliveryService {
 
         address_text: string;
         address_reference: string | null;
+
+        branch_name: string;
+        branch_latitude: string | null;
+        branch_longitude: string | null;
+        destination_latitude: number;
+        destination_longitude: number;
 
         eta_min_minutes: number | null;
         eta_max_minutes: number | null;
@@ -1609,6 +1600,96 @@ export class DeliveryService {
             o.status
               as order_status,
 
+            o.payment_status
+              as order_payment_status,
+
+            coalesce(
+              (
+                select m0.role
+                from public.delivery_order_memberships m0
+                where m0.tenant_id = d.tenant_id
+                  and m0.branch_id = d.branch_id
+                  and m0.delivery_id = d.id
+                  and m0.order_id = o.id
+                  and m0.membership_status in (
+                    'PENDING',
+                    'ACTIVE'
+                  )
+                order by
+                  case m0.role
+                    when 'PRIMARY' then 0
+                    else 1
+                  end,
+                  m0.joined_at
+                limit 1
+              ),
+              'PRIMARY'
+            ) as relationship_role,
+
+            (
+              select count(*)::integer
+              from public.delivery_order_memberships mc
+              where mc.tenant_id = d.tenant_id
+                and mc.branch_id = d.branch_id
+                and mc.delivery_id = d.id
+                and mc.membership_status in (
+                  'PENDING',
+                  'ACTIVE'
+                )
+            ) as member_count,
+
+            coalesce(
+              (
+                select jsonb_agg(
+                  jsonb_build_object(
+                    'number',
+                    mo.order_number::text,
+                    'status',
+                    mo.status,
+                    'paymentStatus',
+                    mo.payment_status,
+                    'relationshipRole',
+                    mm.role
+                  )
+                  order by
+                    case mm.role
+                      when 'PRIMARY' then 0
+                      else 1
+                    end,
+                    mm.joined_at,
+                    mo.order_number
+                )
+                from public.delivery_order_memberships mm
+                inner join public.orders mo
+                  on mo.tenant_id = mm.tenant_id
+                 and mo.branch_id = mm.branch_id
+                 and mo.id = mm.order_id
+                where mm.tenant_id = d.tenant_id
+                  and mm.branch_id = d.branch_id
+                  and mm.delivery_id = d.id
+                  and mm.membership_status in (
+                    'PENDING',
+                    'ACTIVE'
+                  )
+              ),
+              '[]'::jsonb
+            ) as member_orders,
+
+            p.method
+              as payment_method,
+
+            p.provider
+              as payment_provider,
+
+            p.status
+              as payment_attempt_status,
+
+            p.amount::text
+              as payment_amount,
+
+            p.currency
+              as payment_currency,
+
             a.id::text
               as assignment_id,
 
@@ -1622,6 +1703,19 @@ export class DeliveryService {
 
             d.address_text,
             d.address_reference,
+
+            b.name as branch_name,
+            b.delivery_origin_latitude::text as branch_latitude,
+            b.delivery_origin_longitude::text as branch_longitude,
+            gis.ST_Y(
+              d.destination::gis.geometry
+            )::double precision
+              as destination_latitude,
+
+            gis.ST_X(
+              d.destination::gis.geometry
+            )::double precision
+              as destination_longitude,
 
             d.eta_min_minutes,
             d.eta_max_minutes
@@ -1638,10 +1732,26 @@ export class DeliveryService {
            and o.branch_id = d.branch_id
            and o.id = d.order_id
 
+          left join public.branches b
+            on b.tenant_id = d.tenant_id
+           and b.id = d.branch_id
+
           inner join public.delivery_driver_branches db
             on db.tenant_id = a.tenant_id
            and db.branch_id = a.branch_id
            and db.driver_id = a.driver_id
+
+          left join public.order_payments p
+            on p.tenant_id = o.tenant_id
+           and p.branch_id = o.branch_id
+           and p.order_id = o.id
+           and p.method = 'CASH'
+           and p.provider = 'DRIVER_COD'
+           and p.status = o.payment_status
+           and p.status in (
+             'AWAITING_CONFIRMATION',
+             'PAID'
+           )
 
           where a.tenant_id = $1::uuid
             and a.driver_id = $2::uuid
@@ -1702,12 +1812,60 @@ export class DeliveryService {
         delivery: {
           id: row.delivery_id,
           status: row.delivery_status,
+
+          relationshipRole:
+            row.relationship_role,
+
+          memberCount:
+            row.member_count,
+
+          isShared:
+            row.member_count > 1,
+
+          memberOrders:
+            row.member_orders,
         },
 
         order: {
           number: row.order_number,
           status: row.order_status,
+
+          paymentStatus:
+            row.order_payment_status,
         },
+
+        payment:
+          row.payment_method === 'CASH' &&
+          row.payment_provider === 'DRIVER_COD' &&
+          row.payment_attempt_status !== null &&
+          row.payment_amount !== null &&
+          row.payment_currency !== null
+            ? {
+                method:
+                  'CASH' as const,
+
+                provider:
+                  'DRIVER_COD' as const,
+
+                status:
+                  row.payment_attempt_status,
+
+                amount:
+                  Number(
+                    row.payment_amount,
+                  ),
+
+                currency:
+                  row.payment_currency,
+
+                cashOnDelivery:
+                  true as const,
+
+                cashCollectionRequired:
+                  row.payment_attempt_status ===
+                  'AWAITING_CONFIRMATION',
+              }
+            : null,
 
         assignment: {
           id: row.assignment_id,
@@ -1720,9 +1878,19 @@ export class DeliveryService {
           phone: row.recipient_phone,
         },
 
+        branchOrigin: this.trackingBranchOrigin(row),
+
         destination: {
           address: row.address_text,
           reference: row.address_reference,
+
+          location: {
+            latitude:
+              row.destination_latitude,
+
+            longitude:
+              row.destination_longitude,
+          },
         },
 
         eta: {
@@ -1759,6 +1927,9 @@ export class DeliveryService {
       await this.databaseService.query<{
         delivery_id: string;
         delivery_status: string;
+        branch_name: string;
+        branch_latitude: string | null;
+        branch_longitude: string | null;
 
         destination_latitude: number;
         destination_longitude: number;
@@ -1769,6 +1940,9 @@ export class DeliveryService {
       }>(
         `
           select
+            b.name as branch_name,
+            b.delivery_origin_latitude::text as branch_latitude,
+            b.delivery_origin_longitude::text as branch_longitude,
             d.id::text
               as delivery_id,
 
@@ -1790,6 +1964,10 @@ export class DeliveryService {
             loc.captured_at
 
           from public.deliveries d
+
+          left join public.branches b
+            on b.tenant_id = d.tenant_id
+           and b.id = d.branch_id
 
           inner join public.delivery_assignments a
             on a.tenant_id = d.tenant_id
@@ -1862,23 +2040,9 @@ export class DeliveryService {
       );
     }
 
-    if (
-      row.latitude === null ||
-      row.longitude === null ||
-      row.captured_at === null
-    ) {
-      throw new ConflictException(
-        'Driver location is not available yet',
-      );
-    }
-
-    const location = {
-      latitude:
-        row.latitude,
-
-      longitude:
-        row.longitude,
-    };
+    const location = row.latitude !== null && row.longitude !== null && row.captured_at !== null
+      ? {latitude:row.latitude,longitude:row.longitude,capturedAt:row.captured_at}
+      : null;
 
     const destination = {
       latitude:
@@ -1888,12 +2052,27 @@ export class DeliveryService {
         row.destination_longitude,
     };
 
-    const route =
-      await this.getCachedDeliveryMapRoute(
-        tenantId,
-        location,
-        destination,
-      );
+    // Authorization above is unchanged; history is restricted to this tenant, delivery and driver.
+    const history = await this.databaseService.query<JourneySample>(`
+      select gis.ST_Y(l.position::gis.geometry)::double precision as latitude,
+             gis.ST_X(l.position::gis.geometry)::double precision as longitude,
+             l.accuracy_meters::double precision as "accuracyMeters",
+             l.captured_at::text as "capturedAt", l.received_at::text as "receivedAt"
+      from public.delivery_driver_locations l
+      where l.tenant_id = $1::uuid and l.delivery_id = $2::uuid and l.driver_id = $3::uuid
+      order by l.received_at asc, l.id asc
+      limit $4
+    `, [tenantId, deliveryId, driverId, JOURNEY_SAMPLE_LIMIT + 1]);
+    const journey = buildJourney(history.rows);
+    const navigation = await this.driverJourneyNavigation.get(
+      JSON.stringify([tenantId, deliveryId, driverId]), journey.latest, destination,
+      (origin, target) => this.geoUsageMeter.measure(
+        {tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false},
+        () => this.geoProvider.calculateRoute({origin, destination: target}),
+      ),
+    );
+    const baseRoute = await this.getDeliveryBaseRoute(tenantId, row.delivery_id, this.trackingBranchOrigin(row), destination);
+    const route = navigation.route;
 
     return {
       delivery: {
@@ -1901,14 +2080,13 @@ export class DeliveryService {
         status: row.delivery_status,
       },
 
-      location: {
-        ...location,
-        capturedAt:
-          row.captured_at,
-      },
+      location,
+      baseRoute,
 
       destination,
       route,
+      journey,
+      navigation,
     };
   }
   async acceptDriverDelivery(
@@ -2046,72 +2224,13 @@ export class DeliveryService {
           );
         }
 
-        if (
-          ![
-            'CONFIRMED',
-            'PREPARING',
-            'READY',
-          ].includes(delivery.order_status)
-        ) {
+        if (delivery.order_status !== 'READY') {
           throw new ConflictException(
-            `Delivery cannot be accepted while order is ${delivery.order_status}`,
+            `Delivery cannot be accepted while order is ${delivery.order_status}; READY is required`,
           );
         }
 
-        const paymentVerified =
-          [
-            'PAID',
-            'NOT_REQUIRED',
-          ].includes(
-            delivery.payment_status,
-          );
-
-        let explicitDriverCod = false;
-
-        if (
-          !paymentVerified &&
-          delivery.payment_status ===
-            'AWAITING_CONFIRMATION'
-        ) {
-          const codResult =
-            await client.query<{
-              eligible: boolean;
-            }>(
-              `
-                select exists (
-                  select 1
-
-                  from public.order_payments p
-
-                  where p.tenant_id = $1::uuid
-                    and p.branch_id = $2::uuid
-                    and p.order_id = $3::uuid
-                    and p.method = 'CASH'
-                    and p.provider = 'DRIVER_COD'
-                    and p.status =
-                      'AWAITING_CONFIRMATION'
-                ) as eligible
-              `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.order_id,
-              ],
-            );
-
-          explicitDriverCod =
-            codResult.rows[0]?.eligible ??
-            false;
-        }
-
-        if (
-          !paymentVerified &&
-          !explicitDriverCod
-        ) {
-          throw new ConflictException(
-            'Delivery cannot be accepted until payment is verified or explicit cash on delivery is selected',
-          );
-        }
+        await assertDeliveryQrPaid(client, delivery);
 
         if (
           delivery.delivery_status !== 'ASSIGNED' &&
@@ -2717,60 +2836,7 @@ export class DeliveryService {
           );
         }
 
-        const paymentVerified =
-          [
-            'PAID',
-            'NOT_REQUIRED',
-          ].includes(
-            delivery.payment_status,
-          );
-
-        let explicitDriverCod = false;
-
-        if (
-          !paymentVerified &&
-          delivery.payment_status ===
-            'AWAITING_CONFIRMATION'
-        ) {
-          const codResult =
-            await client.query<{
-              eligible: boolean;
-            }>(
-              `
-                select exists (
-                  select 1
-
-                  from public.order_payments p
-
-                  where p.tenant_id = $1::uuid
-                    and p.branch_id = $2::uuid
-                    and p.order_id = $3::uuid
-                    and p.method = 'CASH'
-                    and p.provider = 'DRIVER_COD'
-                    and p.status =
-                      'AWAITING_CONFIRMATION'
-                ) as eligible
-              `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.order_id,
-              ],
-            );
-
-          explicitDriverCod =
-            codResult.rows[0]?.eligible ??
-            false;
-        }
-
-        if (
-          !paymentVerified &&
-          !explicitDriverCod
-        ) {
-          throw new ConflictException(
-            'Delivery cannot be picked up until payment is verified or explicit cash on delivery is selected',
-          );
-        }
+        await assertDeliveryQrPaid(client, delivery);
 
         const deliveryUpdate =
           await client.query<{
@@ -3220,60 +3286,7 @@ export class DeliveryService {
           );
         }
 
-        const paymentVerified =
-          [
-            'PAID',
-            'NOT_REQUIRED',
-          ].includes(
-            delivery.payment_status,
-          );
-
-        let explicitDriverCod = false;
-
-        if (
-          !paymentVerified &&
-          delivery.payment_status ===
-            'AWAITING_CONFIRMATION'
-        ) {
-          const codResult =
-            await client.query<{
-              eligible: boolean;
-            }>(
-              `
-                select exists (
-                  select 1
-
-                  from public.order_payments p
-
-                  where p.tenant_id = $1::uuid
-                    and p.branch_id = $2::uuid
-                    and p.order_id = $3::uuid
-                    and p.method = 'CASH'
-                    and p.provider = 'DRIVER_COD'
-                    and p.status =
-                      'AWAITING_CONFIRMATION'
-                ) as eligible
-              `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.order_id,
-              ],
-            );
-
-          explicitDriverCod =
-            codResult.rows[0]?.eligible ??
-            false;
-        }
-
-        if (
-          !paymentVerified &&
-          !explicitDriverCod
-        ) {
-          throw new ConflictException(
-            'Delivery cannot start route until payment is verified or explicit cash on delivery is selected',
-          );
-        }
+        await assertDeliveryQrPaid(client, delivery);
 
         const deliveryUpdate =
           await client.query<{
@@ -3717,60 +3730,7 @@ export class DeliveryService {
           );
         }
 
-        const paymentVerified =
-          [
-            'PAID',
-            'NOT_REQUIRED',
-          ].includes(
-            delivery.payment_status,
-          );
-
-        let explicitDriverCod = false;
-
-        if (
-          !paymentVerified &&
-          delivery.payment_status ===
-            'AWAITING_CONFIRMATION'
-        ) {
-          const codResult =
-            await client.query<{
-              eligible: boolean;
-            }>(
-              `
-                select exists (
-                  select 1
-
-                  from public.order_payments p
-
-                  where p.tenant_id = $1::uuid
-                    and p.branch_id = $2::uuid
-                    and p.order_id = $3::uuid
-                    and p.method = 'CASH'
-                    and p.provider = 'DRIVER_COD'
-                    and p.status =
-                      'AWAITING_CONFIRMATION'
-                ) as eligible
-              `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.order_id,
-              ],
-            );
-
-          explicitDriverCod =
-            codResult.rows[0]?.eligible ??
-            false;
-        }
-
-        if (
-          !paymentVerified &&
-          !explicitDriverCod
-        ) {
-          throw new ConflictException(
-            'Delivery cannot arrive until payment is verified or explicit cash on delivery is selected',
-          );
-        }
+        await assertDeliveryQrPaid(client, delivery);
 
         const deliveryUpdate =
           await client.query<{
@@ -4339,7 +4299,6 @@ export class DeliveryService {
             'ACCEPTED',
             'PICKED_UP',
             'EN_ROUTE',
-            'ARRIVED',
           ].includes(delivery.status)
         ) {
           throw new ConflictException(
@@ -5123,18 +5082,7 @@ export class DeliveryService {
             );
           }
 
-          if (
-            ![
-              'PAID',
-              'NOT_REQUIRED',
-            ].includes(
-              delivery.payment_status,
-            )
-          ) {
-            throw new ConflictException(
-              'Delivery cannot be completed until payment is verified',
-            );
-          }
+          await assertDeliveryQrPaid(client, delivery);
 
           // --------------------------------------------------
           // Same authenticated owner may retry an already
@@ -5751,6 +5699,21 @@ export class DeliveryService {
 
     return outcome.response;
   }
+  private getDeliveryBaseRoute(tenantId:string,deliveryId:string,origin:GeoPoint|null,destination:GeoPoint) {
+    return this.deliveryBaseRoutes.get(JSON.stringify([tenantId,deliveryId]),origin,destination,
+      (from,to)=>this.geoUsageMeter.measure({tenantId,provider:'GOOGLE',operation:'ROUTE',cacheHit:false},
+        ()=>this.geoProvider.calculateRoute({origin:from,destination:to})));
+  }
+
+  private trackingBranchOrigin(row: {branch_name: string; branch_latitude: string | null; branch_longitude: string | null}) {
+    if (row.branch_latitude == null || row.branch_longitude == null ||
+        row.branch_latitude.trim() === '' || row.branch_longitude.trim() === '') return null;
+    const latitude = Number(row.branch_latitude), longitude = Number(row.branch_longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+        Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+    return {name: row.branch_name, latitude, longitude};
+  }
+
   async getPublicDeliveryLocationByOrderTrackingToken(
     trackingTokenInput: unknown,
   ) {
@@ -5770,6 +5733,9 @@ export class DeliveryService {
 
         delivery_status: string;
 
+        branch_name: string;
+        branch_latitude: string | null;
+        branch_longitude: string | null;
         destination_latitude: number;
         destination_longitude: number;
 
@@ -5781,9 +5747,11 @@ export class DeliveryService {
         speed_mps: string | null;
 
         captured_at: string | Date | null;
+      
+        delivery_id: string;
       }>(
         `
-          select
+          select d.id::text as delivery_id,
             d.tenant_id::text
               as tenant_id,
 
@@ -5799,6 +5767,9 @@ export class DeliveryService {
             d.status
               as delivery_status,
 
+            b.name as branch_name,
+            b.delivery_origin_latitude::text as branch_latitude,
+            b.delivery_origin_longitude::text as branch_longitude,
             gis.ST_Y(
               d.destination::gis.geometry
             )::double precision
@@ -5824,6 +5795,10 @@ export class DeliveryService {
             on d.tenant_id = o.tenant_id
            and d.branch_id = o.branch_id
            and d.order_id = o.id
+
+          left join public.branches b
+            on b.tenant_id = d.tenant_id
+           and b.id = d.branch_id
 
           left join lateral (
             select
@@ -5944,22 +5919,10 @@ export class DeliveryService {
               row.captured_at,
           };
 
-    let route: GeoRouteResult | null = null;
-
-    if (location && destination) {
-      try {
-        route =
-          await this.getCachedDeliveryMapRoute(
-            row.tenant_id,
-            location,
-            destination,
-          );
-      } catch {
-        // Tracking status and the latest safe GPS point remain useful
-        // even when the optional Google route overlay is unavailable.
-        route = null;
-      }
-    }
+    const branchOrigin = this.trackingBranchOrigin(row);
+    const baseRoute = destination
+      ? await this.getDeliveryBaseRoute(row.tenant_id, row.delivery_id, branchOrigin, destination)
+      : {identity:null,status:'HIDDEN' as const,route:null,path:[]};
 
     return {
       order: {
@@ -5978,9 +5941,12 @@ export class DeliveryService {
           row.delivery_status,
       },
 
+      branchOrigin,
       destination,
       location,
-      route,
+      route: baseRoute.route,
+      routeIdentity: baseRoute.identity,
+      routeStatus: baseRoute.status,
     };
   }
   async getPublicDeliveryPodByOrderTrackingToken(
@@ -6611,72 +6577,85 @@ export class DeliveryService {
       destination,
     }));
   }
-
-  private async getCachedDeliveryMapRoute(
+  async getCachedDeliveryMapRouteForMonitor(
     tenantId: string,
     origin: GeoPoint,
     destination: GeoPoint,
   ): Promise<GeoRouteResult> {
+    return this.getCachedDeliveryMapRoute(
+      tenantId,
+      origin,
+      destination,
+    );
+  }
+
+    private async getCachedDeliveryMapRoute(
+    tenantId: string,
+    origin: GeoPoint,
+    destination: GeoPoint,
+    routeIdentity?: string,
+  ): Promise<GeoRouteResult> {
     const now = Date.now();
+    const cacheKey = routeIdentity
+      ? [
+          tenantId,
+          "FC_G4114_STABLE_DELIVERY_ROUTE_IDENTITY",
+          routeIdentity,
+          destination.latitude,
+          destination.longitude,
+        ].join(":")
+      : [
+          tenantId,
+          origin.latitude,
+          origin.longitude,
+          destination.latitude,
+          destination.longitude,
+        ].join(":");
 
-    const cacheKey = [
-      origin.latitude,
-      origin.longitude,
-      destination.latitude,
-      destination.longitude,
-    ].join(':');
-
-    const cached =
-      this.deliveryMapRouteCache.get(
-        cacheKey,
-      );
-
+    const cached = this.deliveryMapRouteCache.get(cacheKey);
     if (
       cached &&
-      cached.expiresAt > now
+      (Boolean(routeIdentity) || cached.expiresAt > now)
     ) {
       return cached.route;
     }
-
     if (cached) {
-      this.deliveryMapRouteCache.delete(
-        cacheKey,
-      );
+      this.deliveryMapRouteCache.delete(cacheKey);
     }
 
-    const route =
-      await this.geoUsageMeter.measure({ tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false }, () => this.geoProvider.calculateRoute({
-        origin,
-        destination,
-      }));
+    const route = await this.geoUsageMeter.measure(
+      {
+        tenantId,
+        provider: 'GOOGLE',
+        operation: 'ROUTE',
+        cacheHit: false,
+      },
+      () =>
+        this.geoProvider.calculateRoute({
+          origin,
+          destination,
+        }),
+    );
 
     if (
       this.deliveryMapRouteCache.size >=
       DELIVERY_MAP_ROUTE_CACHE_MAX_ENTRIES
     ) {
       const oldestKey =
-        this.deliveryMapRouteCache
-          .keys()
-          .next()
-          .value as string | undefined;
-
+        this.deliveryMapRouteCache.keys().next().value as
+          | string
+          | undefined;
       if (oldestKey) {
-        this.deliveryMapRouteCache.delete(
-          oldestKey,
-        );
+        this.deliveryMapRouteCache.delete(oldestKey);
       }
     }
 
-    this.deliveryMapRouteCache.set(
-      cacheKey,
-      {
-        expiresAt:
-          now + DELIVERY_MAP_ROUTE_CACHE_TTL_MS,
-
-        route,
-      },
-    );
-
+    this.deliveryMapRouteCache.set(cacheKey, {
+      expiresAt: routeIdentity
+        ? Number.MAX_SAFE_INTEGER
+        : now + DELIVERY_MAP_ROUTE_CACHE_TTL_MS,
+      route,
+    });
     return route;
   }
 

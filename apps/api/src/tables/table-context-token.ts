@@ -15,6 +15,7 @@ export interface TableContextPayload {
   branch: string;
   tableId: string;
   tableCode: string;
+  tableSessionId?: string;
   validOn: string;
 }
 
@@ -137,6 +138,7 @@ export function issueTableContext(
     branch: input.branch,
     tableId: input.tableId,
     tableCode: input.tableCode,
+    tableSessionId: input.tableSessionId,
     validOn,
   };
 
@@ -206,6 +208,10 @@ export function verifyTableContextToken(
       typeof payload.branch !== 'string' ||
       typeof payload.tableId !== 'string' ||
       typeof payload.tableCode !== 'string' ||
+      (
+        payload.tableSessionId !== undefined &&
+        typeof payload.tableSessionId !== 'string'
+      ) ||
       typeof payload.validOn !== 'string' ||
       payload.validOn !==
         getCurrentTableContextDate(now)

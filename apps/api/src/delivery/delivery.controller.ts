@@ -23,6 +23,20 @@ export class DeliveryController {
     private readonly deliveryAddressService: DeliveryAddressService,
   ) {}
 
+  @Post('address/map-context')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  addressMapContext(@Body() body: { tenantCode?: string; branchCode?: string }) {
+    return this.deliveryAddressService.mapContext(body);
+  }
+
+  @Post('address/reverse')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  reverseAddress(@Body() body: { tenantCode?: string; branchCode?: string; latitude?: unknown; longitude?: unknown }) {
+    return this.deliveryAddressService.reverse(body);
+  }
+
   @Post('quote')
   @HttpCode(HttpStatus.OK)
   quoteDelivery(

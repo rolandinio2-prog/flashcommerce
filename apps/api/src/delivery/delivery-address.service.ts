@@ -231,6 +231,27 @@ export class DeliveryAddressService {
     };
   }
 
+  async mapContext(input: { tenantCode?: string; branchCode?: string }) {
+    const branch = await this.requireDeliveryBranch(this.requireCode(input.tenantCode, 'tenantCode'), this.requireCode(input.branchCode, 'branchCode'));
+    return { tenant: branch.tenantCode, branch: branch.branchCode, center: branch.origin };
+  }
+
+  async reverse(input: { tenantCode?: string; branchCode?: string; latitude?: unknown; longitude?: unknown }) {
+    const { latitude, longitude } = input;
+    if (typeof latitude !== 'number' || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
+        typeof longitude !== 'number' || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+      throw new BadRequestException('Selecciona un punto válido en el mapa.');
+    }
+    const branch = await this.requireDeliveryBranch(this.requireCode(input.tenantCode, 'tenantCode'), this.requireCode(input.branchCode, 'branchCode'));
+    const locale = this.readLocale();
+    const point = { latitude, longitude };
+    const address = await this.geoUsageMeter.measure({ tenantCode: branch.tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_REVERSE', cacheHit: false },
+      () => this.geoProvider.reverseGeocode({ location: point, languageCode: locale.languageCode, regionCode: locale.countryCode }));
+    // The provider supplies a nearby address; the customer's pin stays exact.
+    return { tenant: branch.tenantCode, branch: branch.branchCode,
+      location: address ? { ...address, location: point } : null };
+  }
+
   private async requireDeliveryBranch(
     tenantCode: string,
     branchCode: string,
@@ -252,6 +273,8 @@ export class DeliveryAddressService {
 
           where t.code = $1
             and b.code = $2
+            and t.status = 'ACTIVE'
+            and b.status = 'ACTIVE'
 
           limit 1
         `,
