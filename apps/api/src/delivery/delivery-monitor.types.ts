@@ -41,6 +41,8 @@ export interface DeliveryMonitorRoute {
 }
 
 export interface DeliveryMonitorItem {
+  assignmentKey?: string | null;
+  assignedAt?: string | null;
   deliveryId: string;
   orderId: string;
   orderNumber: string;

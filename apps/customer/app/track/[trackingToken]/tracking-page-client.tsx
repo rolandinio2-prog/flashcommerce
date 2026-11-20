@@ -1,4 +1,5 @@
 "use client";
+import {createMonitorSnapshotSync} from '../../ops/delivery-monitor/delivery-monitor-snapshot-sync';
 
 
 import styles from './tracking-design.module.css';
@@ -172,76 +173,33 @@ export default function TrackingPageClient({trackingToken}:{trackingToken:string
   const [fcG4114DeliveryLocation,setFcG4114DeliveryLocation]=useState<PublicDeliveryLocation|null>(null);
   const [fcG4114DeliveryLocationError,setFcG4114DeliveryLocationError]=useState<string|null>(null);
 
-  useEffect(()=>{
-    let disposed=false, timer:number|undefined;
-    setOrder(null);setLoading(true);setError(null);setOpenPanel(null);
-    if(!isUuid(trackingToken)){setError('El enlace de seguimiento no es válido.');setLoading(false);return;}
-    async function refresh(){
-      let terminal=false;
-      try{
-        const nextOrder=await getOrderTracking(trackingToken);
-        if(disposed)return;
-        setOrder(nextOrder);setError(null);
-        terminal=nextOrder.status==='COMPLETED'||nextOrder.status==='CANCELLED';
-      }catch(loadError){if(!disposed)setError(trackingErrorMessage(loadError));}
-      finally{
-        if(!disposed){setLoading(false);if(!terminal)timer=window.setTimeout(()=>{void refresh();},5000);}
-      }
-    }
-    void refresh();
-    return ()=>{disposed=true;if(timer!==undefined)window.clearTimeout(timer);};
-  },[trackingToken]);
+
   useEffect(() => {
-    setFcG4114DeliveryLocation(null);
-    setFcG4114DeliveryLocationError(null);
+    setOrder(null); setLoading(true); setError(null); setOpenPanel(null);
+    setFcG4114DeliveryLocation(null); setFcG4114DeliveryLocationError(null);
+    if (!isUuid(trackingToken)) { setError('El enlace de seguimiento no es válido.'); setLoading(false); return; }
+    const sync = createMonitorSnapshotSync<CreatedOrder>({
+      fetchSnapshot: signal => getOrderTracking(trackingToken,signal),
+      onSnapshot: next => { setOrder(next); setError(null); setLoading(false); if (next.status === 'COMPLETED' || next.status === 'CANCELLED') sync.dispose(); },
+      onError: error => { setError(trackingErrorMessage(error)); setLoading(false); },
+      onLoading: () => {}, isVisible: () => document.visibilityState !== 'hidden',
+    });
+    const wake = () => { void sync.request(); };
+    document.addEventListener('visibilitychange',wake); window.addEventListener('online',wake); wake();
+    return () => { sync.dispose(); document.removeEventListener('visibilitychange',wake); window.removeEventListener('online',wake); };
   }, [trackingToken]);
-
   useEffect(() => {
-    // FC_G4114_PUBLIC_CUSTOMER_MAP_WIRING
-    if (!isUuid(trackingToken) || order?.orderType !== "DELIVERY") {
-      return;
-    }
-
-    let disposed = false;
-    let timerId: number | null = null;
-
-    async function refreshDeliveryLocation(): Promise<void> {
-      try {
-        const result = await getOrderDeliveryLocation(trackingToken);
-        if (disposed) {
-          return;
-        }
-        setFcG4114DeliveryLocation(result);
-        setFcG4114DeliveryLocationError(null);
-      } catch (loadError) {
-        if (!disposed) {
-          setFcG4114DeliveryLocationError(
-            loadError instanceof Error
-              ? loadError.message
-              : "No se pudo actualizar la ubicacion del delivery.",
-          );
-        }
-      } finally {
-        if (
-          !disposed &&
-          order?.status !== "COMPLETED" &&
-          order?.status !== "CANCELLED"
-        ) {
-          timerId = window.setTimeout(() => {
-            void refreshDeliveryLocation();
-          }, 10_000);
-        }
-      }
-    }
-
-    void refreshDeliveryLocation();
-    return () => {
-      disposed = true;
-      if (timerId !== null) {
-        window.clearTimeout(timerId);
-      }
-    };
-  }, [trackingToken, order?.orderType, order?.status]);
+    if (!isUuid(trackingToken) || order?.orderType !== 'DELIVERY' || order.status === 'COMPLETED' || order.status === 'CANCELLED') return;
+    const sync = createMonitorSnapshotSync<PublicDeliveryLocation>({
+      fetchSnapshot: signal => getOrderDeliveryLocation(trackingToken,signal),
+      onSnapshot: value => { setFcG4114DeliveryLocation(value); setFcG4114DeliveryLocationError(null); },
+      onError: error => setFcG4114DeliveryLocationError(error instanceof Error ? error.message : 'No se pudo actualizar la ubicación.'),
+      onLoading: () => {}, isVisible: () => document.visibilityState !== 'hidden', intervalMs:10000,
+    });
+    const wake = () => { void sync.request(); };
+    document.addEventListener('visibilitychange',wake); window.addEventListener('online',wake); wake();
+    return () => { sync.dispose(); document.removeEventListener('visibilitychange',wake); window.removeEventListener('online',wake); };
+  }, [trackingToken,order?.orderType,order?.status]);
   if(loading || (order && order.trackingToken!==trackingToken))return <main className={styles.page}><div className={styles.shell}><p role="status" className={styles.notice}>Cargando tu pedido…</p></div></main>;
   if(!order)return <main className={styles.page}><div className={styles.shell}><header className={styles.header}><h1>Seguimiento del pedido</h1></header><div className={styles.notice} role="status"><h2>No pudimos mostrar el pedido</h2><p>{error}</p>{isUuid(trackingToken)&&<p>Volveremos a intentarlo automáticamente.</p>}</div><a className={styles.back} href="/">Ir al inicio</a></div></main>;
   const statusIndex=ORDER_PROGRESS.findIndex(step=>step.status===order.status);

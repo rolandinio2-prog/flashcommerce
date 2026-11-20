@@ -1,4 +1,6 @@
 'use client';
+import {takeB11Capture} from './b11-capture-binding';
+import {monitorItemIdentity} from './delivery-monitor-contract';
 
 import {
   useCallback,
@@ -7,6 +9,7 @@ import {
   useState,
 } from 'react';
 import { getStaffSession, type StaffSessionUser } from '../../../lib/flash-api';
+import {watchStaffSession} from '../../../lib/staff-session-lifecycle';
 
 import {
   getDeliveryMonitorRoute,
@@ -24,6 +27,7 @@ import {
 import {
   createDeliveryMonitorSupabaseRealtimeTransport,
 } from './delivery-monitor-realtime-supabase';
+import {createMonitorSnapshotSync} from './delivery-monitor-snapshot-sync';
 import MapLibreMonitorMap from './maplibre-monitor-map';
 import styles from './maplibre-monitor-map.module.css';
 
@@ -72,7 +76,7 @@ function trailPointKey(
   point: DeliveryMonitorTrailPoint,
 ): string {
   return [
-    point.capturedAt,
+    timestampMs(point.capturedAt),
     point.latitude.toFixed(7),
     point.longitude.toFixed(7),
   ].join('|');
@@ -152,10 +156,13 @@ function mergeSnapshotPreservingNewerLocations(
               item.deliveryId,
             );
 
-          if (!existing) {
+          if (!existing || existing.driverId !== item.driverId || (existing.assignmentKey ?? null) !== (item.assignmentKey ?? null)) {
             return item;
           }
 
+          const sameDestination = existing.destinationLocation.latitude === item.destinationLocation.latitude &&
+            existing.destinationLocation.longitude === item.destinationLocation.longitude;
+          item = {...item, route: item.route ?? (sameDestination ? existing.route : null)};
           const trail =
             mergeTrailPoints(
               item.trail,
@@ -208,21 +215,14 @@ export default function DeliveryMonitorClient() {
   const [user, setUser] = useState<StaffSessionUser | null>(null);
   const [message, setMessage] = useState('Verificando acceso al seguimiento...');
   const deny = useCallback(() => { setUser(null); setMessage('Tu sesión no permite continuar. Ingresa a Operaciones.'); }, []);
-  useEffect(() => {
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function verify() {
-      try {
-        const session = await getStaffSession();
-        if (stopped) return;
-        if (session.user.passwordChangeRequired || !['ADMIN', 'MANAGER', 'CASHIER'].includes(session.user.role)) { deny(); return; }
-        setUser(session.user);
-      } catch { if (!stopped) deny(); }
-      finally { if (!stopped) timer = setTimeout(verify, 10000); }
-    }
-    void verify();
-    return () => { stopped = true; clearTimeout(timer); };
-  }, [deny]);
+  useEffect(() => watchStaffSession(getStaffSession, session => {
+    if (session.user.passwordChangeRequired || !['ADMIN', 'MANAGER', 'CASHIER'].includes(session.user.role)) return false;
+    setUser(session.user);
+    return true;
+  }, deny, {onTransient: () => {
+    setUser(null);
+    setMessage('Conexion interrumpida. Verificando acceso para reconectar...');
+  }}), [deny]);
   if (!user) return <main className={styles.shell}><p role="status">{message}</p><a href="/ops">Ingresar a Operaciones</a></main>;
   return <AuthenticatedDeliveryMonitor key={user.sessionId + ':' + user.branchId} user={user} onDenied={deny} />;
 }
@@ -278,50 +278,61 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
       new Map(),
     );
 
-  const loadSnapshot =
-    useCallback(
-      async () => {
-        setLoading(true);
+  const snapshotSyncRef = useRef<ReturnType<typeof createMonitorSnapshotSync<DeliveryMonitorSnapshot>> | null>(null);
+  const discoverRouteRef = useRef<((deliveryId: string) => void) | null>(null);
+  const routeOwnerRef = useRef(new Map<string, string>());
+  const routeAvailableRef = useRef(new Set<string>());
+  const pruneRoutesRef = useRef<(() => void) | null>(null);
+  const [realtimeError, setRealtimeError] = useState<string | null>(null);
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 5000); return () => clearInterval(timer); }, []);
+  const loadSnapshot = useCallback(async () => { await snapshotSyncRef.current?.request(); }, []);
+
+  useEffect(() => {
+    setActiveAccess({tenantCode: tenantCode.trim(), branchCode: branchCode.trim()});
+    const sync = createMonitorSnapshotSync<DeliveryMonitorSnapshot>({
+      fetchSnapshot: (signal) => getDeliveryMonitorSnapshot({tenantCode, branchCode}, {stateOnly: true, signal}),
+      onSnapshot: (incoming) => {
         setError(null);
-
-        try {
-          const nextSnapshot =
-            await getDeliveryMonitorSnapshot({
-              tenantCode,
-              branchCode,
-            });
-
-          setSnapshot(
-            nextSnapshot,
-          );
-
-          setActiveAccess({
-            tenantCode:
-              tenantCode.trim(),
-
-            branchCode:
-              branchCode.trim(),
-
-          });
-        } catch (loadError) {
-          if (loadError instanceof MonitorAccessError) { onDenied(); return; }
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : 'No se pudo cargar el monitor',
-          );
-        } finally {
-          setLoading(false);
-        }
+        routeOwnerRef.current = new Map(incoming.items.map((item) => [item.deliveryId,
+          monitorItemIdentity(item)]));
+        routeAvailableRef.current = new Set(incoming.items.filter(item => item.driverId && item.latestLocation).map(item => item.deliveryId));
+        for (const id of lastMovementByDelivery.current.keys()) if (!routeOwnerRef.current.has(id)) lastMovementByDelivery.current.delete(id);
+        pruneRoutesRef.current?.();
+        setSnapshot((current) => {
+          for (const item of incoming.items) {
+            if (!current?.items.some((previous) => previous.deliveryId === item.deliveryId && monitorItemIdentity(previous) === monitorItemIdentity(item))) {
+              lastMovementByDelivery.current.delete(item.deliveryId);
+            }
+          }
+          return mergeSnapshotPreservingNewerLocations(current, incoming);
+        });
       },
-      [
-        tenantCode,
-        branchCode,
-        onDenied,
-      ],
-    );
+      onError: (loadError) => {
+        if (loadError instanceof MonitorAccessError) { sync.dispose(); onDenied(); return; }
+        setError(loadError instanceof Error ? loadError.message : 'No se pudo actualizar el monitor');
+      },
+      onLoading: setLoading,
+      isVisible: () => document.visibilityState !== 'hidden',
+    });
+    snapshotSyncRef.current = sync;
+    const wake = () => { void sync.request(); };
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('online', wake);
+    void sync.request();
+    return () => {
+      sync.dispose();
+      snapshotSyncRef.current = null;
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('online', wake);
+    };
+  }, [tenantCode, branchCode, onDenied]);
 
-  useEffect(() => { void loadSnapshot(); }, [loadSnapshot]);
+  useEffect(() => {
+    for (const item of snapshot?.items ?? []) {
+      if (!item.route && item.driverId && item.latestLocation) discoverRouteRef.current?.(item.deliveryId);
+    }
+  }, [snapshot]);
 
   useEffect(
     () => {
@@ -338,6 +349,20 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
 
       const routeAccess =
         activeAccess;
+
+      const routeControllers = new Map<string, AbortController>();
+      const queuedOwners = new Map<string, string | undefined>();
+      const eligible = (id: string) => routeAvailableRef.current.has(id) && queuedOwners.get(id) === routeOwnerRef.current.get(id);
+      function pruneRoutes() {
+        for (const [id, controller] of routeControllers) if (!eligible(id)) controller.abort();
+        for (const [id, timer] of routeRefreshTimers) if (!eligible(id)) { window.clearTimeout(timer); routeRefreshTimers.delete(id); routeRefreshPending.delete(id); }
+        for (let index = routeRefreshQueue.length - 1; index >= 0; index--) if (!eligible(routeRefreshQueue[index])) { routeRefreshQueued.delete(routeRefreshQueue[index]); routeRefreshPending.delete(routeRefreshQueue[index]); routeRefreshQueue.splice(index, 1); }
+      }
+      const pruneState = pruneRoutes;
+      pruneRoutesRef.current = () => {
+        pruneState();
+        for (const id of queuedOwners.keys()) if (!routeOwnerRef.current.has(id)) { queuedOwners.delete(id); routeRefreshLastStartedAt.delete(id); routeRefreshPending.delete(id); }
+      };
 
       const routeRefreshLastStartedAt =
         new Map<string, number>();
@@ -366,6 +391,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
       function patchDeliveryRoute(
         deliveryId: string,
         route: DeliveryMonitorSnapshot['items'][number]['route'],
+        owner: string | undefined,
       ): void {
         if (!route || disposed) {
           return;
@@ -383,7 +409,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
                 current.items.map(
                   (item) =>
                     item.deliveryId ===
-                    deliveryId
+                    deliveryId && monitorItemIdentity(item) === owner
                       ? {
                           ...item,
                           route,
@@ -398,10 +424,13 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
       async function runRouteRefresh(
         deliveryId: string,
       ): Promise<void> {
-        if (disposed) {
+        if (disposed || !eligible(deliveryId)) {
           return;
         }
 
+        const routeController = new AbortController();
+        routeControllers.set(deliveryId, routeController);
+        const routeOwner = routeOwnerRef.current.get(deliveryId);
         routeRefreshInFlight.add(
           deliveryId,
         );
@@ -421,16 +450,19 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
                 routeAccess.tenantCode,
               branchCode:
                 routeAccess.branchCode,
-              deliveryId,
+              deliveryId, signal: routeController.signal,
             });
 
+          if (disposed || routeController.signal.aborted || routeOwnerRef.current.get(deliveryId) !== routeOwner) return;
           patchDeliveryRoute(
             deliveryId,
-            route,
+            route, routeOwner,
           );
-        } catch {
+        } catch (routeError) {
+          if (routeError instanceof MonitorAccessError) { onDenied(); return; }
           // Fail-open: keep the Realtime location and existing route/null.
         } finally {
+          routeControllers.delete(deliveryId);
           routeRefreshInFlight.delete(
             deliveryId,
           );
@@ -518,10 +550,11 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
       function scheduleRouteRefresh(
         deliveryId: string,
       ): void {
-        if (disposed) {
+        if (disposed || !routeAvailableRef.current.has(deliveryId)) {
           return;
         }
 
+        queuedOwners.set(deliveryId, routeOwnerRef.current.get(deliveryId));
         routeRefreshPending.add(
           deliveryId,
         );
@@ -580,6 +613,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
         );
       }
 
+      discoverRouteRef.current = scheduleRouteRefresh;
       setRealtimeStatus(
         'CONNECTING',
       );
@@ -588,11 +622,15 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
         .current
         .clear();
 
+      let subscription: {close(): void} = {close() {}};
+      try {
+      const b11Capture = takeB11Capture();
       const transport =
         createDeliveryMonitorSupabaseRealtimeTransport(
+          b11Capture?.observe, b11Capture?.Transport,
         );
 
-      const subscription =
+      subscription =
         transport.subscribe(
           {
             tenantCode:
@@ -657,7 +695,8 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
                           item.deliveryId !==
                             movement.deliveryId ||
                           item.driverId !==
-                            movement.driverId
+                            movement.driverId ||
+                          (item.assignedAt && Date.parse(movement.capturedAt) < Date.parse(item.assignedAt))
                         ) {
                           console.info(
                             '[DM_TRACE] TARGET_REJECTED',
@@ -779,54 +818,12 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
                 return;
               }
 
+              setRealtimeError(null);
               setRealtimeStatus(
                 'LIVE',
               );
 
-              void getDeliveryMonitorSnapshot(
-                activeAccess,
-              )
-                .then(
-                  (
-                    incoming,
-                  ) => {
-                    if (disposed) {
-                      return;
-                    }
-
-                    setSnapshot(
-                      (
-                        current,
-                      ) =>
-                        mergeSnapshotPreservingNewerLocations(
-                          current,
-                          incoming,
-                        ),
-                    );
-                  },
-                )
-                .catch(
-                  (
-                    reconnectError,
-                  ) => {
-                    if (disposed) {
-                      return;
-                    }
-
-                    if (reconnectError instanceof MonitorAccessError) { onDenied(); return; }
-                    setRealtimeStatus(
-                      'ERROR',
-                    );
-
-                    setError(
-                      reconnectError instanceof
-                        Error
-                        ? reconnectError
-                            .message
-                        : 'No se pudo resincronizar el monitor',
-                    );
-                  },
-                );
+              void loadSnapshot();
             },
 
             onError(
@@ -841,7 +838,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
                 'ERROR',
               );
 
-              setError(
+              setRealtimeError(
                 realtimeError instanceof
                   Error
                   ? realtimeError
@@ -851,8 +848,13 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
             },
           },
         );
+      } catch { setRealtimeStatus("ERROR"); setRealtimeError("No se pudo iniciar el canal de ubicación. Las consultas de estado continúan."); }
 
       return () => {
+        discoverRouteRef.current = null;
+        pruneRoutesRef.current = null;
+        for (const controller of routeControllers.values()) controller.abort();
+        routeControllers.clear();
         disposed =
           true;
 
@@ -911,6 +913,8 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
         <a href="/ops">Volver a Operaciones</a>
       </section>
 
+      {realtimeError && <p role="status">Ubicación en tiempo real interrumpida. {realtimeError}</p>}
+      {snapshot && clock - Date.parse(snapshot.generatedAt) > 20000 && <p role="status">La información puede estar desactualizada. Última consulta: {formatTimestamp(snapshot.generatedAt)}.</p>}
       {error && (
         <div
           className={styles.errorBox}
@@ -948,8 +952,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
             void loadSnapshot()
           }
           disabled={
-            loading ||
-            !snapshot
+            loading
           }
         >
           Refrescar
@@ -995,6 +998,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
             key={item.deliveryId}
           >
 
+            {item.latestLocation && clock - Date.parse(item.latestLocation.capturedAt) > 30000 && <p role="status">GPS sin actualización reciente.</p>}
             {/* R6.13.2.4 ROUTE_ETA_PRESENTATION */}
             <div
               data-r6-route-eta={item.deliveryId}
@@ -1006,7 +1010,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
               {item.route ? (
                 <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <div>
-                    <p className="text-xs text-zinc-500">ETA</p>
+                    <p className="text-xs text-zinc-500">ETA calculada</p>
                     <p data-r6-eta="true" className="text-sm font-semibold text-zinc-900">
                       {item.route.etaAt
                         ? new Date(item.route.etaAt).toLocaleTimeString(

@@ -13,6 +13,8 @@ import type {
 
 interface DeliveryMonitorRow {
   delivery_id: string;
+  assignment_id: string | null;
+  assigned_at: string | Date | null;
   order_id: string;
   order_number: string;
   delivery_status: DeliveryMonitorDeliveryStatus;
@@ -44,6 +46,7 @@ export class DeliveryMonitorService {
     tenantCode?: string,
     branchCode?: string,
     routeDeliveryId?: string,
+    includeRoutes = true,
   ): Promise<DeliveryMonitorSnapshot> {
     const tenant =
       this.requireCode(
@@ -72,6 +75,9 @@ export class DeliveryMonitorService {
 
             d.status
               as delivery_status,
+
+            assignment.assignment_id::text,
+            assignment.assigned_at,
 
             assignment.driver_id::text
               as driver_id,
@@ -117,6 +123,7 @@ export class DeliveryMonitorService {
 
           left join lateral (
             select
+              a.id as assignment_id,
               a.driver_id,
               a.assignment_number,
               a.assigned_at
@@ -165,6 +172,7 @@ export class DeliveryMonitorService {
               and l.branch_id = d.branch_id
               and l.delivery_id = d.id
               and l.driver_id = assignment.driver_id
+              and l.captured_at >= assignment.assigned_at
 
             order by
               l.captured_at desc,
@@ -223,6 +231,7 @@ export class DeliveryMonitorService {
                 and l.branch_id = d.branch_id
                 and l.delivery_id = d.id
                 and l.driver_id = assignment.driver_id
+                and l.captured_at >= assignment.assigned_at
 
               order by
                 l.captured_at desc,
@@ -236,6 +245,7 @@ export class DeliveryMonitorService {
 
           where t.code = $1
             and b.code = $2
+            and ($3::uuid is null or d.id = $3::uuid)
             and d.status in (
               'CREATED',
               'WAITING_ASSIGNMENT',
@@ -253,6 +263,7 @@ export class DeliveryMonitorService {
         [
           tenant,
           branch,
+          routeDeliveryId ?? null,
         ],
       );
 
@@ -264,7 +275,7 @@ export class DeliveryMonitorService {
         new Date().toISOString(),
 
       items:
-        await this.mapRowsWithRoutes(
+        includeRoutes ? await this.mapRowsWithRoutes(
           result.rows,
           (
             await this.resolveScope(
@@ -273,7 +284,7 @@ export class DeliveryMonitorService {
             )
           ).tenantId,
           routeDeliveryId,
-        ),
+        ) : result.rows.map((row) => this.mapRow(row)),
     };
   }
 
@@ -592,6 +603,8 @@ export class DeliveryMonitorService {
       row.captured_at !== null;
 
     return {
+      assignmentKey: row.assignment_id,
+      assignedAt: row.assigned_at ? new Date(row.assigned_at).toISOString() : null,
       deliveryId:
         row.delivery_id,
 

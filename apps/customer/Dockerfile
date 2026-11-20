@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 ARG NODE_IMAGE
 FROM $NODE_IMAGE AS base
 RUN test "$(node --version)" = "v24.19.0" && npm install --global pnpm@11.21.0 --ignore-scripts --no-audit --no-fund
@@ -11,7 +10,8 @@ RUN pnpm install --frozen-lockfile --ignore-scripts
 FROM dependencies AS build
 ENV NODE_OPTIONS=--max-old-space-size=1536
 COPY . .
-RUN --mount=type=secret,id=public_env,required=true node build-next.cjs
+ARG STAGE_PUBLIC_CONFIG_SHA256
+RUN --mount=type=secret,id=public_env,required=true test "$(sha256sum /run/secrets/public_env | cut -d ' ' -f 1)" = "$STAGE_PUBLIC_CONFIG_SHA256" && node build-next.cjs
 FROM $NODE_IMAGE AS runtime
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 WORKDIR /app

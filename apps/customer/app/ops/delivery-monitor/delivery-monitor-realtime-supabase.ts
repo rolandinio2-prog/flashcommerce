@@ -1,3 +1,5 @@
+import {onStaffLogout} from '../../../lib/staff-session-lifecycle';
+import {withReadDeadline} from '../../../lib/read-deadline';
 import { type RealtimeChannel } from '@supabase/supabase-js';
 import { RealtimeClient } from '@supabase/realtime-js';
 
@@ -120,7 +122,7 @@ function parseMovementEvent(
           'number' &&
         Number.isFinite(
           candidate.accuracyM,
-        )
+        ) && candidate.accuracyM >= 0
       )
     ) ||
     typeof candidate.capturedAt !==
@@ -134,7 +136,7 @@ function parseMovementEvent(
       'number' ||
     !Number.isSafeInteger(
       candidate.sequence,
-    )
+    ) || candidate.sequence < 0
   ) {
     return null;
   }
@@ -143,680 +145,115 @@ function parseMovementEvent(
     DeliveryMonitorMovementEvent;
 }
 
-export function createDeliveryMonitorSupabaseRealtimeTransport(
-): DeliveryMonitorRealtimeTransport {
-  const {
-    url,
-    key,
-  } =
-    readPublicConfiguration();
-
-  const realtimeEndpoint =
-    `${url.replace(/\/+$/, '')}/realtime/v1`;
-
-  const retryDelayMs =
-    5_000;
-
-  return {
-    subscribe(
-      scope:
-        DeliveryMonitorRealtimeScope,
-      handlers:
-        DeliveryMonitorRealtimeHandlers,
-    ): DeliveryMonitorRealtimeSubscription {
-      console.info(
-        '[DM_RT] EFFECT_ACTIVE',
-      );
-
-      const tenantCode =
-        scope.tenantCode.trim();
-
-      const branchCode =
-        scope.branchCode.trim();
-
-      if (
-        !tenantCode ||
-        !branchCode
-      ) {
-        throw new Error(
-          'Delivery Monitor Realtime scope is required',
-        );
-      }
-
-      let closed =
-        false;
-
-      let connectInFlight =
-        false;
-
-      let activeClient:
-        RealtimeClient | null =
-        null;
-
-      let activeExpiresAt:
-        string | null =
-        null;
-
-      let standbyClient:
-        RealtimeClient | null =
-        null;
-
-      let blockedRetiringClient:
-        RealtimeClient | null =
-        null;
-
-      let refreshTimer:
-        ReturnType<typeof setTimeout> | null =
-        null;
-
-      function createRealtimeClient(): RealtimeClient {
-        return new RealtimeClient(
-          realtimeEndpoint,
-          {
-            params: {
-              apikey:
-                key,
-            },
-          },
-        );
-      }
-
-      function clearRefreshTimer(): void {
-        if (
-          refreshTimer !==
-          null
-        ) {
-          clearTimeout(
-            refreshTimer,
-          );
-
-          refreshTimer =
-            null;
-        }
-      }
-
-      function scheduleRetry(): void {
-        if (closed) {
-          return;
-        }
-
-        clearRefreshTimer();
-
-        console.info(
-          '[DM_RT] HANDOVER_RETRY_SCHEDULED',
-        );
-
-        refreshTimer =
-          setTimeout(
-            () => {
-              refreshTimer =
-                null;
-
-              if (closed) {
-                return;
-              }
-
-              void connect();
-            },
-            retryDelayMs,
-          );
-      }
-
-      function scheduleRefresh(
-        expiresAt:
-          string,
-      ): void {
-        if (closed) {
-          return;
-        }
-
-        clearRefreshTimer();
-
-        const expiresAtMs =
-          new Date(
-            expiresAt,
-          ).getTime();
-
-        const refreshDelayMs =
-          Number.isFinite(
-            expiresAtMs,
-          )
-            ? Math.max(
-                1_000,
-                (expiresAtMs - Date.now()) - Math.min(
-                  TOKEN_REFRESH_MARGIN_MS, Math.max(1000, (expiresAtMs - Date.now()) / 2),
-                ),
-              )
-            : 1_000;
-
-        refreshTimer =
-          setTimeout(
-            () => {
-              refreshTimer =
-                null;
-
-              if (closed) {
-                return;
-              }
-
-              console.info(
-                '[DM_RT] REFRESH_TRIGGERED',
-              );
-
-              void connect();
-            },
-            refreshDelayMs,
-          );
-      }
-
-      async function retireBlockedClientBeforeHandover(): Promise<boolean> {
-        const blockedClient =
-          blockedRetiringClient;
-
-        if (!blockedClient) {
-          return true;
-        }
-
-        try {
-          await blockedClient
-            .removeAllChannels();
-
-          if (
-            blockedRetiringClient ===
-            blockedClient
-          ) {
-            blockedRetiringClient =
-              null;
-          }
-
-          console.info(
-            '[DM_RT] BLOCKED_CLIENT_RETIRED',
-          );
-
-          return true;
-        }
-        catch {
-          console.info(
-            '[DM_RT] BLOCKED_CLIENT_RETIRE_FAILED',
-          );
-
-          return false;
-        }
-      }
-
-      async function connect(): Promise<void> {
-        if (
-          closed ||
-          connectInFlight
-        ) {
-          return;
-        }
-
-        connectInFlight =
-          true;
-
-        clearRefreshTimer();
-
-        let candidateClient:
-          RealtimeClient | null =
-          null;
-
-        try {
-          const blockedRetired =
-            await retireBlockedClientBeforeHandover();
-
-          if (!blockedRetired) {
-            scheduleRetry();
-            return;
-          }
-
-          if (
-            activeClient &&
-            activeExpiresAt &&
-            blockedRetiringClient ===
-              null
-          ) {
-            const activeRefreshAtMs =
-              new Date(
-                activeExpiresAt,
-              ).getTime() -
-              TOKEN_REFRESH_MARGIN_MS;
-
-            if (
-              Number.isFinite(
-                activeRefreshAtMs,
-              ) &&
-              Date.now() <
-                activeRefreshAtMs
-            ) {
-              scheduleRefresh(
-                activeExpiresAt,
-              );
-
-              return;
+export type B11ChannelObserver = (kind: string, client?: object, channel?: object) => void;
+export function createDeliveryMonitorSupabaseRealtimeTransport(observer?: B11ChannelObserver, diagnosticTransport?: typeof WebSocket): DeliveryMonitorRealtimeTransport {
+  // Optional local diagnostic hook. Never exposes tokens, topics, payloads or URLs.
+  const note = (kind: string, client?: object, channel?: object) => { try { observer?.(kind,client,channel); } catch {} };
+  const disconnectObserved = (client: RealtimeClient) => client.disconnect().then(status => { note(status === 'ok' ? 'disconnect-resolved' : 'disconnect-rejected',client); }, () => { note('disconnect-rejected',client); });
+  const {url,key} = readPublicConfiguration();
+  return {subscribe(scope,handlers) {
+    const tenantCode = scope.tenantCode.trim(), branchCode = scope.branchCode.trim();
+    if (!tenantCode || !branchCode) throw new Error('Delivery Monitor Realtime scope is required');
+    note('subscription-start');
+    let closed = false, connecting = false;
+    let active: RealtimeClient | null = null, standby: RealtimeClient | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let handshakeTimer: ReturnType<typeof setTimeout> | undefined;
+    let pendingHandshakeReject: ((reason: Error) => void) | undefined;
+    let sessionController: AbortController | null = null;
+    const retiring = new Set<RealtimeClient>();
+    let unsubscribeLogout = () => {};
+    const clearTimer = () => { if (timer !== undefined) clearTimeout(timer); timer = undefined; };
+    const schedule = (delay: number) => { clearTimer(); if (!closed) timer = setTimeout(() => { timer = undefined; void connect(); }, delay); };
+    const report = (error: unknown) => { if (!closed) handlers.onError(error); };
+    async function retire(client: RealtimeClient) {
+      retiring.add(client); note('retiring',client);
+      try {
+        const statuses = await withReadDeadline(() => client.removeAllChannels(), {timeoutMs:5000});
+        if (statuses.some(status => status !== 'ok')) { note('remove-rejected',client); return false; }
+        if (observer) try { if (client.getChannels().length === 0) note('channels-empty',client);
+        else note('remove-rejected',client); } catch { note('remove-rejected',client); }
+        retiring.delete(client);
+        return true;
+      } catch { note('remove-rejected',client); return false; }
+      finally { void disconnectObserved(client); }
+    }
+    async function connect() {
+      if (closed || connecting) return;
+      connecting = true;
+      let candidate: RealtimeClient | null = null;
+      try {
+        for (const client of retiring) if (!await retire(client)) { report(new Error('No se pudo cerrar la conexión anterior.')); schedule(5000); return; }
+        sessionController = new AbortController();
+        const session = await getDeliveryMonitorRealtimeSession({tenantCode,branchCode},sessionController.signal);
+        if (closed) return;
+        candidate = new RealtimeClient(`${url.replace(/\/+$/, '')}/realtime/v1`, {params:{apikey:key}, ...(diagnosticTransport ? {transport:diagnosticTransport} : {})});
+        note('client-created',candidate);
+        standby = candidate;
+        await withReadDeadline(() => candidate!.setAuth(session.accessToken));
+        if (closed) return;
+        const own = candidate;
+        const channel = own.channel(session.topic,{config:{private:true}});
+        note('channel-created',own,channel);
+        const previous = await new Promise<RealtimeClient | null>((resolve,reject) => {
+          let settled = false;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            if (handshakeTimer !== undefined) clearTimeout(handshakeTimer);
+            handshakeTimer = undefined; pendingHandshakeReject = undefined;
+            if (error) { reject(error); return; }
+            const old = active; active = own; standby = null; note('active',own);
+            handlers.onReconnect(); resolve(old);
+          };
+          pendingHandshakeReject = error => finish(error);
+          handshakeTimer = setTimeout(() => finish(new Error('Tiempo de conexión Realtime agotado.')),15000);
+          channel.on('broadcast',{event:'LOCATION_UPDATED'},envelope => {
+            note('message-received',own,channel);
+            if (closed || active !== own) return;
+            const movement = parseMovementEvent(envelope);
+            if (movement) handlers.onMovement(movement);
+            else report(new Error('Evento de ubicación inválido.'));
+          }).subscribe(status => {
+            if (status === 'SUBSCRIBED') note('subscribed',own,channel);
+            if (status === 'CLOSED') note('channel-closed',own,channel);
+            if (closed) { finish(new Error('Conexión cerrada.')); return; }
+            if (status === 'SUBSCRIBED') {
+              if (!settled) finish();
+              else if (active === own) handlers.onReconnect();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+              const error = new Error('La conexión de ubicación se interrumpió.');
+              if (!settled) finish(error);
+              else if (active === own) { report(error); schedule(5000); }
             }
-          }
-
-          console.info(
-            '[DM_RT] SESSION_REQUEST_START',
-          );
-
-          const session =
-            await getDeliveryMonitorRealtimeSession({
-              tenantCode,
-              branchCode,
-            });
-
-          console.info(
-            '[DM_RT] SESSION_OK',
-          );
-
-          if (closed) {
-            return;
-          }
-
-          if (activeClient) {
-            console.info(
-              '[DM_RT] HANDOVER_PREVIOUS_PRESERVED',
-            );
-          }
-
-          const candidate =
-            createRealtimeClient();
-
-          candidateClient =
-            candidate;
-
-          standbyClient =
-            candidate;
-
-          console.info(
-            '[DM_RT] STANDBY_CLIENT_CREATED',
-          );
-
-          await candidate
-            .setAuth(
-              session.accessToken,
-            );
-
-          console.info(
-            '[DM_RT] STANDBY_AUTH_SET',
-          );
-
-          console.info(
-            '[DM_RT] AUTH_SET',
-          );
-
-          if (closed) {
-            throw new Error(
-              'Delivery Monitor Realtime subscription closed',
-            );
-          }
-
-          const candidateChannel =
-            candidate.channel(
-              session.topic,
-              {
-                config: {
-                  private:
-                    true,
-                },
-              },
-            );
-
-          console.info(
-            '[DM_RT] STANDBY_CHANNEL_CREATED',
-          );
-
-          console.info(
-            '[DM_RT] CHANNEL_CREATED',
-          );
-
-          const previousActiveToRetire =
-            await new Promise<RealtimeClient | null>(
-              (
-                resolve,
-                reject,
-              ) => {
-              let settled =
-                false;
-
-              candidateChannel
-                .on(
-                  'broadcast',
-                  {
-                    event:
-                      'LOCATION_UPDATED',
-                  },
-                  (
-                    envelope,
-                  ) => {
-                    console.info(
-                      '[DM_RT] CALLBACK_LOCATION_UPDATED',
-                    );
-
-                    if (
-                      closed ||
-                      activeClient !==
-                        candidate
-                    ) {
-                      return;
-                    }
-
-                    const movement =
-                      parseMovementEvent(
-                        envelope,
-                      );
-
-                    if (!movement) {
-                      handlers.onError(
-                        new Error(
-                          'Invalid Delivery Monitor movement event',
-                        ),
-                      );
-
-                      return;
-                    }
-
-                    handlers.onMovement(
-                      movement,
-                    );
-                  },
-                )
-                .subscribe(
-                  (
-                    status,
-                    _error,
-                  ) => {
-                    if (
-                      status ===
-                      'SUBSCRIBED'
-                    ) {
-                      if (settled) {
-                        return;
-                      }
-
-                      settled =
-                        true;
-
-                      console.info(
-                        '[DM_RT] SUBSCRIBE_SUBSCRIBED',
-                      );
-
-                      console.info(
-                        '[DM_RT] STANDBY_SUBSCRIBED',
-                      );
-
-                      const previousActive =
-                        activeClient;
-
-                      activeClient =
-                        candidate;
-
-                      activeExpiresAt =
-                        session.expiresAt;
-
-                      if (
-                        standbyClient ===
-                        candidate
-                      ) {
-                        standbyClient =
-                          null;
-                      }
-
-                      console.info(
-                        '[DM_RT] ACTIVE_CLIENT_PROMOTED',
-                      );
-
-                      handlers.onReconnect();
-
-                      resolve(
-                        previousActive,
-                      );
-
-                      return;
-                    }
-
-                    if (
-                      status ===
-                      'CHANNEL_ERROR'
-                    ) {
-                      console.info(
-                        '[DM_RT] SUBSCRIBE_CHANNEL_ERROR',
-                      );
-                    }
-
-                    if (
-                      status ===
-                      'TIMED_OUT'
-                    ) {
-                      console.info(
-                        '[DM_RT] SUBSCRIBE_TIMED_OUT',
-                      );
-                    }
-
-                    if (
-                      status ===
-                        'CHANNEL_ERROR' ||
-                      status ===
-                        'TIMED_OUT'
-                    ) {
-                      if (settled) {
-                        return;
-                      }
-
-                      settled =
-                        true;
-
-                      reject(
-                        new Error(
-                          `Delivery Monitor Realtime standby status: ${status}`,
-                        ),
-                      );
-
-                      return;
-                    }
-
-                    if (
-                      status ===
-                        'CLOSED' &&
-                      closed &&
-                      !settled
-                    ) {
-                      settled =
-                        true;
-
-                      reject(
-                        new Error(
-                          'Delivery Monitor Realtime subscription closed',
-                        ),
-                      );
-                    }
-                  },
-                );
-              },
-            );
-
-          if (
-            previousActiveToRetire &&
-            previousActiveToRetire !==
-              candidate
-          ) {
-            console.info(
-              '[DM_RT] PREVIOUS_ACTIVE_RETIRE_START',
-            );
-
-            try {
-              await previousActiveToRetire
-                .removeAllChannels();
-
-              console.info(
-                '[DM_RT] PREVIOUS_ACTIVE_RETIRED',
-              );
-            }
-            catch {
-              blockedRetiringClient =
-                previousActiveToRetire;
-
-              console.info(
-                '[DM_RT] PREVIOUS_ACTIVE_RETIRE_FAILED',
-              );
-
-              scheduleRetry();
-
-              return;
-            }
-          }
-
-          scheduleRefresh(
-            session.expiresAt,
-          );
-        }
-        catch (error) {
-          if (error instanceof MonitorAccessError) {
-            closed = true;
-            clearRefreshTimer();
-            const clients = new Set([activeClient, standbyClient, blockedRetiringClient, candidateClient]);
-            activeClient = null; standbyClient = null; blockedRetiringClient = null; activeExpiresAt = null;
-            for (const client of clients) { if (client) { try { await client.removeAllChannels(); } catch { /* Remain closed. */ } } }
-            handlers.onError(error);
-            return;
-          }
-          if (
-            candidateClient &&
-            activeClient !==
-              candidateClient
-          ) {
-            console.info(
-              '[DM_RT] STANDBY_FAILED',
-            );
-
-            if (
-              standbyClient ===
-              candidateClient
-            ) {
-              standbyClient =
-                null;
-            }
-
-            try {
-              await candidateClient
-                .removeAllChannels();
-
-              console.info(
-                '[DM_RT] FAILED_STANDBY_RETIRED',
-              );
-            }
-            catch {
-              blockedRetiringClient =
-                candidateClient;
-
-              console.info(
-                '[DM_RT] FAILED_STANDBY_RETIRE_FAILED',
-              );
-            }
-          }
-
-          if (
-            !closed &&
-            !activeClient
-          ) {
-            handlers.onError(
-              new Error(
-                'Delivery Monitor Realtime connection failed',
-              ),
-            );
-          }
-
-          if (!closed) {
-            scheduleRetry();
-          }
-        }
-        finally {
-          connectInFlight =
-            false;
-        }
+          });
+        });
+        if (closed) return;
+        if (previous && previous !== own && !await retire(previous)) { report(new Error('Cierre anterior pendiente.')); schedule(5000); return; }
+        if (timer === undefined) schedule(Math.max(1000,Date.parse(session.expiresAt)-Date.now()-Math.min(TOKEN_REFRESH_MARGIN_MS,Math.max(1000,(Date.parse(session.expiresAt)-Date.now())/2))));
+      } catch (error) {
+        if (error instanceof MonitorAccessError) { handlers.onError(error); close(); return; }
+        if (candidate && active !== candidate) { if (standby === candidate) standby = null; await retire(candidate); }
+        if (!closed) { report(error); schedule(5000); }
+      } finally {
+        sessionController = null; connecting = false;
+        if (closed && candidate) await retire(candidate);
       }
-
-      void connect();
-
-      return {
-        close(): void {
-          if (closed) {
-            return;
-          }
-
-          closed =
-            true;
-
-          clearRefreshTimer();
-
-          const activeToClose =
-            activeClient;
-
-          const standbyToClose =
-            standbyClient;
-
-          const blockedToClose =
-            blockedRetiringClient;
-
-          activeClient =
-            null;
-
-          activeExpiresAt =
-            null;
-
-          standbyClient =
-            null;
-
-          blockedRetiringClient =
-            null;
-
-          void (
-            async () => {
-              if (activeToClose) {
-                try {
-                  await activeToClose
-                    .removeAllChannels();
-                }
-                catch {
-                  // Close is best-effort and must not reactivate transport.
-                }
-              }
-
-              if (
-                standbyToClose &&
-                standbyToClose !==
-                  activeToClose
-              ) {
-                try {
-                  await standbyToClose
-                    .removeAllChannels();
-                }
-                catch {
-                  // Close is best-effort and must not reactivate transport.
-                }
-              }
-
-              if (
-                blockedToClose &&
-                blockedToClose !==
-                  activeToClose &&
-                blockedToClose !==
-                  standbyToClose
-              ) {
-                try {
-                  await blockedToClose
-                    .removeAllChannels();
-                }
-                catch {
-                  // Close is best-effort and must not reactivate transport.
-                }
-              }
-            }
-          )();
-        },
-      };
-    },
-  };
+    }
+    function close() {
+      if (closed) return;
+      closed = true; unsubscribeLogout(); clearTimer(); sessionController?.abort();
+      pendingHandshakeReject?.(new Error('Conexión cerrada.'));
+      if (handshakeTimer !== undefined) clearTimeout(handshakeTimer);
+      handshakeTimer = undefined;
+      const clients = new Set([...retiring,active,standby]); active=null; standby=null;
+      for (const client of clients) if (client) {
+        // Cancel socket reconnect immediately; channel leave acknowledgements may stall.
+        void disconnectObserved(client);
+        void retire(client);
+      }
+    }
+    unsubscribeLogout = onStaffLogout(close);
+    void connect(); return {close};
+  }};
 }

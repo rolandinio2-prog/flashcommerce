@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 ARG NODE_IMAGE
 FROM $NODE_IMAGE AS base
 RUN test "$(node --version)" = "v24.19.0" && npm install --global pnpm@11.21.0 --ignore-scripts --no-audit --no-fund

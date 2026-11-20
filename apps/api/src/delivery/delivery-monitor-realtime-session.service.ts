@@ -32,6 +32,12 @@ export class DeliveryMonitorRealtimeSessionService {
     accessToken: string;
     expiresAt: string;
   }> {
+    // A topic belongs to one staff session, never to every browser in a branch.
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    if (![principal.sessionId, principal.userId, principal.tenantId, principal.branchId].every(value => typeof value === 'string' && uuid.test(value)) ||
+        principal.passwordChangeRequired || !['ADMIN', 'MANAGER', 'CASHIER'].includes(principal.role)) {
+      throw new UnauthorizedException('Session cannot access Realtime');
+    }
     const scope =
       await this.deliveryMonitorService
         .resolveScope(
@@ -59,7 +65,7 @@ export class DeliveryMonitorRealtimeSessionService {
     }
 
     const topic =
-      `delivery-monitor:${scope.tenantId}:${scope.branchId}`;
+      `delivery-monitor:${scope.tenantId}:${scope.branchId}:session:${principal.sessionId}`;
 
     const accessToken =
       sign(

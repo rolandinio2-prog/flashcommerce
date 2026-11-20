@@ -612,7 +612,7 @@ export default function OpsOrdersClient({
       </header>
 
       <div className="border-b border-zinc-200 bg-white">
-        <nav className="mx-auto flex max-w-[1600px] gap-2 px-6 py-3">
+        <nav className="mx-auto flex flex-wrap max-w-[1600px] gap-2 px-6 py-3">
           <button
             type="button"
             onClick={() => setActiveTab("ORDERS")}

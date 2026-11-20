@@ -1,3 +1,5 @@
+import {withReadDeadline} from '../../../lib/read-deadline';
+import {parseMonitorRoute, parseMonitorSnapshot} from './delivery-monitor-contract';
 export class MonitorAccessError extends Error {
   constructor(public status: number) { super(status === 401 ? 'Tu sesión venció. Inicia sesión en Operaciones.' : 'No tienes acceso al monitor de esta sucursal.'); }
 }
@@ -50,6 +52,7 @@ function requireInput(
 
 export async function getDeliveryMonitorSnapshot(
   input: GetDeliveryMonitorSnapshotInput,
+  options?: { stateOnly?: boolean; signal?: AbortSignal },
 ): Promise<DeliveryMonitorSnapshot> {
   const normalized =
     requireInput(input);
@@ -63,9 +66,10 @@ export async function getDeliveryMonitorSnapshot(
         normalized.branchCode,
     });
 
+  return withReadDeadline(async (signal) => {
   const response =
     await fetch(
-      `/api/v1/ops/delivery-monitor/active?${query.toString()}`,
+      `/api/v1/ops/delivery-monitor/${options?.stateOnly ? "state" : "active"}?${query.toString()}`,
       {
         method:
           'GET',
@@ -73,6 +77,7 @@ export async function getDeliveryMonitorSnapshot(
         cache:
           'no-store',
 
+        signal,
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
       },
@@ -89,24 +94,14 @@ export async function getDeliveryMonitorSnapshot(
     (await response.json()) as
       DeliveryMonitorSnapshot;
 
-  if (
-    payload.snapshotVersion !==
-      'delivery-monitor.snapshot.v1' ||
-    !Array.isArray(
-      payload.items,
-    )
-  ) {
-    throw new Error(
-      'Delivery monitor response contract is invalid',
-    );
-  }
-
-  return payload;
+  return parseMonitorSnapshot(payload);
+  }, {signal: options?.signal});
 }
 
 export async function getDeliveryMonitorRoute(
   input: GetDeliveryMonitorSnapshotInput & {
     deliveryId: string;
+    signal?: AbortSignal;
   },
 ): Promise<DeliveryMonitorSnapshot['items'][number]['route']> {
   const normalized =
@@ -126,13 +121,14 @@ export async function getDeliveryMonitorRoute(
     branch: normalized.branchCode,
   });
 
+  return withReadDeadline(async (signal) => {
   const response =
     await fetch(
       `/api/v1/ops/delivery-monitor/deliveries/${encodeURIComponent(
         deliveryId,
       )}/route?${query.toString()}`,
       {
-        method: 'GET',
+        method: 'GET', signal,
         cache: 'no-store',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
@@ -146,12 +142,12 @@ export async function getDeliveryMonitorRoute(
     );
   }
 
-  return (
-    await response.json()
-  ) as DeliveryMonitorSnapshot['items'][number]['route'];
+  return parseMonitorRoute(await response.json());
+  }, {signal: input.signal});
 }
 export async function getDeliveryMonitorRealtimeSession(
   input: GetDeliveryMonitorSnapshotInput,
+  signal?: AbortSignal,
 ): Promise<DeliveryMonitorRealtimeSession> {
   const normalized =
     requireInput(input);
@@ -165,12 +161,14 @@ export async function getDeliveryMonitorRealtimeSession(
         normalized.branchCode,
     });
 
+  return withReadDeadline(async (readSignal) => {
   const response =
     await fetch(
       `/api/v1/ops/delivery-monitor/realtime-session?${query.toString()}`,
       {
         method:
           'POST',
+        signal: readSignal,
 
         cache:
           'no-store',
@@ -216,4 +214,5 @@ export async function getDeliveryMonitorRealtimeSession(
   }
 
   return payload;
+  }, {signal});
 }

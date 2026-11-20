@@ -49,6 +49,18 @@ function fcG41122DistanceMeters(
   );
 }
 
+let cacheInstanceSerial = 0;
+function geometryKey(path: readonly FcG41122Point[]): string {
+  let hash = 2166136261;
+  for (const point of path) for (const char of `${point.lat},${point.lng};`) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return `${path.length}:${hash >>> 0}`;
+}
+function releaseMapCache(prefix: string, activeOwners?: Set<string>) {
+  for (const cache of [fcG41122ProgressByRoute, fcG4114GuardStateByRoute, fcG4114FrozenPathByRoute]) {
+    for (const key of cache.keys()) if (key.startsWith(prefix) && (!activeOwners || ![...activeOwners].some(owner => key.startsWith(owner + '|')))) cache.delete(key);
+  }
+}
+
 function fcG41122RouteKey(
   ownerKey: string,
   path: readonly FcG41122Point[],
@@ -57,7 +69,7 @@ function fcG41122RouteKey(
     path.length > 0 ? path[path.length - 1] : null;
   return destination
     ? [
-        ownerKey,
+        ownerKey, geometryKey(path),
         destination.lat.toFixed(6),
         destination.lng.toFixed(6),
       ].join("|")
@@ -120,12 +132,10 @@ function fcG41122ApplyMonotonicProgress(
   });
 
   console.info("ROUTE_PROGRESS_PROJECTED", {
-    owner: ownerKey,
     progressMeters: Math.round(clampedRaw),
   });
 
   console.info("ROUTE_PROGRESS_MONOTONIC_APPLIED", {
-    owner: ownerKey,
     progressMeters: Math.round(applied),
   });
 
@@ -276,7 +286,6 @@ function fcG41122LogApplied(
       : 0;
 
   console.info("REMAINING_ROUTE_APPLIED", {
-    owner: ownerKey,
     progressMeters: Math.round(progressMeters),
     remainingMeters: Math.round(remainingMeters),
     progressPercent: Math.round(progressPercent),
@@ -544,6 +553,8 @@ export default function TrackingMapClient({
 
   const mapRef = useRef<google.maps.Map | null>(null);
   const fittedRef = useRef(false);
+  const cachePrefix = useRef(`customer-map-${++cacheInstanceSerial}:`);
+  useEffect(() => { const prefix = cachePrefix.current; releaseMapCache(prefix); return () => releaseMapCache(prefix); }, [trackingToken]);
   useEffect(() => { fittedRef.current = false; }, [branchOrigin?.latitude, branchOrigin?.longitude]);
   useEffect(() => {
     const container = containerRef.current;
@@ -684,7 +695,7 @@ export default function TrackingMapClient({
             geometry.encoding.decodePath(
               encodedPolyline,
             );
-      const fcG4114OwnerKey = "CUSTOMER:" + trackingToken;
+      const fcG4114OwnerKey = cachePrefix.current + "route";
 const fcG4114IncomingPath = routePath.map((point) => ({
         lat: point.lat(),
         lng: point.lng(),

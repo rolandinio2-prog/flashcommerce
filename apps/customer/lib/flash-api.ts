@@ -1,3 +1,7 @@
+import './private-diagnostic-endpoint';
+import {newStaffDiagnostic, StaffDiagnostic} from './staff-me-diagnostic';
+import {announceStaffLogout} from './staff-session-lifecycle';
+import {withReadDeadline} from './read-deadline';
 export interface FlashCartProduct {
   id: string;
   sku: string | null;
@@ -424,11 +428,11 @@ export function recoveryAccessError(error: unknown): string {
     if (error.status === 429) return error.retryAfterSeconds
       ? 'Demasiados intentos. Espera ' + Math.ceil(error.retryAfterSeconds / 60) + ' minuto(s) antes de intentar de nuevo.'
       : 'Demasiados intentos. Espera unos minutos antes de intentar de nuevo.';
-    if (error.status === 401) return 'Verifica tu teléfono y código de recuperación. Si ya te registraste, usa tu código actual. Si la sesión no se conserva, abre FastPay en Safari o Chrome.';
-    if (error.status === 400) return 'Revisa tu nombre, teléfono y código de 6 dígitos.';
-    if (error.status === 409) return 'Esta cuenta necesita revisión. Solicita ayuda al comercio.';
+    if (error.status === 401) return 'Verifica tu telÃ©fono y cÃ³digo de recuperaciÃ³n. Si ya te registraste, usa tu cÃ³digo actual. Si la sesiÃ³n no se conserva, abre FastPay en Safari o Chrome.';
+    if (error.status === 400) return 'Revisa tu nombre, telÃ©fono y cÃ³digo de 6 dÃ­gitos.';
+    if (error.status === 409) return 'Esta cuenta necesita revisiÃ³n. Solicita ayuda al comercio.';
   }
-  return 'No pudimos verificar el acceso en este momento. Comprueba tu conexión. Tus pedidos existentes se conservan.';
+  return 'No pudimos verificar el acceso en este momento. Comprueba tu conexiÃ³n. Tus pedidos existentes se conservan.';
 }
 
 export interface CustomerRecoveryProfile { fullName: string; phone: string; tenantCode: string; }
@@ -443,8 +447,9 @@ export function updateCustomerRecoveryName(tenantCode: string, fullName: string,
   return apiRequest<{authenticated: boolean}>('/api/v1/orders/recovery/profile/name', {method:'POST', body:JSON.stringify({tenantCode,fullName,phone,pin})});
 }
 
-export async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${getApiUrl()}${path}`, {
+export async function apiRequest<T>(path: string, options?: RequestInit, diagnostic?: StaffDiagnostic): Promise<T> {
+  let response: Response;
+  try { response = await fetch(`${getApiUrl()}${path}`, {
     credentials: "same-origin",
     ...options,
 
@@ -454,6 +459,8 @@ export async function apiRequest<T>(path: string, options?: RequestInit): Promis
     },
   });
 
+  } catch(error) { diagnostic?.record('FETCH','THREW',error); throw error; }
+  diagnostic?.record('HTTP',response.ok?'OK':'REJECTED',undefined,response.status);
   if (!response.ok) {
     let message = `Flash API error: ${response.status}`;
     let retryAfterSeconds = Number(response.headers.get("Retry-After")) || null;
@@ -465,7 +472,8 @@ export async function apiRequest<T>(path: string, options?: RequestInit): Promis
       if (typeof error?.message === "string") {
         message = error.message;
       }
-    } catch {
+    } catch(error) {
+      diagnostic?.record('ERROR_BODY','THREW',error);
       // Conservamos el mensaje HTTP.
     }
 
@@ -476,13 +484,16 @@ export async function apiRequest<T>(path: string, options?: RequestInit): Promis
     return undefined as T;
   }
 
-  const responseText = await response.text();
+  let responseText: string;
+  try { responseText = await response.text(); }
+  catch(error) { diagnostic?.record('BODY_READ','THREW',error); throw error; }
 
   if (!responseText.trim()) {
     return undefined as T;
   }
 
-  return JSON.parse(responseText) as T;
+  try { return JSON.parse(responseText) as T; }
+  catch(error) { diagnostic?.record('JSON_PARSE','THREW',error); throw error; }
 }
 
 export function createCart(
@@ -703,8 +714,8 @@ export function createOrder(
   });
 }
 
-export function getOrderTracking(trackingToken: string): Promise<CreatedOrder> {
-  return apiRequest<CreatedOrder>(`/api/v1/orders/track/${trackingToken}`);
+export function getOrderTracking(trackingToken: string, signal?: AbortSignal): Promise<CreatedOrder> {
+  return withReadDeadline(readSignal => apiRequest<CreatedOrder>(`/api/v1/orders/track/${encodeURIComponent(trackingToken)}`, {cache:"no-store",signal:readSignal}), {signal});
 }
 
 // =========================================================
@@ -795,16 +806,16 @@ export function logoutCustomerRecovery(): Promise<{
 }
 
 export function getOrderDeliveryLocation(
-  trackingToken: string,
+  trackingToken: string, signal?: AbortSignal,
 ): Promise<PublicDeliveryLocation> {
-  return apiRequest<PublicDeliveryLocation>(
+  return withReadDeadline(readSignal => apiRequest<PublicDeliveryLocation>(
     `/api/v1/orders/track/${encodeURIComponent(
       trackingToken,
     )}/delivery-location`,
     {
-      cache: "no-store",
+      cache: "no-store", signal: readSignal,
     },
-  );
+  ), {signal});
 }
 
 // =========================================================
@@ -948,11 +959,15 @@ export function loginStaff(
   });
 }
 
-export function getStaffSession(): Promise<{
+export function getStaffSession(signal?: AbortSignal): Promise<{
   authenticated: true;
   user: StaffSessionUser;
 }> {
-  return apiRequest("/api/v1/staff/auth/me");
+  const diagnostic=newStaffDiagnostic('STAFF_ME');
+  return withReadDeadline(readSignal => apiRequest<{authenticated:true;user:StaffSessionUser}>("/api/v1/staff/auth/me", {cache:"no-store",signal:readSignal},diagnostic), {signal}).then(
+    value=>{diagnostic.record('READ','OK');return value;},
+    error=>{diagnostic.record('READ','THREW',error);throw error;}
+  );
 }
 
 export function getStaffTrackingDeliveries(): Promise<StaffTrackingResponse> {
@@ -1026,6 +1041,9 @@ export function recoverStaffAdmin(
 }
 
 export function logoutStaff(): Promise<{ loggedOut: true }> {
+  // Stop local readers before starting the one server logout request.
+  // A failed request does not silently restore an old monitor.
+  announceStaffLogout();
   return apiRequest("/api/v1/staff/auth/logout", {
     method: "POST",
   });

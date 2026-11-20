@@ -35,6 +35,14 @@ export class DeliveryMonitorController {
         request.staff.branchCode,
       );
   }
+  @Get('state')
+  @OperationPermission('delivery.monitor')
+  getActiveDeliveryState(@Req() request: StaffAuthenticatedRequest) {
+    return this.deliveryMonitorService.getActiveSnapshot(
+      request.staff.tenantCode, request.staff.branchCode, undefined, false,
+    );
+  }
+
   @Get('deliveries/:deliveryId/route')
   @OperationPermission('delivery.monitor')
   getActiveDeliveryRoute(
