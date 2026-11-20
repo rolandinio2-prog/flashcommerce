@@ -40,3 +40,18 @@ Downloads/
 
 # Misc
 *.local
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Gate/acceptance tooling and ChatGPT/Codex handoffs (kept outside version control)
+/b10-solution/
+/b11-solution/
+/b11-recovery-*/
+/B1[0-9]_*.json
+/*.docx
+/FLASHCOMMERCE_*.md
+/FLASHCOMMERCE_*.txt
+/FASTDELIVERY_*.md
+/FASTDELIVERY_*.txt
+/.sf/
