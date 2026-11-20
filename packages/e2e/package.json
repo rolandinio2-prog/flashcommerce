@@ -1,0 +1,19 @@
+{
+  "name": "@flashcommerce/e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:b10": "playwright test b10",
+    "test:b11": "playwright test b11",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.21.0",
+    "pg": "^8.23.0",
+    "typescript": "^5.7.0"
+  }
+}
