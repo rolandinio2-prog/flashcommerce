@@ -54,7 +54,7 @@ export class StaffFixture {
   }
 
   /** A MANAGER session that can open the Delivery Monitor. */
-  async createManagerSession(label: string): Promise<StaffSessionHandle> {
+  async createManagerSession(label: string, role: 'MANAGER' | 'ADMIN' = 'MANAGER'): Promise<StaffSessionHandle> {
     // user_code must match ^[A-Z]{3}-[A-Z0-9]{6}$
     // QAE = automated QA/E2E user; prefix must be letters only.
     const userCode = `QAE-${this.runTag}${String(this.created.length).padStart(2, '0')}`;
@@ -69,8 +69,8 @@ export class StaffFixture {
     this.created.push(userId);
     await this.client.query(
       `insert into public.staff_user_branches (tenant_id, branch_id, user_id, role, status)
-       values ($1, $2, $3, 'MANAGER', 'ACTIVE')`,
-      [this.tenantId, this.branchId, userId],
+       values ($1, $2, $3, $4, 'ACTIVE')`,
+      [this.tenantId, this.branchId, userId, role],
     );
     const token = randomBytes(32).toString('base64url');
     const session = await this.client.query<{ id: string }>(
@@ -121,6 +121,17 @@ export class StaffFixture {
       [this.tenantId, this.branchId],
     );
     return r.rows[0]?.token ?? null;
+  }
+
+  /** Order and payment status by public order number (read-only), for checkout tests. */
+  async orderState(orderNumber: number): Promise<{ orderStatus: string; orderType: string; total: string; paymentStatus: string | null } | null> {
+    const r = await this.client.query<{ orderStatus: string; orderType: string; total: string; paymentStatus: string | null }>(
+      `select o.status as "orderStatus", o.order_type as "orderType", o.total::text as total,
+              (select p.status from public.order_payments p where p.order_id = o.id order by p.created_at desc limit 1) as "paymentStatus"
+         from public.orders o where o.tenant_id = $1 and o.branch_id = $2 and o.order_number = $3`,
+      [this.tenantId, this.branchId, orderNumber],
+    );
+    return r.rows[0] ?? null;
   }
 
   /** B10: the session reaches its expiry time. */

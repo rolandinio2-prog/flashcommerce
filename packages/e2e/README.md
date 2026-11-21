@@ -44,3 +44,11 @@ Variables opcionales: `E2E_BASE_URL`, `E2E_API_URL`, `E2E_DATABASE_URL`, `E2E_TE
 
 Cada ejecución crea dos usuarios temporales `QAE-XXXXXX` (rol MANAGER) con sesión y algunos puntos GPS de prueba; todo se elimina al terminar. Requiere al menos una ubicación de conductor en la sucursal (datos semilla).
 Por seguridad, la suite se niega a usar una base que no sea `localhost`, salvo que se defina `E2E_ALLOW_REMOTE_DB=true` para una base de pruebas desechable.
+
+## Otros tests
+| Test | Qué cubre |
+|---|---|
+| `checkout-takeaway` | Menú → carrito (2 unidades) → checkout "Retirar en el local" → cliente nuevo (teléfono aleatorio) → pedido con QR BCP → pago simulado con la herramienta de Admin (`PAYMENT_DEV_TOOLS_ENABLED=true`, sandbox) → diálogo "Pedido confirmado" → pago `PAID` → aparece como "Pagado" en "Mis pedidos". Se omite si el simulador está deshabilitado. |
+| `smoke-pages` | Menú, seguimiento, Ops, monitor y Admin cargan sin errores de JavaScript. |
+
+El checkout deja en la base un cliente y un pedido de prueba (`QA Checkout`) por ejecución; los usuarios staff temporales se eliminan.
