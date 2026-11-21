@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { CreatedOrder, PublicDeliveryLocation } from '../../lib/flash-api';
 import { orderConfirmationCopy } from '../../lib/checkout-presentation';
 import styles from './order-confirmation.module.css';
@@ -47,7 +47,10 @@ export default function OrderConfirmation({order,delivery,paymentPaid,payment,su
   const dialog = useRef<HTMLDialogElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const progress = useRef<HTMLOListElement>(null);
-  const view = confirmationPresentation(order,delivery,Date.now());
+  // Clock as state (pure render); ticking also lets a location become stale without new data.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(()=>{ const timer=setInterval(()=>setNow(Date.now()),15000); return ()=>clearInterval(timer); },[]);
+  const view = confirmationPresentation(order,delivery,now);
   useEffect(()=>{
     const element=dialog.current, previous=document.activeElement, overflow=document.body.style.overflow;
     if(element && !element.open)element.showModal();

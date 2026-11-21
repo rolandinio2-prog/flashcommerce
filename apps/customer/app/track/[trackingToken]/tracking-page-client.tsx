@@ -2,6 +2,7 @@
 import {createMonitorSnapshotSync} from '../../ops/delivery-monitor/delivery-monitor-snapshot-sync';
 
 
+import Link from "next/link";
 import styles from './tracking-design.module.css';
 import TrackingMapClient from "../../components/tracking-map-client";
 import {
@@ -201,7 +202,7 @@ export default function TrackingPageClient({trackingToken}:{trackingToken:string
     return () => { sync.dispose(); document.removeEventListener('visibilitychange',wake); window.removeEventListener('online',wake); };
   }, [trackingToken,order?.orderType,order?.status]);
   if(loading || (order && order.trackingToken!==trackingToken))return <main className={styles.page}><div className={styles.shell}><p role="status" className={styles.notice}>Cargando tu pedido…</p></div></main>;
-  if(!order)return <main className={styles.page}><div className={styles.shell}><header className={styles.header}><h1>Seguimiento del pedido</h1></header><div className={styles.notice} role="status"><h2>No pudimos mostrar el pedido</h2><p>{error}</p>{isUuid(trackingToken)&&<p>Volveremos a intentarlo automáticamente.</p>}</div><a className={styles.back} href="/">Ir al inicio</a></div></main>;
+  if(!order)return <main className={styles.page}><div className={styles.shell}><header className={styles.header}><h1>Seguimiento del pedido</h1></header><div className={styles.notice} role="status"><h2>No pudimos mostrar el pedido</h2><p>{error}</p>{isUuid(trackingToken)&&<p>Volveremos a intentarlo automáticamente.</p>}</div><Link className={styles.back} href="/">Ir al inicio</Link></div></main>;
   const statusIndex=ORDER_PROGRESS.findIndex(step=>step.status===order.status);
   const lastEvent=order.tracking?.[order.tracking.length-1];
   const terminal=order.status==='COMPLETED'||order.status==='CANCELLED';

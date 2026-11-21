@@ -283,7 +283,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
   const routeAvailableRef = useRef(new Set<string>());
   const pruneRoutesRef = useRef<(() => void) | null>(null);
   const [realtimeError, setRealtimeError] = useState<string | null>(null);
-  const [clock, setClock] = useState(Date.now());
+  const [clock, setClock] = useState(() => Date.now());
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const loadSnapshot = useCallback(async () => { await snapshotSyncRef.current?.request(); }, []);
 
