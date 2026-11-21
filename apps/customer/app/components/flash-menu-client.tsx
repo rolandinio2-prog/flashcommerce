@@ -1,4 +1,5 @@
 "use client";
+import { useResetOnChange } from '../../lib/use-reset-on-change';
 import { type PendingCartAction, createCartActionQueue } from "./cart-action-queue";
 
 import OrderConfirmation from './order-confirmation';
@@ -527,9 +528,9 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     return () => { registrationMounted.current = false; registrationVersion.current.value++; };
   }, []);
 
+  useResetOnChange([catalog.tenant.code, checkoutOpen], () => setRegistrationLoading(true));
   useEffect(() => {
     let active = true;
-    setRegistrationLoading(true);
     const version = registrationVersion.current.value;
     getCustomerRecoveryProfile(catalog.tenant.code).then(profile => {
       if (!active || version !== registrationVersion.current.value || profile.tenantCode !== catalog.tenant.code) return;
@@ -591,9 +592,9 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingContact, registrationKey, registrationEnabled, registrationReady, registrationSaved, registrationBusy, registrationLoading, registrationError]);
 
-  useEffect(() => {
+  useResetOnChange([orderVaultOpen, checkoutProfile?.phone, customerPhone], () => {
     if (orderVaultOpen) setCustomerRecoveryPhone(value => value || checkoutProfile?.phone || customerPhone);
-  }, [orderVaultOpen, checkoutProfile?.phone, customerPhone]);
+  });
 
   const [orderAccessMessage, setOrderAccessMessage] = useState<string | null>(
     null,
@@ -613,9 +614,9 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     Object.values(cart).map(item => [item.product.id, item.quantity, item.product.price]).sort(),
     customerName.trim(), customerPhone.trim(), deliveryAddress.trim(), selectedDeliveryAddress,
     additionalOrderSourceTrackingToken, additionalDeliverySourceFulfillment]);
+  useResetOnChange([deliveryPreviewKey], () => setDeliveryPreview(null));
   useEffect(() => {
     quoteRequestVersion.current += 1;
-    setDeliveryPreview(null);
   }, [deliveryPreviewKey]);
   useEffect(() => {
     if (!deliveryPreview) return;
@@ -1352,12 +1353,16 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
   // resolver una sugerencia y conservar su placeId + lat/lng.
   // =========================================================
 
+  useResetOnChange([orderType, deliveryAddress, selectedDeliveryAddress, catalog.tenant.code, catalog.branch.code], () => {
+    const input = deliveryAddress.trim();
+    setDeliveryAddressSearching(false);
+    if (orderType !== "DELIVERY" || (selectedDeliveryAddress && selectedDeliveryAddress.formattedAddress.trim() === input) || input.length < 3) {
+      setDeliveryAddressSuggestions([]);
+      setDeliveryAddressError(null);
+    }
+  });
   useEffect(() => {
     if (orderType !== "DELIVERY") {
-      setDeliveryAddressSuggestions([]);
-      setDeliveryAddressSearching(false);
-      setDeliveryAddressError(null);
-
       return;
     }
 
@@ -1367,22 +1372,12 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
       selectedDeliveryAddress &&
       selectedDeliveryAddress.formattedAddress.trim() === normalizedInput
     ) {
-      setDeliveryAddressSuggestions([]);
-      setDeliveryAddressSearching(false);
-      setDeliveryAddressError(null);
-
       return;
     }
 
     if (normalizedInput.length < 3) {
-      setDeliveryAddressSuggestions([]);
-      setDeliveryAddressSearching(false);
-      setDeliveryAddressError(null);
-
       return;
     }
-
-    setDeliveryAddressSearching(false);
 
     const controller = new AbortController();
 
@@ -1508,6 +1503,7 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
 
     let cancelled = false;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- starts loading a table context read from window.location (browser-only; SSR-safe)
     setTableContextLoading(true);
     setTableContextError(null);
 
@@ -1655,6 +1651,7 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     ) {
       window.localStorage.removeItem(orderStorageKey);
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrates the active order from localStorage after mount (browser-only; SSR-safe)
       setActiveTrackingToken(null);
       setCompletedOrder(null);
       setOrderPayment(null);
@@ -1683,6 +1680,7 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
       storedAdditionalSource === "null"
     ) {
       window.localStorage.removeItem(additionalOrderStorageKey);
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrates the additional-order source from localStorage (browser-only; SSR-safe)
       setAdditionalOrderSourceTrackingToken(null);
       return;
     }
@@ -1691,6 +1689,7 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
   }, [additionalOrderStorageKey]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reads "Mis pedidos" from localStorage after mount (browser-only; SSR-safe)
     setOrderVault(readOrderVault());
   }, [orderVaultStorageKey]);
 
@@ -1707,6 +1706,7 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
     const trackingToken = match[1];
     let cancelled = false;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- starts loading an order shared via the #order= URL fragment (browser-only)
     setOrderVaultBusy(true);
     setOrderVaultError(null);
 
@@ -1880,16 +1880,19 @@ export default function FlashMenuClient({ catalog }: FlashMenuClientProps) {
   // Un fallo de ubicacion no detiene el seguimiento principal.
   // =========================================================
 
+  useResetOnChange([activeTrackingToken, completedOrder?.orderType], () => {
+    if (!activeTrackingToken || completedOrder?.orderType !== "DELIVERY") {
+      setDeliveryLocation(null);
+      setDeliveryLocationError(null);
+      setDeliveryPod(null);
+      setDeliveryPodError(null);
+    }
+  });
   useEffect(() => {
     if (
       !activeTrackingToken ||
       completedOrder?.orderType !== "DELIVERY"
     ) {
-      setDeliveryLocation(null);
-      setDeliveryLocationError(null);
-      setDeliveryPod(null);
-      setDeliveryPodError(null);
-
       return;
     }
 
