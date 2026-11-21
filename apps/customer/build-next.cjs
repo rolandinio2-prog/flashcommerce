@@ -7,10 +7,10 @@ const values=parseEnv(fs.readFileSync('/run/secrets/public_env','utf8'));
 const allowed=new Set(['NEXT_PUBLIC_FLASH_GOOGLE_MAPS_API_KEY','NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY','NEXT_PUBLIC_FLASH_API_URL','NEXT_PUBLIC_FLASH_TENANT_CODE','NEXT_PUBLIC_FLASH_OPEN_STANDARD_MAP_STYLE_URL','NEXT_PUBLIC_FLASH_DEPLOYMENT']);
 for(const key of Object.keys(values))if(!allowed.has(key))throw new Error('NON_PUBLIC_BUILD_VARIABLE');
 if(!values.NEXT_PUBLIC_FLASH_GOOGLE_MAPS_API_KEY)throw new Error('MAPS_BROWSER_KEY_REQUIRED');
-// Production must use the public Realtime endpoint; staging (explicit flag) may only use a localhost tunnel.
+// Production must use the public Realtime endpoint; staging (explicit flag) may only use a localhost tunnel or https://staging.fastpay.com.bo.
 const staging=values.NEXT_PUBLIC_FLASH_DEPLOYMENT==='staging';
 if(values.NEXT_PUBLIC_FLASH_DEPLOYMENT && !staging)throw new Error('UNKNOWN_DEPLOYMENT');
-if(values.NEXT_PUBLIC_SUPABASE_URL && !(values.NEXT_PUBLIC_SUPABASE_URL==='https://realtime.fastpay.com.bo' || (staging && /^http:\/\/localhost:[0-9]{2,5}$/.test(values.NEXT_PUBLIC_SUPABASE_URL))))throw new Error('REALTIME_ENDPOINT_MISMATCH');
+if(values.NEXT_PUBLIC_SUPABASE_URL && !(values.NEXT_PUBLIC_SUPABASE_URL==='https://realtime.fastpay.com.bo' || (staging && (/^http:\/\/localhost:[0-9]{2,5}$/.test(values.NEXT_PUBLIC_SUPABASE_URL) || values.NEXT_PUBLIC_SUPABASE_URL==='https://staging.fastpay.com.bo'))))throw new Error('REALTIME_ENDPOINT_MISMATCH');
 if(values.NEXT_PUBLIC_FLASH_API_URL && values.NEXT_PUBLIC_FLASH_API_URL!=='/api/v1')throw new Error('BROWSER_API_MUST_BE_SAME_ORIGIN');
 const key=values.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 if(key && !key.startsWith('sb_publishable_')){

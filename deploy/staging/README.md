@@ -39,3 +39,12 @@ detrás de Access (y reconstruir customer/driver con esa URL de Realtime).
 ## Refrescar datos desde producción
 Detener/eliminar el stack y el volumen `fastpay-staging-postgres-v1-data` (con autorización) y volver a correr
 `setup-staging.py db`, `services`, `verify`.
+
+## Acceso web (Cloudflare Access) — 2026-11-21
+- `https://staging.fastpay.com.bo` → `fastpay-staging-customer-web-v1` (172.30.80.8; imagen `customer:staging-web-*`,
+  Realtime en `/realtime/v1` del mismo dominio para compartir la cookie de Access).
+- `https://staging-driver.fastpay.com.bo` → `fastpay-staging-driver-v1`.
+- nginx: `/etc/nginx/fastpay-staging.conf` (copia de `nginx-staging.conf`), incluido al final de `nginx.conf`.
+  Sin el encabezado `Cf-Access-Jwt-Assertion` responde 403.
+- Cloudflare: hostnames públicos del túnel → `http://localhost:80`; aplicación Access con la política de correo.
+- `fastpay-staging-customer-v1` (localhost) sigue existiendo solo para el runner de tests.
