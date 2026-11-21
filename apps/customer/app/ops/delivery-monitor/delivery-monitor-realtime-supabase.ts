@@ -145,16 +145,12 @@ function parseMovementEvent(
     DeliveryMonitorMovementEvent;
 }
 
-export type B11ChannelObserver = (kind: string, client?: object, channel?: object) => void;
-export function createDeliveryMonitorSupabaseRealtimeTransport(observer?: B11ChannelObserver, diagnosticTransport?: typeof WebSocket): DeliveryMonitorRealtimeTransport {
-  // Optional local diagnostic hook. Never exposes tokens, topics, payloads or URLs.
-  const note = (kind: string, client?: object, channel?: object) => { try { observer?.(kind,client,channel); } catch {} };
-  const disconnectObserved = (client: RealtimeClient) => client.disconnect().then(status => { note(status === 'ok' ? 'disconnect-resolved' : 'disconnect-rejected',client); }, () => { note('disconnect-rejected',client); });
+export function createDeliveryMonitorSupabaseRealtimeTransport(): DeliveryMonitorRealtimeTransport {
+  const disconnect = (client: RealtimeClient) => client.disconnect().catch(() => undefined);
   const {url,key} = readPublicConfiguration();
   return {subscribe(scope,handlers) {
     const tenantCode = scope.tenantCode.trim(), branchCode = scope.branchCode.trim();
     if (!tenantCode || !branchCode) throw new Error('Delivery Monitor Realtime scope is required');
-    note('subscription-start');
     let closed = false, connecting = false;
     let active: RealtimeClient | null = null, standby: RealtimeClient | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -167,16 +163,14 @@ export function createDeliveryMonitorSupabaseRealtimeTransport(observer?: B11Cha
     const schedule = (delay: number) => { clearTimer(); if (!closed) timer = setTimeout(() => { timer = undefined; void connect(); }, delay); };
     const report = (error: unknown) => { if (!closed) handlers.onError(error); };
     async function retire(client: RealtimeClient) {
-      retiring.add(client); note('retiring',client);
+      retiring.add(client);
       try {
         const statuses = await withReadDeadline(() => client.removeAllChannels(), {timeoutMs:5000});
-        if (statuses.some(status => status !== 'ok')) { note('remove-rejected',client); return false; }
-        if (observer) try { if (client.getChannels().length === 0) note('channels-empty',client);
-        else note('remove-rejected',client); } catch { note('remove-rejected',client); }
+        if (statuses.some(status => status !== 'ok')) return false;
         retiring.delete(client);
         return true;
-      } catch { note('remove-rejected',client); return false; }
-      finally { void disconnectObserved(client); }
+      } catch { return false; }
+      finally { void disconnect(client); }
     }
     async function connect() {
       if (closed || connecting) return;
@@ -187,14 +181,12 @@ export function createDeliveryMonitorSupabaseRealtimeTransport(observer?: B11Cha
         sessionController = new AbortController();
         const session = await getDeliveryMonitorRealtimeSession({tenantCode,branchCode},sessionController.signal);
         if (closed) return;
-        candidate = new RealtimeClient(`${url.replace(/\/+$/, '')}/realtime/v1`, {params:{apikey:key}, ...(diagnosticTransport ? {transport:diagnosticTransport} : {})});
-        note('client-created',candidate);
+        candidate = new RealtimeClient(`${url.replace(/\/+$/, '')}/realtime/v1`, {params:{apikey:key}});
         standby = candidate;
         await withReadDeadline(() => candidate!.setAuth(session.accessToken));
         if (closed) return;
         const own = candidate;
         const channel = own.channel(session.topic,{config:{private:true}});
-        note('channel-created',own,channel);
         const previous = await new Promise<RealtimeClient | null>((resolve,reject) => {
           let settled = false;
           const finish = (error?: Error) => {
@@ -203,20 +195,17 @@ export function createDeliveryMonitorSupabaseRealtimeTransport(observer?: B11Cha
             if (handshakeTimer !== undefined) clearTimeout(handshakeTimer);
             handshakeTimer = undefined; pendingHandshakeReject = undefined;
             if (error) { reject(error); return; }
-            const old = active; active = own; standby = null; note('active',own);
+            const old = active; active = own; standby = null;
             handlers.onReconnect(); resolve(old);
           };
           pendingHandshakeReject = error => finish(error);
           handshakeTimer = setTimeout(() => finish(new Error('Tiempo de conexión Realtime agotado.')),15000);
           channel.on('broadcast',{event:'LOCATION_UPDATED'},envelope => {
-            note('message-received',own,channel);
             if (closed || active !== own) return;
             const movement = parseMovementEvent(envelope);
             if (movement) handlers.onMovement(movement);
             else report(new Error('Evento de ubicación inválido.'));
           }).subscribe(status => {
-            if (status === 'SUBSCRIBED') note('subscribed',own,channel);
-            if (status === 'CLOSED') note('channel-closed',own,channel);
             if (closed) { finish(new Error('Conexión cerrada.')); return; }
             if (status === 'SUBSCRIBED') {
               if (!settled) finish();
@@ -249,7 +238,7 @@ export function createDeliveryMonitorSupabaseRealtimeTransport(observer?: B11Cha
       const clients = new Set([...retiring,active,standby]); active=null; standby=null;
       for (const client of clients) if (client) {
         // Cancel socket reconnect immediately; channel leave acknowledgements may stall.
-        void disconnectObserved(client);
+        void disconnect(client);
         void retire(client);
       }
     }

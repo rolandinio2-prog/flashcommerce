@@ -1,4 +1,3 @@
-import {newStaffDiagnostic} from './staff-me-diagnostic';
 import {withReadDeadline} from './read-deadline';
 
 // Logout messages contain no user, session, token or business data.
@@ -70,21 +69,19 @@ export function watchStaffSession<T>(
     clearTimeout(timer);
     void verify();
   }
-  unsubscribe = onStaffLogout(() => { newStaffDiagnostic('WATCHER').record('LOGOUT','REJECTED'); reject(); });
+  unsubscribe = onStaffLogout(reject);
   if (options.onTransient && typeof window !== 'undefined') window.addEventListener('online', wake);
   async function verify() {
     if (stopped || inFlight) return;
     inFlight = true;
     controller = new AbortController();
     let delay = 10000;
-    const diagnostic = newStaffDiagnostic('WATCHER');
     try {
       let session: T;
       try {
         session = await withReadDeadline(signal => read(signal), {signal: controller.signal, timeoutMs: 8000});
       } catch (error) {
         if (stopped) return;
-        diagnostic.record('READ','THREW',error);
         const e = error as {name?: string; status?: number} | null;
         const status = e?.status;
         const transient = typeof status === 'number'
@@ -97,11 +94,9 @@ export function watchStaffSession<T>(
         return;
       }
       if (!stopped) {
-        const accepted = accept(session);
-        diagnostic.record('ACCEPT',accepted ? 'OK' : 'REJECTED');
-        if (!accepted) reject();
+        if (!accept(session)) reject();
       }
-    } catch (error) { diagnostic.record('ACCEPT','THREW',error); reject(); } // Invalid session/callback errors must not grant access.
+    } catch { reject(); } // Invalid session/callback errors must not grant access.
     finally {
       inFlight = false;
       controller = undefined;

@@ -1,5 +1,3 @@
-import './private-diagnostic-endpoint';
-import {newStaffDiagnostic, StaffDiagnostic} from './staff-me-diagnostic';
 import {announceStaffLogout} from './staff-session-lifecycle';
 import {withReadDeadline} from './read-deadline';
 export interface FlashCartProduct {
@@ -447,9 +445,8 @@ export function updateCustomerRecoveryName(tenantCode: string, fullName: string,
   return apiRequest<{authenticated: boolean}>('/api/v1/orders/recovery/profile/name', {method:'POST', body:JSON.stringify({tenantCode,fullName,phone,pin})});
 }
 
-export async function apiRequest<T>(path: string, options?: RequestInit, diagnostic?: StaffDiagnostic): Promise<T> {
-  let response: Response;
-  try { response = await fetch(`${getApiUrl()}${path}`, {
+export async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(`${getApiUrl()}${path}`, {
     credentials: "same-origin",
     ...options,
 
@@ -459,8 +456,6 @@ export async function apiRequest<T>(path: string, options?: RequestInit, diagnos
     },
   });
 
-  } catch(error) { diagnostic?.record('FETCH','THREW',error); throw error; }
-  diagnostic?.record('HTTP',response.ok?'OK':'REJECTED',undefined,response.status);
   if (!response.ok) {
     let message = `Flash API error: ${response.status}`;
     let retryAfterSeconds = Number(response.headers.get("Retry-After")) || null;
@@ -472,8 +467,7 @@ export async function apiRequest<T>(path: string, options?: RequestInit, diagnos
       if (typeof error?.message === "string") {
         message = error.message;
       }
-    } catch(error) {
-      diagnostic?.record('ERROR_BODY','THREW',error);
+    } catch {
       // Conservamos el mensaje HTTP.
     }
 
@@ -484,16 +478,13 @@ export async function apiRequest<T>(path: string, options?: RequestInit, diagnos
     return undefined as T;
   }
 
-  let responseText: string;
-  try { responseText = await response.text(); }
-  catch(error) { diagnostic?.record('BODY_READ','THREW',error); throw error; }
+  const responseText = await response.text();
 
   if (!responseText.trim()) {
     return undefined as T;
   }
 
-  try { return JSON.parse(responseText) as T; }
-  catch(error) { diagnostic?.record('JSON_PARSE','THREW',error); throw error; }
+  return JSON.parse(responseText) as T;
 }
 
 export function createCart(
@@ -963,11 +954,7 @@ export function getStaffSession(signal?: AbortSignal): Promise<{
   authenticated: true;
   user: StaffSessionUser;
 }> {
-  const diagnostic=newStaffDiagnostic('STAFF_ME');
-  return withReadDeadline(readSignal => apiRequest<{authenticated:true;user:StaffSessionUser}>("/api/v1/staff/auth/me", {cache:"no-store",signal:readSignal},diagnostic), {signal}).then(
-    value=>{diagnostic.record('READ','OK');return value;},
-    error=>{diagnostic.record('READ','THREW',error);throw error;}
-  );
+  return withReadDeadline(readSignal => apiRequest<{authenticated:true;user:StaffSessionUser}>("/api/v1/staff/auth/me", {cache:"no-store",signal:readSignal}), {signal});
 }
 
 export function getStaffTrackingDeliveries(): Promise<StaffTrackingResponse> {

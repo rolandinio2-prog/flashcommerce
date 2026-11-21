@@ -1,5 +1,4 @@
 'use client';
-import {takeB11Capture} from './b11-capture-binding';
 import {monitorItemIdentity} from './delivery-monitor-contract';
 
 import {
@@ -624,11 +623,8 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
 
       let subscription: {close(): void} = {close() {}};
       try {
-      const b11Capture = takeB11Capture();
       const transport =
-        createDeliveryMonitorSupabaseRealtimeTransport(
-          b11Capture?.observe, b11Capture?.Transport,
-        );
+        createDeliveryMonitorSupabaseRealtimeTransport();
 
       subscription =
         transport.subscribe(

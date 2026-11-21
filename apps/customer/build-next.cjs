@@ -8,5 +8,5 @@ function validate(values){
  if(claims.role!=='anon'||!Number.isFinite(claims.exp)||claims.exp*1000<=Date.now())throw Error('ONLY_PUBLIC_ANON_KEY_ALLOWED');
  return values;
 }
-function main(){const values=validate(parseEnv(fs.readFileSync('/run/secrets/public_env','utf8')));const result=spawnSync('pnpm',['run','build'],{stdio:'inherit',env:{...process.env,...values,NEXT_PUBLIC_FLASH_STAFF_DIAGNOSTICS:'B10_EARLY_V1',NEXT_PUBLIC_FLASH_STAFF_DIAGNOSTIC_BUILD:'b10-early-local-candidate',FLASH_API_INTERNAL_URL:'http://s4-browser-api-v2:3001',FLASH_API_URL:'http://s4-browser-api-v2:3001',NEXT_TELEMETRY_DISABLED:'1'}});if(result.error||result.status!==0)process.exit(result.status||1);if(!fs.existsSync('.next/standalone/server.js'))throw Error('STANDALONE_SERVER_MISSING');}
+function main(){const values=validate(parseEnv(fs.readFileSync('/run/secrets/public_env','utf8')));const result=spawnSync('pnpm',['run','build'],{stdio:'inherit',env:{...process.env,...values,FLASH_API_INTERNAL_URL:'http://s4-browser-api-v2:3001',FLASH_API_URL:'http://s4-browser-api-v2:3001',NEXT_TELEMETRY_DISABLED:'1'}});if(result.error||result.status!==0)process.exit(result.status||1);if(!fs.existsSync('.next/standalone/server.js'))throw Error('STANDALONE_SERVER_MISSING');}
 if(require.main===module)main();module.exports={validate};
