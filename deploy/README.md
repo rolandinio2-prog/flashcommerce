@@ -13,3 +13,10 @@ Para un nuevo release: copiar el script, actualizar `TAG`, rutas de compose (las
 ## Respaldos
 `server/fastpay-db-backup.sh` instalado como `/usr/local/sbin/fastpay-db-backup.sh` + `fastpay-db-backup.timer`
 (diario 07:30 UTC, 14 días, `/var/backups/fastpay/db-daily`). Copia a la PC: `FlashCommerce_Scripts/pull-prod-db-backup.sh`.
+
+## Rotación de secretos JWT (2026-11-21)
+Producción usaba los secretos demo públicos de Supabase. `production/rotate-jwt-20261121.py` rotó:
+secreto de clientes (tenant Realtime + `SUPABASE_JWT_SECRET` del API), `API_JWT_SECRET` y `METRICS_JWT_SECRET` de Realtime,
+re-firmó el token anon de Kong y eliminó el mapeo `sb_secret` demo → service_role.
+Los secretos nuevos solo existen en el servidor (`/etc/fastpay/prod-runtime-v1/*.env`, copia en
+`/var/backups/fastpay/PROD_JWT_ROTATION_20261121_V1/`, root 600). Pendiente: `DB_ENC_KEY` de Realtime sigue en valor demo.
