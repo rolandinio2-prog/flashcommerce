@@ -12,7 +12,9 @@ con secretos propios y sin exposición pública.
 | Realtime | `fastpay-staging-realtime-v1` (alias `realtime-dev`) | 172.30.80.6 |
 | Kong | `fastpay-staging-kong-v1` | 172.30.80.7 |
 
-- Secretos: `/etc/fastpay/staging-v1/secrets.private.json` (root 600). Contraseña staff/driver de staging: campo `staff_password`.
+- Secretos: `/etc/fastpay/staging-v1/secrets.private.json` (root 600). Contraseña staff/driver de staging:
+  `ssh fastpayadmin@24.144.104.101 sudo /usr/local/sbin/fastpay-staging-password`.
+- Usuarios: staff `ADM-B626AF` (ADMIN), `CAJ-740076` (CASHIER) en POLLO001/SUC001; conductores `RSV01`, `DRV-186667`.
 - Compose: `/opt/fastpay/staging-v1/compose.json` (proyecto `fastpay-staging-v1`).
 - La base de producción **no es alcanzable** desde staging (verificado por `setup-staging.py verify`).
 - Los bundles de staging esperan Realtime en `http://localhost:18000` y la app en `http://localhost:13000`.
