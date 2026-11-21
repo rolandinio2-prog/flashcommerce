@@ -55,10 +55,19 @@ export async function expectApiRejects(actor: MonitorActor): Promise<void> {
  * Catches any mismatch between the API's topic contract and the DB publisher.
  */
 async function expectLiveDelivery(fixture: StaffFixture, expectations: Array<[MonitorActor, boolean]>): Promise<void> {
-  const marker = await fixture.publishLocationProbe();
+  let marker = await fixture.publishLocationProbe();
   for (const [actor] of expectations) actor.realtime.watchProbe(marker);
-  for (const [actor, delivered] of expectations) {
-    if (!delivered) continue;
+  const receivers = expectations.filter(([, delivered]) => delivered).map(([actor]) => actor);
+  const allReceived = () => receivers.every(actor => actor.realtime.probeCount(marker) > 0);
+  // A freshly started Realtime may drop its very first broadcast (cold replication start):
+  // publish once more before failing. A real topic/policy mismatch fails both attempts.
+  const deadline = Date.now() + 10_000;
+  while (!allReceived() && Date.now() < deadline) await expectations[0][0].page.waitForTimeout(250);
+  if (!allReceived()) {
+    marker = await fixture.publishLocationProbe();
+    for (const [actor] of expectations) actor.realtime.watchProbe(marker);
+  }
+  for (const actor of receivers) {
     await expect.poll(() => actor.realtime.probeCount(marker), {
       message: `${actor.handle.label}: live GPS movement must be delivered`, timeout: 10_000,
     }).toBeGreaterThan(0);
