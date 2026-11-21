@@ -56,7 +56,8 @@ export class StaffFixture {
   /** A MANAGER session that can open the Delivery Monitor. */
   async createManagerSession(label: string): Promise<StaffSessionHandle> {
     // user_code must match ^[A-Z]{3}-[A-Z0-9]{6}$
-    const userCode = `E2E-${this.runTag}${String(this.created.length).padStart(2, '0')}`;
+    // QAE = automated QA/E2E user; prefix must be letters only.
+    const userCode = `QAE-${this.runTag}${String(this.created.length).padStart(2, '0')}`;
     const user = await this.client.query<{ id: string }>(
       `insert into public.staff_users
          (tenant_id, user_code, first_name, last_name, password_hash, status, password_change_required)

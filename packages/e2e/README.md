@@ -40,5 +40,5 @@ Variables opcionales: `E2E_BASE_URL`, `E2E_API_URL`, `E2E_DATABASE_URL`, `E2E_TE
 
 ## Datos
 
-Cada ejecución crea dos usuarios temporales `E2E-XXXXXX` (rol MANAGER) con sesión, y los elimina al terminar.
+Cada ejecución crea dos usuarios temporales `QAE-XXXXXX` (rol MANAGER) con sesión, y los elimina al terminar.
 Por seguridad, la suite se niega a usar una base que no sea `localhost`, salvo que se defina `E2E_ALLOW_REMOTE_DB=true` para una base de pruebas desechable.
