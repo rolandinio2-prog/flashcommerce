@@ -11,7 +11,6 @@ import {
   Param,
   ParseUUIDPipe,
   Patch,
-  Query,
 } from '@nestjs/common';
 
 import { OrderService } from './order.service';

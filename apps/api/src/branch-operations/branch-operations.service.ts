@@ -53,6 +53,7 @@ export function changeReason(value: unknown) {
     typeof value !== 'string' ||
     value.trim().length < 5 ||
     value.trim().length > 200 ||
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
     /[\u0000-\u001f\u007f]/.test(value)
   )
     throw new BadRequestException(

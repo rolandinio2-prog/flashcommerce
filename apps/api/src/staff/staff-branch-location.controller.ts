@@ -25,7 +25,7 @@ export class StaffBranchWriteGuard implements CanActivate {
       .switchToHttp()
       .getRequest<StaffAuthenticatedRequest>();
     const header = (name: string) =>
-      typeof headers[name] === 'string' ? (headers[name] as string) : '';
+      typeof headers[name] === 'string' ? headers[name] : '';
     const origins = [
       ...(process.env.FLASH_ALLOWED_ORIGINS || '').split(','),
       process.env.FLASH_CUSTOMER_URL || '',

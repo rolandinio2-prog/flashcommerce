@@ -62,4 +62,4 @@ async function bootstrap() {
   console.log(`Flash Commerce API running on http://localhost:${port}`);
 }
 
-bootstrap();
+void bootstrap();

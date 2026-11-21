@@ -124,7 +124,7 @@ export class OperationsGuard implements CanActivate {
       if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
         const header = (name: string) =>
           typeof request.headers[name] === 'string'
-            ? (request.headers[name] as string)
+            ? request.headers[name]
             : '';
         const origin = header('origin');
         const allowed = new Set(

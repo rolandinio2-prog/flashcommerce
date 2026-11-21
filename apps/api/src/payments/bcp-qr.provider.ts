@@ -292,7 +292,7 @@ export class BcpQrProvider implements PaymentProvider {
       );
     }
 
-    const environment = environmentValue as BcpEnvironment;
+    const environment = environmentValue;
 
     const pfxPath = this.requiredValue('BCP_QR_PFX_PATH');
 
@@ -732,6 +732,7 @@ export class BcpQrProvider implements PaymentProvider {
 
   private sanitizeCancellationReason(reason: string): string {
     const sanitized = reason
+      // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
       .replace(/[\u0000-\u001f\u007f]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()

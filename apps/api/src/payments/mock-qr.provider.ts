@@ -14,9 +14,7 @@ import type {
 export class MockQrProvider implements PaymentProvider {
   readonly name = 'MOCK';
 
-  async createQrPayment(
-    input: CreateQrPaymentInput,
-  ): Promise<CreateQrPaymentResult> {
+  createQrPayment(input: CreateQrPaymentInput): Promise<CreateQrPaymentResult> {
     const providerPaymentId = `MOCK-${randomUUID()}`;
 
     const qrPayload = [
@@ -27,33 +25,31 @@ export class MockQrProvider implements PaymentProvider {
       providerPaymentId,
     ].join('|');
 
-    return {
+    return Promise.resolve({
       providerPaymentId,
       status: 'PENDING',
       qrPayload,
       qrContentType: 'TEXT',
       qrMimeType: null,
       expiresAt: input.expiresAt,
-    };
+    });
   }
 
-  async getPaymentStatus(
+  getPaymentStatus(
     providerPaymentId: string,
   ): Promise<ProviderPaymentStatusResult> {
-    return {
+    return Promise.resolve({
       providerPaymentId,
       providerTransactionId: null,
       status: 'PENDING',
       paidAt: null,
-    };
+    });
   }
 
-  async cancelQrPayment(
-    input: CancelQrPaymentInput,
-  ): Promise<CancelQrPaymentResult> {
-    return {
+  cancelQrPayment(input: CancelQrPaymentInput): Promise<CancelQrPaymentResult> {
+    return Promise.resolve({
       providerPaymentId: input.providerPaymentId,
       status: 'CANCELLED',
-    };
+    });
   }
 }

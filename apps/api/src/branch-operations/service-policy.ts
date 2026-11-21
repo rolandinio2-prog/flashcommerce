@@ -30,7 +30,7 @@ export function parseStates(value: unknown): ServiceStates {
     SERVICE_KEYS.some(
       (k) =>
         typeof record[k] !== 'string' ||
-        !['ENABLED', 'DRAINING', 'DISABLED'].includes(record[k] as string),
+        !['ENABLED', 'DRAINING', 'DISABLED'].includes(record[k]),
     )
   )
     throw new BadRequestException('Indica el estado de cada servicio.');

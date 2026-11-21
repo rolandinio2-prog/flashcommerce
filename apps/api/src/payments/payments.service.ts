@@ -245,6 +245,15 @@ export interface BcpQrCallbackInput {
   PhoneNumber?: unknown;
   Collectors?: unknown;
 }
+// Accept only scalar input as text; objects/arrays become empty (same validation outcome, no [object Object]).
+function scalarText(value: unknown): string {
+  return typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'bigint'
+    ? String(value)
+    : '';
+}
+
 @Injectable()
 export class PaymentsService {
   constructor(
@@ -4581,7 +4590,7 @@ export class PaymentsService {
   }
 
   private requireSettlementReceivedAmount(value: unknown): string {
-    const normalized = String(value ?? '').trim();
+    const normalized = scalarText(value).trim();
 
     if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(normalized)) {
       throw new BadRequestException('receivedAmount is invalid');
@@ -4599,6 +4608,7 @@ export class PaymentsService {
       return null;
     }
 
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
     if (normalized.length > 500 || /[\u0000-\u001f\u007f]/.test(normalized)) {
       throw new BadRequestException('notes is invalid');
     }
@@ -4719,6 +4729,7 @@ export class PaymentsService {
     if (
       normalized.length < 2 ||
       normalized.length > 80 ||
+      // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
       /[\u0000-\u001f\u007f]/.test(normalized)
     ) {
       throw new BadRequestException(`${field} is invalid`);
@@ -4742,7 +4753,7 @@ export class PaymentsService {
   }
 
   private requireCashAmount(value: unknown): string {
-    const normalized = String(value ?? '').trim();
+    const normalized = scalarText(value).trim();
 
     if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(normalized)) {
       throw new BadRequestException('cashReceivedAmount is invalid');
@@ -5105,6 +5116,7 @@ export class PaymentsService {
     if (
       normalized.length === 0 ||
       normalized.length > maxLength ||
+      // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
       /[\u0000-\u001F\u007F]/.test(normalized)
     ) {
       return null;

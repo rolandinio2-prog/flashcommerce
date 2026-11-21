@@ -24,6 +24,7 @@ function text(value: unknown, max: number, required = true) {
     typeof value !== 'string' ||
     value.trim().length > max ||
     (required && !value.trim()) ||
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
     /[\u0000-\u001f\u007f]/.test(value)
   )
     throw new BadRequestException('Revisa los textos del producto.');

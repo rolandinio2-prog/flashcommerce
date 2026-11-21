@@ -31,6 +31,15 @@ interface HandoffAssignmentRow {
   driver_name: string;
 }
 
+// Accept only scalar input as text; objects/arrays become empty (same validation outcome, no [object Object]).
+function scalarText(value: unknown): string {
+  return typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'bigint'
+    ? String(value)
+    : '';
+}
+
 @Injectable()
 export class StaffDeliveryHandoffService {
   constructor(private readonly databaseService: DatabaseService) {}
@@ -39,7 +48,7 @@ export class StaffDeliveryHandoffService {
     staff: StaffSessionPrincipal,
     deliveryIdInput: unknown,
   ) {
-    const deliveryId = String(deliveryIdInput ?? '').trim();
+    const deliveryId = scalarText(deliveryIdInput).trim();
 
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(

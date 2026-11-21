@@ -655,6 +655,7 @@ export class GoogleGeoProvider implements GeoProvider {
   private requirePlaceId(value: unknown): string {
     const placeId = this.requireText(value, 'Geo placeId', 512);
 
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
     if (/[\u0000-\u0020\u007f]/.test(placeId)) {
       throw new BadRequestException('Geo placeId is invalid');
     }
@@ -677,6 +678,7 @@ export class GoogleGeoProvider implements GeoProvider {
       throw new BadRequestException(`${label} length is invalid`);
     }
 
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
     if (/[\u0000-\u001f\u007f]/.test(normalized)) {
       throw new BadRequestException(`${label} contains invalid characters`);
     }

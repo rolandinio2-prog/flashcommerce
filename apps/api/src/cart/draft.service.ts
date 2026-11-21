@@ -51,7 +51,12 @@ export class DraftService {
       throw new BadRequestException('Versión de borrador inválida.');
     return this.db.withTransaction(async (client) => {
       // Serialize saves and order conversion on the same cart; never extend expiry.
-      const found = await client.query(
+      const found = await client.query<{
+        id: string;
+        tenant_id: string;
+        branch_id: string;
+        expires_at: Date;
+      }>(
         `select c.id,c.tenant_id,c.branch_id,c.expires_at from public.carts c
         join public.tenants t on t.id=c.tenant_id join public.branches b on b.id=c.branch_id and b.tenant_id=c.tenant_id
         where c.cart_token=$1::uuid and t.code=$2 and b.code=$3 and ${active} for update of c`,
@@ -61,13 +66,16 @@ export class DraftService {
       if (!cart) throw unavailable();
       // Public recovery drafts never adopt a staff-owned POS cart.
       await assertPosCartAccess(client, cart.id);
-      const account = await client.query(
+      const account = await client.query<{ customer_account_id: string }>(
         `select s.customer_account_id from public.customer_sessions s
         join public.customer_accounts a on a.id=s.customer_account_id and a.tenant_id=s.tenant_id
         where s.token_hash=$1 and s.tenant_id=$2 and s.revoked_at is null and s.expires_at>now() and a.status='ACTIVE'`,
         [this.sessionHash(cookie), cart.tenant_id],
       );
-      const current = await client.query(
+      const current = await client.query<{
+        revision: number;
+        customer_account_id: string | null;
+      }>(
         `select revision,customer_account_id from public.checkout_drafts where cart_id=$1`,
         [cart.id],
       );
@@ -79,7 +87,7 @@ export class DraftService {
         current.rows[0]?.customer_account_id ??
         account.rows[0]?.customer_account_id ??
         null;
-      const saved = await client.query(
+      const saved = await client.query<{ revision: number }>(
         `insert into public.checkout_drafts(cart_id,tenant_id,branch_id,secret_hash,form,revision,customer_account_id)
         values($1,$2,$3,$4,$5::jsonb,$6,$7)
         on conflict(cart_id) do update set secret_hash=excluded.secret_hash,form=excluded.form,revision=excluded.revision,
@@ -102,7 +110,13 @@ export class DraftService {
     });
   }
   async restore(body: Record<string, unknown>) {
-    const result = await this.db.query(
+    const result = await this.db.query<{
+      cartToken: string;
+      form: unknown;
+      revision: number;
+      expiresAt: Date;
+      updatedAt: Date;
+    }>(
       `select ${fields} from public.checkout_drafts d ${joins}
       where d.secret_hash=$1 and t.code=$2 and b.code=$3 and ${active}`,
       [hash(secret(body?.secret)), scope(body?.tenant), scope(body?.branch)],

@@ -24,6 +24,7 @@ export function closingAmounts(
   if (
     typeof note !== 'string' ||
     note.length > 500 ||
+    // eslint-disable-next-line no-control-regex -- intentionally rejects control characters in user/provider input
     /[\u0000-\u001f\u007f]/.test(note)
   )
     throw new Error('NOTE_INVALID');

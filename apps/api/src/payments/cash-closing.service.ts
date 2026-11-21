@@ -19,6 +19,18 @@ import {
 } from './cash-closing-domain';
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export interface CashClosingRow {
+  requestId: string;
+  snapshotHash: string;
+  snapshot: unknown;
+  expectedCash: string;
+  countedCash: string;
+  difference: string;
+  note: string | null;
+  actorCode: string;
+  closedAt: Date;
+}
+
 @Injectable()
 export class CashClosingService {
   constructor(
@@ -76,8 +88,8 @@ export class CashClosingService {
     client: PoolClient,
     staff: StaffSessionPrincipal,
     date: string,
-  ) {
-    const result = await client.query(
+  ): Promise<CashClosingRow | null> {
+    const result = await client.query<CashClosingRow>(
       `select request_id::text as "requestId",snapshot_hash as "snapshotHash",snapshot,
       expected_cash::text as "expectedCash",counted_cash::text as "countedCash",difference::text,note,
       actor_code as "actorCode",closed_at as "closedAt" from public.cash_daily_closings

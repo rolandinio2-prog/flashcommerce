@@ -17,7 +17,7 @@ export interface DeliveryMonitorLatestLocation extends DeliveryMonitorPoint {
   capturedAt: string;
 }
 
-export interface DeliveryMonitorTrailPoint extends DeliveryMonitorLatestLocation {}
+export type DeliveryMonitorTrailPoint = DeliveryMonitorLatestLocation;
 
 export interface DeliveryMonitorRouteFeature {
   type: 'Feature';

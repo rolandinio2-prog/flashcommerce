@@ -29,9 +29,7 @@ export class RecoveryRequestGuard implements CanActivate {
       .getResponse<{ setHeader: (name: string, value: string) => void }>();
     response.setHeader('Cache-Control', 'no-store');
     const header = (name: string) =>
-      typeof request.headers[name] === 'string'
-        ? (request.headers[name] as string)
-        : '';
+      typeof request.headers[name] === 'string' ? request.headers[name] : '';
     const contentType = header('content-type')
       .split(';')[0]
       .trim()

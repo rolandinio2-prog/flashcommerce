@@ -10,7 +10,6 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
-  Query,
 } from '@nestjs/common';
 
 import { DeliveryMonitorRealtimeSessionService } from './delivery-monitor-realtime-session.service';

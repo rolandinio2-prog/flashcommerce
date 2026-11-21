@@ -6,20 +6,17 @@ export function readableAddress(input: unknown): {
   hasDetail: boolean;
 } {
   const components: AddressComponent[] = Array.isArray(input)
-    ? input.flatMap((value) => {
-        if (
-          !value ||
-          typeof value !== 'object' ||
-          typeof value.longText !== 'string' ||
-          !Array.isArray(value.types)
-        )
+    ? (input as unknown[]).flatMap((raw: unknown) => {
+        if (!raw || typeof raw !== 'object') return [];
+        const value = raw as { longText?: unknown; types?: unknown };
+        if (typeof value.longText !== 'string' || !Array.isArray(value.types))
           return [];
         const text = value.longText.trim().replace(/\s+/g, ' ');
         return text
           ? [
               {
                 longText: text,
-                types: value.types.filter(
+                types: (value.types as unknown[]).filter(
                   (type: unknown): type is string => typeof type === 'string',
                 ),
               },

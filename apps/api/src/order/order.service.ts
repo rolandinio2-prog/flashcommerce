@@ -1313,7 +1313,7 @@ export class OrderService {
           reservationContext.status !== 'CONFIRMED'
         ) {
           throw new ConflictException(
-            `Reservation cannot receive a preorder from ${reservationContext.status}`,
+            `Reservation cannot receive a preorder from ${String(reservationContext.status)}`,
           );
         }
 

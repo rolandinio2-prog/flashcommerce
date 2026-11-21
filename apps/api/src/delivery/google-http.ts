@@ -7,6 +7,11 @@ const GOOGLE_HOSTS = new Set([
 ]);
 
 /** Use the IPv4 egress authorized by the server's Google Maps key. */
+// AbortSignal reasons are DOMExceptions in practice; never reject with a non-Error value.
+function asError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason));
+}
+
 export function requestGoogleIpv4(
   url: string,
   init: RequestInit,
@@ -53,12 +58,12 @@ export function requestGoogleIpv4(
           chunks.push(chunk);
         });
         incoming.on('error', (error) =>
-          reject(init.signal?.aborted ? init.signal.reason : error),
+          reject(init.signal?.aborted ? asError(init.signal.reason) : error),
         );
         incoming.on('aborted', () =>
           reject(
             init.signal?.aborted
-              ? init.signal.reason
+              ? asError(init.signal.reason)
               : new Error('Google response interrupted'),
           ),
         );
@@ -77,13 +82,13 @@ export function requestGoogleIpv4(
             // Native HTTPS does not follow redirects or retry the request.
             resolve(new Response(body, { status, headers }));
           } catch (error) {
-            reject(error);
+            reject(asError(error));
           }
         });
       },
     );
     outgoing.on('error', (error) => {
-      reject(init.signal?.aborted ? init.signal.reason : error);
+      reject(init.signal?.aborted ? asError(init.signal.reason) : error);
     });
     if (typeof init.body === 'string') outgoing.end(init.body);
     else outgoing.end();
