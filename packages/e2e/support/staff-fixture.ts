@@ -82,6 +82,36 @@ export class StaffFixture {
     return { label, userId, sessionId: session.rows[0].id, token };
   }
 
+  private readonly probeLocationIds: string[] = [];
+
+  /**
+   * Publishes a movement through the REAL path: inserts a driver location for
+   * the latest delivery so the database trigger fans it out to every eligible
+   * staff session topic. The point repeats the delivery's latest position and
+   * carries a unique accuracy value as marker; it is deleted in dispose().
+   * Returns the marker text to look for in received frames.
+   */
+  async publishLocationProbe(): Promise<string> {
+    // accuracy_meters keeps 2 decimals; a random 2-decimal value (1.01-29.99) is the marker.
+    const accuracy = (1 + Math.floor(Math.random() * 2898 + 1) / 100).toFixed(2);
+    const inserted = await this.client.query<{ id: string }>(
+      `insert into public.delivery_driver_locations
+         (tenant_id, branch_id, delivery_id, driver_id, position, accuracy_meters, captured_at, received_at)
+       select l.tenant_id, l.branch_id, l.delivery_id, l.driver_id, l.position,
+              $3::numeric, now(), now()
+         from public.delivery_driver_locations l
+        where l.tenant_id = $1 and l.branch_id = $2
+        order by l.captured_at desc limit 1
+       returning id::text`,
+      [this.tenantId, this.branchId, accuracy],
+    );
+    if (!inserted.rows[0]) {
+      throw new Error('No driver location exists in the test branch: live-delivery checks replay the latest one (seed data).');
+    }
+    this.probeLocationIds.push(inserted.rows[0].id);
+    return String(Number(accuracy));
+  }
+
   /** B10: the session reaches its expiry time. */
   async expireSession(handle: StaffSessionHandle): Promise<void> {
     const result = await this.client.query(
@@ -103,6 +133,9 @@ export class StaffFixture {
 
   async dispose(): Promise<void> {
     try {
+      if (this.probeLocationIds.length) {
+        await this.client.query(`delete from public.delivery_driver_locations where id = any($1::uuid[])`, [this.probeLocationIds]);
+      }
       if (this.created.length) {
         // Sessions and memberships cascade from staff_users.
         await this.client.query(`delete from public.staff_sessions where user_id = any($1::uuid[])`, [this.created]);

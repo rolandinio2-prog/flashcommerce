@@ -7,14 +7,16 @@ Tests Playwright que reemplazan las aceptaciones manuales de los gates S4:
 | `b10-session-expiry` | `staff_sessions.expires_at` pasa al pasado | Ver criterios abajo |
 | `b11-membership-retirement` | `staff_user_branches.status = 'INACTIVE'` | Ver criterios abajo |
 
-Ambos comprueban, para la sesión **SUBJECT**:
+Ambos comprueban primero que **SUBJECT y CONTROL reciben ubicaciones en vivo**: insertan un punto GPS (copia del último real, con precisión única como marca) y el trigger de la base lo publica por el camino real. Esto detecta incompatibilidades entre el canal que entrega el API y el que usa la base.
+
+Luego, para la sesión **SUBJECT**:
 
 1. El monitor muestra la denegación y desaparece el mapa (sin entregas, posiciones ni recorridos).
 2. Todos los WebSocket Realtime del navegador se cierran.
 3. Durante 30 s no se abre ningún WebSocket nuevo ni llega ningún frame.
 4. El API rechaza la cookie (401/403) en `auth/me`, `delivery-monitor/active` y `realtime-session`.
 
-Y para una sesión **CONTROL** paralela: sigue viendo el monitor y conectada a Realtime.
+Y para una sesión **CONTROL** paralela: sigue viendo el monitor, conectada y recibiendo ubicaciones; SUBJECT ya no las recibe.
 
 Los WebSocket se observan de forma nativa con Playwright: no se inyectan scripts y no se guarda el contenido de los frames.
 
@@ -40,5 +42,5 @@ Variables opcionales: `E2E_BASE_URL`, `E2E_API_URL`, `E2E_DATABASE_URL`, `E2E_TE
 
 ## Datos
 
-Cada ejecución crea dos usuarios temporales `QAE-XXXXXX` (rol MANAGER) con sesión, y los elimina al terminar.
+Cada ejecución crea dos usuarios temporales `QAE-XXXXXX` (rol MANAGER) con sesión y algunos puntos GPS de prueba; todo se elimina al terminar. Requiere al menos una ubicación de conductor en la sucursal (datos semilla).
 Por seguridad, la suite se niega a usar una base que no sea `localhost`, salvo que se defina `E2E_ALLOW_REMOTE_DB=true` para una base de pruebas desechable.

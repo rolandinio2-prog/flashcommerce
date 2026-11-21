@@ -51,6 +51,25 @@ export async function expectApiRejects(actor: MonitorActor): Promise<void> {
 }
 
 /**
+ * Inserts one GPS point (real trigger path) and checks which actors receive it.
+ * Catches any mismatch between the API's topic contract and the DB publisher.
+ */
+async function expectLiveDelivery(fixture: StaffFixture, expectations: Array<[MonitorActor, boolean]>): Promise<void> {
+  const marker = await fixture.publishLocationProbe();
+  for (const [actor] of expectations) actor.realtime.watchProbe(marker);
+  for (const [actor, delivered] of expectations) {
+    if (!delivered) continue;
+    await expect.poll(() => actor.realtime.probeCount(marker), {
+      message: `${actor.handle.label}: live GPS movement must be delivered`, timeout: 10_000,
+    }).toBeGreaterThan(0);
+  }
+  if (expectations.some(([, delivered]) => !delivered)) await expectations[0][0].page.waitForTimeout(5_000);
+  for (const [actor, delivered] of expectations) {
+    if (!delivered) expect(actor.realtime.probeCount(marker), `${actor.handle.label}: live GPS movement must NOT be delivered`).toBe(0);
+  }
+}
+
+/**
  * Shared acceptance for B10 (expiry) and B11 (membership retirement):
  *  1. subject sees the denial and no protected monitor data;
  *  2. subject's Realtime sockets close;
@@ -71,6 +90,10 @@ export async function runAccessRetirementScenario(
 
     await expectMonitorLive(subject);
     await expectMonitorLive(control);
+
+    // 0. Live delivery works: each session receives a movement on its own topic
+    //    (API topic contract and DB publisher/policies must agree).
+    await expectLiveDelivery(fixture, [[subject, true], [control, true]]);
     const controlSocketsBefore = control.realtime.total;
 
     const retiredAt = Date.now();
@@ -97,8 +120,9 @@ export async function runAccessRetirementScenario(
     // 4. API rejects the subject.
     await expectApiRejects(subject);
 
-    // 5. CONTROL is unaffected: still live, no forced reconnect storm.
+    // 5. CONTROL is unaffected: still live, still receiving, no forced reconnect storm.
     await expectMonitorLive(control);
+    await expectLiveDelivery(fixture, [[control, true], [subject, false]]);
     await expect(control.page.getByRole('status').filter({ hasText: DENIED_TEXT })).toHaveCount(0);
     expect(control.realtime.total - controlSocketsBefore, 'CONTROL should not churn sockets').toBeLessThanOrEqual(1);
   } finally {
