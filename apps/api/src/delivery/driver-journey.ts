@@ -26,7 +26,6 @@ export function validPoint(p: GeoPoint): boolean {
 export function buildJourney(samples: JourneySample[]) {
   const complete = samples.length <= JOURNEY_SAMPLE_LIMIT;
   const segments: GeoPoint[][] = [];
-  const milestones: Array<GeoPoint & {distanceMeters: number}> = [];
   let anchor: JourneySample | null = null;
   let latest: JourneySample | null = null;
   let observedAt = -Infinity;
@@ -57,16 +56,12 @@ export function buildJourney(samples: JourneySample[]) {
       latest = {...anchor, capturedAt: sample.capturedAt, receivedAt: sample.receivedAt};
       continue;
     }
-    const nextTotal = total + distance;
-    for (let mark = (Math.floor(total / 200) + 1) * 200; mark <= nextTotal + 1e-7; mark += 200) {
-      milestones.push({...mix(anchor, sample, Math.min(1, (mark - total) / distance)), distanceMeters: mark});
-    }
     segments[segments.length - 1].push({latitude: sample.latitude, longitude: sample.longitude});
-    total = nextTotal;
+    total += distance;
     anchor = sample; latest = sample;
   }
   return {
-    segments, milestones: complete ? milestones : [],
+    segments,
     distanceMeters: complete ? total : null,
     complete, gaps, rejected, latest: complete ? latest : null,
   };

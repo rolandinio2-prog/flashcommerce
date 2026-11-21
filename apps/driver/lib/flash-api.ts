@@ -145,7 +145,6 @@ export type DriverLocationResult = {
 export type JourneyPoint = { latitude: number; longitude: number };
 export type DriverJourney = {
   segments: JourneyPoint[][];
-  milestones: Array<JourneyPoint & {distanceMeters: number}>;
   distanceMeters: number | null;
   complete: boolean;
   gaps: number;
