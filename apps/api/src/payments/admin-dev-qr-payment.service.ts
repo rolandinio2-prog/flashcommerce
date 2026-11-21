@@ -13,6 +13,7 @@ import type { StaffSessionPrincipal } from '../staff/staff.types';
 import { PaymentsService, type BcpQrCallbackInput } from './payments.service';
 
 interface DevQrCandidateRow {
+  payment_id: string | null;
   order_number: string;
   order_status: string;
   order_payment_status: string;
@@ -43,7 +44,8 @@ export class AdminDevQrPaymentService {
     return {
       enabled: true as const,
       developmentOnly: true as const,
-      provider: 'BCP_QR' as const,
+      // MOCK only when this environment (e.g. staging) is configured without a bank.
+      provider: this.simulatedProvider(),
       environment: 'sandbox' as const,
     };
   }
@@ -69,7 +71,7 @@ export class AdminDevQrPaymentService {
       before.order_payment_status === 'PAID' &&
       before.payment_status === 'PAID' &&
       before.method === 'QR' &&
-      before.provider === 'BCP_QR'
+      (before.provider === 'BCP_QR' || before.provider === 'MOCK')
     ) {
       return this.mapResult(false, before);
     }
@@ -85,12 +87,42 @@ export class AdminDevQrPaymentService {
 
     if (
       before.method !== 'QR' ||
-      before.provider !== 'BCP_QR' ||
+      before.provider !== this.simulatedProvider() ||
       before.payment_status !== 'AWAITING_CONFIRMATION'
     ) {
       throw new ConflictException(
-        'Latest payment is not an awaiting BCP_QR attempt',
+        `Latest payment is not an awaiting ${this.simulatedProvider()} attempt`,
       );
+    }
+
+    if (before.provider === 'MOCK') {
+      if (!before.payment_id)
+        throw new ConflictException('MOCK payment data is incomplete');
+      if (
+        before.expires_at &&
+        new Date(before.expires_at).getTime() <= Date.now()
+      ) {
+        throw new ConflictException(
+          'QR attempt expired; generate a fresh QR first',
+        );
+      }
+      // Same normal MOCK confirmation used by the payment core (no lab key: guarded here).
+      await this.paymentsService.confirmMockPaymentForDevTools(
+        before.payment_id,
+        staff,
+      );
+      const paid = await this.loadCandidate(staff, orderNumber);
+      if (
+        !paid ||
+        paid.order_payment_status !== 'PAID' ||
+        paid.payment_status !== 'PAID' ||
+        paid.provider !== 'MOCK'
+      ) {
+        throw new ConflictException(
+          'Payment core did not finish in PAID state',
+        );
+      }
+      return this.mapResult(true, paid);
     }
 
     if (
@@ -182,6 +214,7 @@ export class AdminDevQrPaymentService {
               as order_payment_status,
             o.total::text,
             o.currency as order_currency,
+            p.payment_id,
             p.attempt_number,
             p.method,
             p.provider,
@@ -194,6 +227,7 @@ export class AdminDevQrPaymentService {
           from public.orders o
           left join lateral (
             select
+              op.id::text as payment_id,
               op.attempt_number,
               op.method,
               op.provider,
@@ -245,6 +279,13 @@ export class AdminDevQrPaymentService {
         provider: row.provider,
       },
     };
+  }
+
+  /** Provider the simulator acts on: the environment payment provider (MOCK or BCP_QR). */
+  private simulatedProvider(): 'MOCK' | 'BCP_QR' {
+    return this.readConfig('PAYMENT_PROVIDER').toUpperCase() === 'MOCK'
+      ? 'MOCK'
+      : 'BCP_QR';
   }
 
   private assertEnabled() {

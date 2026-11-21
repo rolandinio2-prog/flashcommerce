@@ -17,6 +17,7 @@ con secretos propios y sin exposición pública.
 - Usuarios: staff `ADM-B626AF` (ADMIN), `CAJ-740076` (CASHIER) en POLLO001/SUC001; conductores `RSV01`, `DRV-186667`.
 - Compose: `/opt/fastpay/staging-v1/compose.json` (proyecto `fastpay-staging-v1`).
 - La base de producción **no es alcanzable** desde staging (verificado por `setup-staging.py verify`).
+- Pagos: proveedor MOCK (sin banco). El botón de Admin "Simular pago QR" funciona igual que en producción: con MOCK usa la confirmación MOCK normal del núcleo de pagos.
 - Los bundles de staging esperan Realtime en `http://localhost:18000` y la app en `http://localhost:13000`.
 
 ## Tests automáticos contra staging

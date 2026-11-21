@@ -47,7 +47,10 @@ test('checkout: take-away order with simulated QR payment', async ({ page, reque
   const orderText = await received.getByText(/Pedido #\d+/).first().textContent();
   const orderNumber = Number(/#(\d+)/.exec(orderText ?? '')?.[1]);
   expect(orderNumber).toBeGreaterThan(0);
-  await expect(received.getByRole('img', { name: /QR de pago/ })).toBeVisible();
+  // BCP sandbox returns an image (alt "QR de pago BCP"); the MOCK provider (staging) a QR drawn as SVG.
+  // Both show the scan instructions only when a QR is available.
+  await expect(received.getByText(/escanea el código/)).toBeVisible();
+  await expect(received.locator('img[alt^="QR de pago"], svg').first()).toBeVisible();
   await expect(received).toContainText('BOB 24.00');
 
   const fixture = await StaffFixture.open();

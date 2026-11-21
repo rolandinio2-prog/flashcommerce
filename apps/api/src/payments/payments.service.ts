@@ -4256,6 +4256,33 @@ export class PaymentsService {
     principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
   ) {
     this.assertMockConfirmationAllowed(labAccessKey);
+    return this.markMockPaymentPaid(paymentId, principal);
+  }
+
+  /**
+   * Admin dev-tools entry (QR payment simulator). Access is guarded by
+   * AdminDevQrPaymentService (ADMIN + PAYMENT_DEV_TOOLS_ENABLED + sandbox);
+   * only available when this environment is configured with the MOCK provider.
+   */
+  async confirmMockPaymentForDevTools(
+    paymentId: string,
+    principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
+  ) {
+    const configuredProvider = (
+      this.configService.get<string>('PAYMENT_PROVIDER') || ''
+    )
+      .trim()
+      .toUpperCase();
+    if (configuredProvider !== 'MOCK') {
+      throw new NotFoundException('Resource not found');
+    }
+    return this.markMockPaymentPaid(paymentId, principal);
+  }
+
+  private async markMockPaymentPaid(
+    paymentId: string,
+    principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
+  ) {
     this.getMockProvider();
 
     return this.databaseService.withTransaction(async (client) => {
