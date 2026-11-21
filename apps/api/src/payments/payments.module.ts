@@ -28,7 +28,15 @@ import { PaymentsService } from './payments.service';
     BcpPaymentCallbackController,
     AdminDevQrPaymentController,
   ],
-  providers: [ CashClosingService, CashSummaryService, PaymentsService, MockQrProvider, BcpQrProvider, OpsAccessGuard, AdminDevQrPaymentService ],
+  providers: [
+    CashClosingService,
+    CashSummaryService,
+    PaymentsService,
+    MockQrProvider,
+    BcpQrProvider,
+    OpsAccessGuard,
+    AdminDevQrPaymentService,
+  ],
   exports: [PaymentsService],
 })
 export class PaymentsModule {}

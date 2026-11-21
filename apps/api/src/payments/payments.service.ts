@@ -1,4 +1,7 @@
-import { assertLocalCashAllowed, rejectCashOnDelivery } from './delivery-payment-policy';
+import {
+  assertLocalCashAllowed,
+  rejectCashOnDelivery,
+} from './delivery-payment-policy';
 import type { StaffSessionPrincipal } from '../staff/staff.types';
 import {
   BadRequestException,
@@ -170,10 +173,7 @@ interface CancelDriverCodCashSettlementInput {
   cashierAccessKey?: string;
 }
 
-type DriverCodCashSettlementStatus =
-  | 'OPEN'
-  | 'SETTLED'
-  | 'CANCELLED';
+type DriverCodCashSettlementStatus = 'OPEN' | 'SETTLED' | 'CANCELLED';
 
 interface DriverCodCashSettlementRow {
   id: string;
@@ -258,12 +258,14 @@ export class PaymentsService {
   // CREAR O REUTILIZAR INTENTO QR
   // =====================================================
 
-
   // =====================================================
   // OPS REVIEW_REQUIRED RECONCILIATION - PROVIDER TRUTH
   // R6.13.4.8.3
   // =====================================================
-  async reconcileReviewRequiredByOrderNumber(orderNumber: string, principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>) {
+  async reconcileReviewRequiredByOrderNumber(
+    orderNumber: string,
+    principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
+  ) {
     const normalizedOrderNumber = String(orderNumber ?? '').trim();
 
     if (!normalizedOrderNumber || normalizedOrderNumber.length > 64) {
@@ -349,10 +351,7 @@ export class PaymentsService {
           throw new ConflictException('BCP QR payment was not found');
         }
 
-        if (
-          order.payment_status === 'PAID' &&
-          payment.status === 'PAID'
-        ) {
+        if (order.payment_status === 'PAID' && payment.status === 'PAID') {
           return {
             action: 'ALREADY_PAID' as const,
             orderNumber: order.order_number,
@@ -366,7 +365,9 @@ export class PaymentsService {
           order.payment_status !== 'REVIEW_REQUIRED' ||
           payment.status !== 'REVIEW_REQUIRED'
         ) {
-          throw new ConflictException('Payment is not eligible for reconciliation');
+          throw new ConflictException(
+            'Payment is not eligible for reconciliation',
+          );
         }
 
         if (!payment.provider_payment_id) {
@@ -411,13 +412,11 @@ export class PaymentsService {
       };
     }
 
-    const providerStatus =
-      String(providerTruth.status ?? '').trim().toUpperCase();
+    const providerStatus = String(providerTruth.status ?? '')
+      .trim()
+      .toUpperCase();
 
-    if (
-      providerStatus === 'EXPIRED' ||
-      providerStatus === 'CANCELLED'
-    ) {
+    if (providerStatus === 'EXPIRED' || providerStatus === 'CANCELLED') {
       return this.applyBcpTerminalReconciliationByOrderNumber(
         String(orderNumber),
         providerStatus,
@@ -438,15 +437,9 @@ export class PaymentsService {
     const providerTransactionId =
       providerTruth.providerTransactionId?.trim() || '';
 
-    const paidAt = providerTruth.paidAt
-      ? new Date(providerTruth.paidAt)
-      : null;
+    const paidAt = providerTruth.paidAt ? new Date(providerTruth.paidAt) : null;
 
-    if (
-      !providerTransactionId ||
-      !paidAt ||
-      Number.isNaN(paidAt.getTime())
-    ) {
+    if (!providerTransactionId || !paidAt || Number.isNaN(paidAt.getTime())) {
       return {
         changed: false,
         action: 'REVIEW_REQUIRED' as const,
@@ -526,10 +519,7 @@ export class PaymentsService {
         throw new ConflictException('Payment changed during reconciliation');
       }
 
-      if (
-        order.payment_status === 'PAID' &&
-        payment.status === 'PAID'
-      ) {
+      if (order.payment_status === 'PAID' && payment.status === 'PAID') {
         return {
           changed: false,
           action: 'UNCHANGED' as const,
@@ -544,11 +534,15 @@ export class PaymentsService {
         order.payment_status !== 'REVIEW_REQUIRED' ||
         payment.status !== 'REVIEW_REQUIRED'
       ) {
-        throw new ConflictException('Payment state changed during reconciliation');
+        throw new ConflictException(
+          'Payment state changed during reconciliation',
+        );
       }
 
       if (payment.provider_payment_id !== snapshot.providerPaymentId) {
-        throw new ConflictException('Provider reference changed during reconciliation');
+        throw new ConflictException(
+          'Provider reference changed during reconciliation',
+        );
       }
 
       const paidPaymentResult = await client.query<{
@@ -634,14 +628,11 @@ export class PaymentsService {
     input: BcpQrCallbackInput,
   ) {
     const expectedUsername =
-      this.requireBcpCallbackConfigurationValue(
-        'BCP_QR_USERNAME',
-      );
+      this.requireBcpCallbackConfigurationValue('BCP_QR_USERNAME');
 
-    const expectedPublicToken =
-      this.requireBcpCallbackConfigurationValue(
-        'BCP_QR_PUBLIC_TOKEN',
-      );
+    const expectedPublicToken = this.requireBcpCallbackConfigurationValue(
+      'BCP_QR_PUBLIC_TOKEN',
+    );
 
     if (
       !this.isBcpCallbackAuthorizationValid(
@@ -656,67 +647,39 @@ export class PaymentsService {
       );
     }
 
-    const callbackId =
-      this.normalizeBcpCallbackId(
-        input?.Id,
-      );
+    const callbackId = this.normalizeBcpCallbackId(input?.Id);
 
-    const serviceCode =
-      this.normalizeBcpCallbackText(
-        input?.ServiceCode,
-        32,
-      );
+    const serviceCode = this.normalizeBcpCallbackText(input?.ServiceCode, 32);
 
-    const businessCode =
-      this.normalizeBcpCallbackText(
-        input?.BusinessCode,
-        64,
-      );
+    const businessCode = this.normalizeBcpCallbackText(input?.BusinessCode, 64);
 
-    const idCorrelation =
-      this.normalizeBcpCallbackText(
-        input?.IdCorrelation,
-        160,
-      );
+    const idCorrelation = this.normalizeBcpCallbackText(
+      input?.IdCorrelation,
+      160,
+    );
 
-    const amount =
-      this.normalizeBcpCallbackAmount(
-        input?.Amount,
-      );
+    const amount = this.normalizeBcpCallbackAmount(input?.Amount);
 
     const currency =
-      this.normalizeBcpCallbackText(
-        input?.Currency,
-        3,
-      )?.toUpperCase() ?? null;
+      this.normalizeBcpCallbackText(input?.Currency, 3)?.toUpperCase() ?? null;
 
-    const responseCode =
-      this.normalizeBcpCallbackText(
-        input?.ResponseCode,
-        16,
-      );
+    const responseCode = this.normalizeBcpCallbackText(input?.ResponseCode, 16);
 
     const status =
-      this.normalizeBcpCallbackText(
-        input?.Status,
-        16,
-      )?.toUpperCase() ?? null;
+      this.normalizeBcpCallbackText(input?.Status, 16)?.toUpperCase() ?? null;
 
-    const operationNumber =
-      this.normalizeBcpCallbackText(
-        input?.OperationNumber,
-        160,
-      );
+    const operationNumber = this.normalizeBcpCallbackText(
+      input?.OperationNumber,
+      160,
+    );
 
-    const expectedServiceCode =
-      this.requireBcpCallbackConfigurationValue(
-        'BCP_QR_SERVICE_CODE',
-      );
+    const expectedServiceCode = this.requireBcpCallbackConfigurationValue(
+      'BCP_QR_SERVICE_CODE',
+    );
 
-    const expectedBusinessCode =
-      this.requireBcpCallbackConfigurationValue(
-        'BCP_QR_BUSINESS_CODE',
-      );
+    const expectedBusinessCode = this.requireBcpCallbackConfigurationValue(
+      'BCP_QR_BUSINESS_CODE',
+    );
 
     if (
       callbackId === null ||
@@ -729,10 +692,7 @@ export class PaymentsService {
       status !== 'P' ||
       operationNumber === null
     ) {
-      return this.buildBcpCallbackErrorResponse(
-        '101',
-        'Notificacion invalida',
-      );
+      return this.buildBcpCallbackErrorResponse('101', 'Notificacion invalida');
     }
 
     if (
@@ -745,34 +705,32 @@ export class PaymentsService {
       );
     }
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const paymentResult =
-          await client.query<{
-            id: string;
-            tenant_id: string;
-            branch_id: string;
-            order_id: string;
-            attempt_number: number;
-            max_attempt_number: number;
-            method: string;
-            provider: string;
-            status: PaymentAttemptStatus;
-            amount: string;
-            currency: string;
-            external_reference: string | null;
-            provider_payment_id: string | null;
-            provider_transaction_id: string | null;
-            paid_at: string | Date | null;
-            verified_at: string | Date | null;
-            order_status: OrderStatus;
-            order_payment_status: OrderPaymentStatus;
-            order_total: string;
-            order_currency: string;
-            reservation_id: string | null;
-            reservation_status: string | null;
-          }>(
-            `
+    return this.databaseService.withTransaction(async (client) => {
+      const paymentResult = await client.query<{
+        id: string;
+        tenant_id: string;
+        branch_id: string;
+        order_id: string;
+        attempt_number: number;
+        max_attempt_number: number;
+        method: string;
+        provider: string;
+        status: PaymentAttemptStatus;
+        amount: string;
+        currency: string;
+        external_reference: string | null;
+        provider_payment_id: string | null;
+        provider_transaction_id: string | null;
+        paid_at: string | Date | null;
+        verified_at: string | Date | null;
+        order_status: OrderStatus;
+        order_payment_status: OrderPaymentStatus;
+        order_total: string;
+        order_currency: string;
+        reservation_id: string | null;
+        reservation_status: string | null;
+      }>(
+        `
               select
                 p.id::text,
                 p.tenant_id::text,
@@ -817,67 +775,57 @@ export class PaymentsService {
                 and p.provider_payment_id = $1
               for update of p, o
             `,
-            [
-              String(callbackId),
-            ],
-          );
+        [String(callbackId)],
+      );
 
-        if (paymentResult.rows.length !== 1) {
-          return this.buildBcpCallbackErrorResponse(
-            '102',
-            'Notificacion no correlacionada',
-          );
-        }
+      if (paymentResult.rows.length !== 1) {
+        return this.buildBcpCallbackErrorResponse(
+          '102',
+          'Notificacion no correlacionada',
+        );
+      }
 
-        const payment =
-          paymentResult.rows[0];
+      const payment = paymentResult.rows[0];
 
-        const storedAmount =
-          this.normalizeBcpCallbackAmount(
-            payment.amount,
-          );
+      const storedAmount = this.normalizeBcpCallbackAmount(payment.amount);
 
-        const orderAmount =
-          this.normalizeBcpCallbackAmount(
-            payment.order_total,
-          );
+      const orderAmount = this.normalizeBcpCallbackAmount(payment.order_total);
 
-        if (
-          payment.external_reference !== idCorrelation ||
-          storedAmount === null ||
-          orderAmount === null ||
-          storedAmount !== amount ||
-          orderAmount !== amount ||
-          payment.currency.toUpperCase() !== currency ||
-          payment.order_currency.toUpperCase() !== currency ||
-          payment.attempt_number !== payment.max_attempt_number
-        ) {
-          return this.buildBcpCallbackErrorResponse(
-            '102',
-            'Notificacion no correlacionada',
-          );
-        }
+      if (
+        payment.external_reference !== idCorrelation ||
+        storedAmount === null ||
+        orderAmount === null ||
+        storedAmount !== amount ||
+        orderAmount !== amount ||
+        payment.currency.toUpperCase() !== currency ||
+        payment.order_currency.toUpperCase() !== currency ||
+        payment.attempt_number !== payment.max_attempt_number
+      ) {
+        return this.buildBcpCallbackErrorResponse(
+          '102',
+          'Notificacion no correlacionada',
+        );
+      }
 
-        if (
-          payment.order_status === 'CANCELLED' ||
-          payment.order_status === 'COMPLETED' ||
-          payment.order_payment_status === 'NOT_REQUIRED' ||
-          payment.order_payment_status === 'REFUND_PENDING' ||
-          payment.order_payment_status === 'REFUNDED'
-        ) {
-          return this.buildBcpCallbackErrorResponse(
-            '103',
-            'Pago requiere conciliacion',
-          );
-        }
+      if (
+        payment.order_status === 'CANCELLED' ||
+        payment.order_status === 'COMPLETED' ||
+        payment.order_payment_status === 'NOT_REQUIRED' ||
+        payment.order_payment_status === 'REFUND_PENDING' ||
+        payment.order_payment_status === 'REFUNDED'
+      ) {
+        return this.buildBcpCallbackErrorResponse(
+          '103',
+          'Pago requiere conciliacion',
+        );
+      }
 
-        const existingEventResult =
-          await client.query<{
-            event_type: string;
-            source: string;
-            processing_status: string;
-          }>(
-            `
+      const existingEventResult = await client.query<{
+        event_type: string;
+        source: string;
+        processing_status: string;
+      }>(
+        `
               select
                 event_type,
                 source,
@@ -889,90 +837,72 @@ export class PaymentsService {
                 and provider_event_id = $4
               limit 1
             `,
-            [
-              payment.tenant_id,
-              payment.branch_id,
-              payment.id,
-              operationNumber,
-            ],
-          );
+        [payment.tenant_id, payment.branch_id, payment.id, operationNumber],
+      );
 
-        const existingEvent =
-          existingEventResult.rows[0] ?? null;
+      const existingEvent = existingEventResult.rows[0] ?? null;
 
-        if (payment.status === 'PAID') {
+      if (payment.status === 'PAID') {
+        if (
+          payment.provider_transaction_id === operationNumber &&
+          payment.paid_at !== null &&
+          payment.verified_at !== null &&
+          payment.order_payment_status === 'PAID'
+        ) {
           if (
-            payment.provider_transaction_id === operationNumber &&
-            payment.paid_at !== null &&
-            payment.verified_at !== null &&
-            payment.order_payment_status === 'PAID'
+            existingEvent &&
+            (existingEvent.event_type !== 'PAYMENT_CONFIRMED' ||
+              existingEvent.processing_status !== 'PROCESSED')
           ) {
-            if (
-              existingEvent &&
-              (
-                existingEvent.event_type !==
-                  'PAYMENT_CONFIRMED' ||
-                existingEvent.processing_status !==
-                  'PROCESSED'
-              )
-            ) {
-              return this.buildBcpCallbackErrorResponse(
-                '103',
-                'Pago requiere conciliacion',
-              );
-            }
-
-            if (!existingEvent) {
-              await this.insertPaymentEvent(
-                client,
-                {
-                  tenantId: payment.tenant_id,
-                  branchId: payment.branch_id,
-                  paymentId: payment.id,
-                  eventType: 'PAYMENT_CONFIRMED',
-                  providerEventId: operationNumber,
-                  source: 'PROVIDER_WEBHOOK',
-                  processingStatus: 'PROCESSED',
-                  payload: {
-                    provider: payment.provider,
-                    providerPaymentId:
-                      payment.provider_payment_id,
-                    providerTransactionId:
-                      operationNumber,
-                    callbackId,
-                    idCorrelation,
-                    amount: payment.amount,
-                    currency: payment.currency,
-                    responseCode,
-                    status,
-                  },
-                },
-              );
-            }
-
-            return this.buildBcpCallbackSuccessResponse(
-              callbackId,
+            return this.buildBcpCallbackErrorResponse(
+              '103',
+              'Pago requiere conciliacion',
             );
           }
 
-          return this.buildBcpCallbackErrorResponse(
-            '103',
-            'Pago requiere conciliacion',
-          );
+          if (!existingEvent) {
+            await this.insertPaymentEvent(client, {
+              tenantId: payment.tenant_id,
+              branchId: payment.branch_id,
+              paymentId: payment.id,
+              eventType: 'PAYMENT_CONFIRMED',
+              providerEventId: operationNumber,
+              source: 'PROVIDER_WEBHOOK',
+              processingStatus: 'PROCESSED',
+              payload: {
+                provider: payment.provider,
+                providerPaymentId: payment.provider_payment_id,
+                providerTransactionId: operationNumber,
+                callbackId,
+                idCorrelation,
+                amount: payment.amount,
+                currency: payment.currency,
+                responseCode,
+                status,
+              },
+            });
+          }
+
+          return this.buildBcpCallbackSuccessResponse(callbackId);
         }
 
-        if (existingEvent) {
-          return this.buildBcpCallbackErrorResponse(
-            '103',
-            'Pago requiere conciliacion',
-          );
-        }
+        return this.buildBcpCallbackErrorResponse(
+          '103',
+          'Pago requiere conciliacion',
+        );
+      }
 
-        const transactionOwnerResult =
-          await client.query<{
-            id: string;
-          }>(
-            `
+      if (existingEvent) {
+        return this.buildBcpCallbackErrorResponse(
+          '103',
+          'Pago requiere conciliacion',
+        );
+      }
+
+      const transactionOwnerResult = await client.query<{
+        id: string;
+      }>(
+        `
               select
                 id::text
               from public.order_payments
@@ -982,47 +912,41 @@ export class PaymentsService {
                 and id <> $3::uuid
               limit 1
             `,
-            [
-              payment.tenant_id,
-              operationNumber,
-              payment.id,
-            ],
-          );
+        [payment.tenant_id, operationNumber, payment.id],
+      );
 
-        if (transactionOwnerResult.rows[0]) {
-          return this.buildBcpCallbackErrorResponse(
-            '103',
-            'Pago requiere conciliacion',
-          );
-        }
+      if (transactionOwnerResult.rows[0]) {
+        return this.buildBcpCallbackErrorResponse(
+          '103',
+          'Pago requiere conciliacion',
+        );
+      }
 
-        if (
-          payment.provider_transaction_id !== null &&
-          payment.provider_transaction_id !== operationNumber
-        ) {
-          return this.buildBcpCallbackErrorResponse(
-            '103',
-            'Pago requiere conciliacion',
-          );
-        }
+      if (
+        payment.provider_transaction_id !== null &&
+        payment.provider_transaction_id !== operationNumber
+      ) {
+        return this.buildBcpCallbackErrorResponse(
+          '103',
+          'Pago requiere conciliacion',
+        );
+      }
 
-        if (
-          payment.status !== 'AWAITING_CONFIRMATION' &&
-          payment.status !== 'REVIEW_REQUIRED' &&
-          payment.status !== 'EXPIRED'
-        ) {
-          return this.buildBcpCallbackErrorResponse(
-            '103',
-            'Pago requiere conciliacion',
-          );
-        }
+      if (
+        payment.status !== 'AWAITING_CONFIRMATION' &&
+        payment.status !== 'REVIEW_REQUIRED' &&
+        payment.status !== 'EXPIRED'
+      ) {
+        return this.buildBcpCallbackErrorResponse(
+          '103',
+          'Pago requiere conciliacion',
+        );
+      }
 
-        const paidAt =
-          new Date();
+      const paidAt = new Date();
 
-        const paidPaymentResult =
-          await client.query<PaymentAttemptRow>(
-            `
+      const paidPaymentResult = await client.query<PaymentAttemptRow>(
+        `
               update public.order_payments
               set
                 status = 'PAID',
@@ -1068,34 +992,28 @@ export class PaymentsService {
                 created_at,
                 updated_at
             `,
-            [
-              payment.id,
-              operationNumber,
-              paidAt.toISOString(),
-            ],
-          );
+        [payment.id, operationNumber, paidAt.toISOString()],
+      );
 
-        const paidPayment =
-          paidPaymentResult.rows[0];
+      const paidPayment = paidPaymentResult.rows[0];
 
-        if (!paidPayment) {
-          return this.buildBcpCallbackErrorResponse(
-            '103',
-            'Pago requiere conciliacion',
-          );
-        }
+      if (!paidPayment) {
+        return this.buildBcpCallbackErrorResponse(
+          '103',
+          'Pago requiere conciliacion',
+        );
+      }
 
-        const reservationAllowsConfirmation =
-          !payment.reservation_id ||
-          payment.reservation_status === 'CONFIRMED' ||
-          payment.reservation_status === 'SEATED';
+      const reservationAllowsConfirmation =
+        !payment.reservation_id ||
+        payment.reservation_status === 'CONFIRMED' ||
+        payment.reservation_status === 'SEATED';
 
-        const orderResult =
-          await client.query<{
-            status: OrderStatus;
-            payment_status: OrderPaymentStatus;
-          }>(
-            `
+      const orderResult = await client.query<{
+        status: OrderStatus;
+        payment_status: OrderPaymentStatus;
+      }>(
+        `
               update public.orders
               set
                 payment_status = 'PAID',
@@ -1120,52 +1038,38 @@ export class PaymentsService {
                 status,
                 payment_status
             `,
-            [
-              payment.order_id,
-              reservationAllowsConfirmation,
-            ],
-          );
+        [payment.order_id, reservationAllowsConfirmation],
+      );
 
-        const updatedOrder =
-          orderResult.rows[0];
+      const updatedOrder = orderResult.rows[0];
 
-        if (!updatedOrder) {
-          throw new ConflictException(
-            'Order payment state changed concurrently',
-          );
-        }
+      if (!updatedOrder) {
+        throw new ConflictException('Order payment state changed concurrently');
+      }
 
-        await this.insertPaymentEvent(
-          client,
-          {
-            tenantId: paidPayment.tenant_id,
-            branchId: paidPayment.branch_id,
-            paymentId: paidPayment.id,
-            eventType: 'PAYMENT_CONFIRMED',
-            providerEventId: operationNumber,
-            source: 'PROVIDER_WEBHOOK',
-            processingStatus: 'PROCESSED',
-            payload: {
-              provider: paidPayment.provider,
-              providerPaymentId:
-                paidPayment.provider_payment_id,
-              providerTransactionId:
-                operationNumber,
-              callbackId,
-              idCorrelation,
-              amount: paidPayment.amount,
-              currency: paidPayment.currency,
-              responseCode,
-              status,
-            },
-          },
-        );
-
-        return this.buildBcpCallbackSuccessResponse(
+      await this.insertPaymentEvent(client, {
+        tenantId: paidPayment.tenant_id,
+        branchId: paidPayment.branch_id,
+        paymentId: paidPayment.id,
+        eventType: 'PAYMENT_CONFIRMED',
+        providerEventId: operationNumber,
+        source: 'PROVIDER_WEBHOOK',
+        processingStatus: 'PROCESSED',
+        payload: {
+          provider: paidPayment.provider,
+          providerPaymentId: paidPayment.provider_payment_id,
+          providerTransactionId: operationNumber,
           callbackId,
-        );
-      },
-    );
+          idCorrelation,
+          amount: paidPayment.amount,
+          currency: paidPayment.currency,
+          responseCode,
+          status,
+        },
+      });
+
+      return this.buildBcpCallbackSuccessResponse(callbackId);
+    });
   }
   async createQrPayment(trackingToken: string, customerPhoneInput?: unknown) {
     const configuredProvider = this.getPaymentProvider();
@@ -1182,14 +1086,23 @@ export class PaymentsService {
         const prepareContact = async (providerName: string): Promise<void> => {
           if (providerName !== 'BCP_QR') return;
           const existingPhone = order.customer_phone?.trim() || '';
-          const phone = existingPhone ||
-            (typeof customerPhoneInput === 'string' ? customerPhoneInput.trim() : '');
-          if (!/^\+?[0-9 ()-]{7,25}$/.test(phone) ||
-              !/^[0-9]{7,15}$/.test(phone.replace(/\D/g, ''))) {
-            throw new BadRequestException('Ingresa un telefono valido de 7 a 15 digitos para generar el QR.');
+          const phone =
+            existingPhone ||
+            (typeof customerPhoneInput === 'string'
+              ? customerPhoneInput.trim()
+              : '');
+          if (
+            !/^\+?[0-9 ()-]{7,25}$/.test(phone) ||
+            !/^[0-9]{7,15}$/.test(phone.replace(/\D/g, ''))
+          ) {
+            throw new BadRequestException(
+              'Ingresa un telefono valido de 7 a 15 digitos para generar el QR.',
+            );
           }
           if (!order.branch_name?.trim()) {
-            throw new ServiceUnavailableException('La sucursal debe completar sus datos para habilitar el pago QR.');
+            throw new ServiceUnavailableException(
+              'La sucursal debe completar sus datos para habilitar el pago QR.',
+            );
           }
           if (!existingPhone) {
             await client.query(
@@ -1285,7 +1198,10 @@ export class PaymentsService {
         }
 
         if (activePayment) {
-          if (activePayment.status === 'CREATED' && !activePayment.provider_payment_id) {
+          if (
+            activePayment.status === 'CREATED' &&
+            !activePayment.provider_payment_id
+          ) {
             await prepareContact(activePayment.provider);
           }
           return {
@@ -1611,30 +1527,22 @@ export class PaymentsService {
     idempotencyKeyInput?: string,
   ) {
     rejectCashOnDelivery();
-    const idempotencyToken =
-      this.requireIdempotencyToken(idempotencyKeyInput);
+    const idempotencyToken = this.requireIdempotencyToken(idempotencyKeyInput);
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const order =
-          await this.loadOrderForPayment(
-            client,
-            trackingToken,
-          );
+    return this.databaseService.withTransaction(async (client) => {
+      const order = await this.loadOrderForPayment(client, trackingToken);
 
-        const idempotencyKey =
-          `cod:${order.id}:${idempotencyToken}`;
+      const idempotencyKey = `cod:${order.id}:${idempotencyToken}`;
 
-        // -------------------------------------------------
-        // Idempotencia fuerte:
-        // una repeticion de la misma operacion puede
-        // recuperar el intento aun si el flujo avanzo
-        // posteriormente.
-        // -------------------------------------------------
+      // -------------------------------------------------
+      // Idempotencia fuerte:
+      // una repeticion de la misma operacion puede
+      // recuperar el intento aun si el flujo avanzo
+      // posteriormente.
+      // -------------------------------------------------
 
-        const replayResult =
-          await client.query<PaymentAttemptRow>(
-            `
+      const replayResult = await client.query<PaymentAttemptRow>(
+        `
               select
                 id::text,
                 tenant_id::text,
@@ -1668,62 +1576,49 @@ export class PaymentsService {
 
               for update
             `,
-            [
-              idempotencyKey,
-            ],
-          );
+        [idempotencyKey],
+      );
 
-        const existingPayment =
-          replayResult.rows[0] ?? null;
+      const existingPayment = replayResult.rows[0] ?? null;
 
-        if (existingPayment) {
-          const sameOperation =
-            existingPayment.tenant_id ===
-              order.tenant_id &&
-            existingPayment.branch_id ===
-              order.branch_id &&
-            existingPayment.order_id ===
-              order.id &&
-            existingPayment.method === 'CASH' &&
-            existingPayment.provider ===
-              'DRIVER_COD';
+      if (existingPayment) {
+        const sameOperation =
+          existingPayment.tenant_id === order.tenant_id &&
+          existingPayment.branch_id === order.branch_id &&
+          existingPayment.order_id === order.id &&
+          existingPayment.method === 'CASH' &&
+          existingPayment.provider === 'DRIVER_COD';
 
-          if (!sameOperation) {
-            throw new ConflictException(
-              'Idempotency key was already used by another payment operation',
-            );
-          }
-
-          if (
-            existingPayment.status !==
-              'AWAITING_CONFIRMATION' &&
-            existingPayment.status !== 'PAID'
-          ) {
-            throw new ConflictException(
-              `Cash on delivery cannot be replayed from ${existingPayment.status}`,
-            );
-          }
-
-          return this.mapPaymentResponse(
-            order,
-            existingPayment,
-            true,
+        if (!sameOperation) {
+          throw new ConflictException(
+            'Idempotency key was already used by another payment operation',
           );
         }
 
-        this.assertOrderCanReceivePayment(order);
+        if (
+          existingPayment.status !== 'AWAITING_CONFIRMATION' &&
+          existingPayment.status !== 'PAID'
+        ) {
+          throw new ConflictException(
+            `Cash on delivery cannot be replayed from ${existingPayment.status}`,
+          );
+        }
 
-        // -------------------------------------------------
-        // COD solamente pertenece a un pedido DELIVERY que
-        // aun no entro al flujo de dispatch.
-        // -------------------------------------------------
+        return this.mapPaymentResponse(order, existingPayment, true);
+      }
 
-        const deliveryResult =
-          await client.query<{
-            id: string;
-            status: string;
-          }>(
-            `
+      this.assertOrderCanReceivePayment(order);
+
+      // -------------------------------------------------
+      // COD solamente pertenece a un pedido DELIVERY que
+      // aun no entro al flujo de dispatch.
+      // -------------------------------------------------
+
+      const deliveryResult = await client.query<{
+        id: string;
+        status: string;
+      }>(
+        `
               select
                 d.id::text,
                 d.status
@@ -1738,37 +1633,31 @@ export class PaymentsService {
 
               for update of d
             `,
-            [
-              order.tenant_id,
-              order.branch_id,
-              order.id,
-            ],
-          );
+        [order.tenant_id, order.branch_id, order.id],
+      );
 
-        const delivery =
-          deliveryResult.rows[0] ?? null;
+      const delivery = deliveryResult.rows[0] ?? null;
 
-        if (!delivery) {
-          throw new ConflictException(
-            'Cash on delivery is only available for DELIVERY orders',
-          );
-        }
+      if (!delivery) {
+        throw new ConflictException(
+          'Cash on delivery is only available for DELIVERY orders',
+        );
+      }
 
-        if (delivery.status !== 'CREATED') {
-          throw new ConflictException(
-            'Payment method is locked after delivery dispatch',
-          );
-        }
+      if (delivery.status !== 'CREATED') {
+        throw new ConflictException(
+          'Payment method is locked after delivery dispatch',
+        );
+      }
 
-        // -------------------------------------------------
-        // No hacemos switching automatico desde QR,
-        // REVIEW_REQUIRED u otro intento activo.
-        // Un DRIVER_COD ya activo puede reutilizarse.
-        // -------------------------------------------------
+      // -------------------------------------------------
+      // No hacemos switching automatico desde QR,
+      // REVIEW_REQUIRED u otro intento activo.
+      // Un DRIVER_COD ya activo puede reutilizarse.
+      // -------------------------------------------------
 
-        const activeResult =
-          await client.query<PaymentAttemptRow>(
-            `
+      const activeResult = await client.query<PaymentAttemptRow>(
+        `
               select
                 id::text,
                 tenant_id::text,
@@ -1811,56 +1700,42 @@ export class PaymentsService {
 
               for update
             `,
-            [
-              order.tenant_id,
-              order.branch_id,
-              order.id,
-            ],
-          );
+        [order.tenant_id, order.branch_id, order.id],
+      );
 
-        const activePayment =
-          activeResult.rows[0] ?? null;
+      const activePayment = activeResult.rows[0] ?? null;
 
-        if (activePayment) {
-          const reusableCod =
-            activePayment.method === 'CASH' &&
-            activePayment.provider === 'DRIVER_COD' &&
-            activePayment.status ===
-              'AWAITING_CONFIRMATION';
+      if (activePayment) {
+        const reusableCod =
+          activePayment.method === 'CASH' &&
+          activePayment.provider === 'DRIVER_COD' &&
+          activePayment.status === 'AWAITING_CONFIRMATION';
 
-          if (!reusableCod) {
-            throw new ConflictException(
-              'Order already has another active payment selection',
-            );
-          }
-
-          if (
-            order.payment_status !==
-            'AWAITING_CONFIRMATION'
-          ) {
-            throw new ConflictException(
-              'Cash on delivery payment state is inconsistent',
-            );
-          }
-
-          return this.mapPaymentResponse(
-            order,
-            activePayment,
-            true,
+        if (!reusableCod) {
+          throw new ConflictException(
+            'Order already has another active payment selection',
           );
         }
 
-        // -------------------------------------------------
-        // Siguiente numero de intento.
-        // El lock del Order serializa creaciones de pago
-        // concurrentes para este pedido.
-        // -------------------------------------------------
+        if (order.payment_status !== 'AWAITING_CONFIRMATION') {
+          throw new ConflictException(
+            'Cash on delivery payment state is inconsistent',
+          );
+        }
 
-        const attemptResult =
-          await client.query<{
-            attempt_number: number;
-          }>(
-            `
+        return this.mapPaymentResponse(order, activePayment, true);
+      }
+
+      // -------------------------------------------------
+      // Siguiente numero de intento.
+      // El lock del Order serializa creaciones de pago
+      // concurrentes para este pedido.
+      // -------------------------------------------------
+
+      const attemptResult = await client.query<{
+        attempt_number: number;
+      }>(
+        `
               select
                 coalesce(
                   max(attempt_number),
@@ -1873,29 +1748,23 @@ export class PaymentsService {
               where tenant_id = $1::uuid
                 and order_id = $2::uuid
             `,
-            [
-              order.tenant_id,
-              order.id,
-            ],
-          );
+        [order.tenant_id, order.id],
+      );
 
-        const attemptNumber =
-          attemptResult.rows[0].attempt_number;
+      const attemptNumber = attemptResult.rows[0].attempt_number;
 
-        const externalReference =
-          `COD-${order.order_number}-${attemptNumber}`;
+      const externalReference = `COD-${order.order_number}-${attemptNumber}`;
 
-        // -------------------------------------------------
-        // Importante:
-        // cash_received_amount y cash_change_amount quedan
-        // NULL hasta el cobro autenticado por el driver.
-        //
-        // expires_at tambien queda NULL por contrato COD.
-        // -------------------------------------------------
+      // -------------------------------------------------
+      // Importante:
+      // cash_received_amount y cash_change_amount quedan
+      // NULL hasta el cobro autenticado por el driver.
+      //
+      // expires_at tambien queda NULL por contrato COD.
+      // -------------------------------------------------
 
-        const paymentResult =
-          await client.query<PaymentAttemptRow>(
-            `
+      const paymentResult = await client.query<PaymentAttemptRow>(
+        `
               insert into public.order_payments (
                 tenant_id,
                 branch_id,
@@ -1957,29 +1826,28 @@ export class PaymentsService {
                 created_at,
                 updated_at
             `,
-            [
-              order.tenant_id,
-              order.branch_id,
-              order.id,
-              attemptNumber,
-              order.total,
-              order.currency,
-              externalReference,
-              idempotencyKey,
-            ],
-          );
+        [
+          order.tenant_id,
+          order.branch_id,
+          order.id,
+          attemptNumber,
+          order.total,
+          order.currency,
+          externalReference,
+          idempotencyKey,
+        ],
+      );
 
-        const payment =
-          paymentResult.rows[0];
+      const payment = paymentResult.rows[0];
 
-        if (!payment) {
-          throw new ConflictException(
-            'Cash on delivery payment attempt was not created',
-          );
-        }
+      if (!payment) {
+        throw new ConflictException(
+          'Cash on delivery payment attempt was not created',
+        );
+      }
 
-        await client.query(
-          `
+      await client.query(
+        `
             update public.orders
 
             set
@@ -1989,46 +1857,33 @@ export class PaymentsService {
             where id = $1::uuid
               and payment_status <> 'PAID'
           `,
-          [
-            order.id,
-          ],
-        );
+        [order.id],
+      );
 
-        await this.insertPaymentEvent(
-          client,
-          {
-            tenantId: payment.tenant_id,
-            branchId: payment.branch_id,
-            paymentId: payment.id,
-            eventType:
-              'DRIVER_COD_SELECTED',
-            source: 'SYSTEM',
-            processingStatus:
-              'PROCESSED',
-            payload: {
-              provider:
-                payment.provider,
-              externalReference:
-                payment.external_reference,
-              amount:
-                payment.amount,
-              currency:
-                payment.currency,
-            },
-          },
-        );
+      await this.insertPaymentEvent(client, {
+        tenantId: payment.tenant_id,
+        branchId: payment.branch_id,
+        paymentId: payment.id,
+        eventType: 'DRIVER_COD_SELECTED',
+        source: 'SYSTEM',
+        processingStatus: 'PROCESSED',
+        payload: {
+          provider: payment.provider,
+          externalReference: payment.external_reference,
+          amount: payment.amount,
+          currency: payment.currency,
+        },
+      });
 
-        return this.mapPaymentResponse(
-          {
-            ...order,
-            payment_status:
-              'AWAITING_CONFIRMATION',
-          },
-          payment,
-          false,
-        );
-      },
-    );
+      return this.mapPaymentResponse(
+        {
+          ...order,
+          payment_status: 'AWAITING_CONFIRMATION',
+        },
+        payment,
+        false,
+      );
+    });
   }
 
   async getOrderPayment(trackingToken: string) {
@@ -2717,54 +2572,43 @@ export class PaymentsService {
   // FLASHDELIVERY COD - ABRIR LIQUIDACION DE EFECTIVO
   // =====================================================
 
-  async openDriverCodCashSettlement(
-    input: OpenDriverCodCashSettlementInput,
-  ) {
+  async openDriverCodCashSettlement(input: OpenDriverCodCashSettlementInput) {
     this.assertCashierAccessKey(input.cashierAccessKey);
 
-    const tenantCode =
-      this.requireCashCode(input.tenantCode, 'tenantCode');
+    const tenantCode = this.requireCashCode(input.tenantCode, 'tenantCode');
 
-    const branchCode =
-      this.requireCashCode(input.branchCode, 'branchCode');
+    const branchCode = this.requireCashCode(input.branchCode, 'branchCode');
 
-    const driverId =
-      this.requireSettlementUuid(input.driverId, 'driverId');
+    const driverId = this.requireSettlementUuid(input.driverId, 'driverId');
 
-    const currency =
-      this.requireSettlementCurrency(input.currency);
+    const currency = this.requireSettlementCurrency(input.currency);
 
-    const cashierReference =
-      this.requireAuditReference(
-        input.cashierReference,
-        'cashierReference',
-      );
+    const cashierReference = this.requireAuditReference(
+      input.cashierReference,
+      'cashierReference',
+    );
 
-    const notes =
-      this.requireOptionalSettlementNotes(input.notes);
+    const notes = this.requireOptionalSettlementNotes(input.notes);
 
-    const idempotencyToken =
-      this.requireIdempotencyToken(input.idempotencyKey);
+    const idempotencyToken = this.requireIdempotencyToken(input.idempotencyKey);
 
-    const storedIdempotencyKey =
-      `driver-cod-settlement-open:${idempotencyToken}`;
+    const storedIdempotencyKey = `driver-cod-settlement-open:${idempotencyToken}`;
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        await client.query(
-          `
+    return this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `
             select pg_advisory_xact_lock(
               hashtextextended($1, 0)
             )
           `,
-          [storedIdempotencyKey],
-        );
+        [storedIdempotencyKey],
+      );
 
-        const scopeResult = await client.query<{
-          tenant_id: string;
-          branch_id: string;
-        }>(
-          `
+      const scopeResult = await client.query<{
+        tenant_id: string;
+        branch_id: string;
+      }>(
+        `
             select
               t.id::text as tenant_id,
               b.id::text as branch_id
@@ -2779,22 +2623,20 @@ export class PaymentsService {
 
             limit 1
           `,
-          [tenantCode, branchCode],
-        );
+        [tenantCode, branchCode],
+      );
 
-        const scope = scopeResult.rows[0];
+      const scope = scopeResult.rows[0];
 
-        if (!scope) {
-          throw new NotFoundException(
-            'Tenant/branch payment scope not found',
-          );
-        }
+      if (!scope) {
+        throw new NotFoundException('Tenant/branch payment scope not found');
+      }
 
-        const driverBranchResult = await client.query<{
-          driver_id: string;
-          status: string;
-        }>(
-          `
+      const driverBranchResult = await client.query<{
+        driver_id: string;
+        status: string;
+      }>(
+        `
             select
               db.driver_id::text,
               db.status
@@ -2807,22 +2649,16 @@ export class PaymentsService {
 
             for update
           `,
-          [
-            scope.tenant_id,
-            scope.branch_id,
-            driverId,
-          ],
-        );
+        [scope.tenant_id, scope.branch_id, driverId],
+      );
 
-        if (!driverBranchResult.rows[0]) {
-          throw new NotFoundException(
-            'Driver is not assigned to this branch',
-          );
-        }
+      if (!driverBranchResult.rows[0]) {
+        throw new NotFoundException('Driver is not assigned to this branch');
+      }
 
-        const existingByKeyResult =
-          await client.query<DriverCodCashSettlementRow>(
-            `
+      const existingByKeyResult =
+        await client.query<DriverCodCashSettlementRow>(
+          `
               select
                 id::text,
                 tenant_id::text,
@@ -2847,35 +2683,32 @@ export class PaymentsService {
 
               for update
             `,
-            [storedIdempotencyKey],
+          [storedIdempotencyKey],
+        );
+
+      const existingByKey = existingByKeyResult.rows[0];
+
+      if (existingByKey) {
+        const sameRequest =
+          existingByKey.tenant_id === scope.tenant_id &&
+          existingByKey.branch_id === scope.branch_id &&
+          existingByKey.driver_id === driverId &&
+          existingByKey.currency === currency &&
+          (existingByKey.notes ?? '') === (notes ?? '');
+
+        if (!sameRequest) {
+          throw new ConflictException(
+            'Idempotency-Key was already used for another cash settlement request',
           );
+        }
 
-        const existingByKey =
-          existingByKeyResult.rows[0];
+        const eventKey = `driver-cod-settlement-open:${existingByKey.id}:${idempotencyToken}`;
 
-        if (existingByKey) {
-          const sameRequest =
-            existingByKey.tenant_id === scope.tenant_id &&
-            existingByKey.branch_id === scope.branch_id &&
-            existingByKey.driver_id === driverId &&
-            existingByKey.currency === currency &&
-            (existingByKey.notes ?? '') === (notes ?? '');
-
-          if (!sameRequest) {
-            throw new ConflictException(
-              'Idempotency-Key was already used for another cash settlement request',
-            );
-          }
-
-          const eventKey =
-            `driver-cod-settlement-open:${existingByKey.id}:${idempotencyToken}`;
-
-          const replayEventResult =
-            await client.query<{
-              event_count: string;
-              reference_count: string;
-            }>(
-              `
+        const replayEventResult = await client.query<{
+          event_count: string;
+          reference_count: string;
+        }>(
+          `
                 select
                   count(*)::text as event_count,
 
@@ -2894,66 +2727,57 @@ export class PaymentsService {
                   and pe.processing_status = 'PROCESSED'
                   and pe.payload ->> 'settlementId' = $4
               `,
-              [
-                scope.tenant_id,
-                scope.branch_id,
-                eventKey,
-                existingByKey.id,
-                cashierReference,
-              ],
-            );
+          [
+            scope.tenant_id,
+            scope.branch_id,
+            eventKey,
+            existingByKey.id,
+            cashierReference,
+          ],
+        );
 
-          const replayEvent =
-            replayEventResult.rows[0];
+        const replayEvent = replayEventResult.rows[0];
 
-          const eventCount =
-            Number(replayEvent?.event_count ?? 0);
+        const eventCount = Number(replayEvent?.event_count ?? 0);
 
-          const referenceCount =
-            Number(replayEvent?.reference_count ?? 0);
+        const referenceCount = Number(replayEvent?.reference_count ?? 0);
 
-          if (
-            eventCount <= 0 ||
-            referenceCount !== eventCount
-          ) {
-            throw new ConflictException(
-              'Stored cash settlement idempotency state is inconsistent',
-            );
-          }
-
-          const currentItems =
-            await this.loadDriverCodCashSettlementItems(
-              client,
-              existingByKey.id,
-            );
-
-          if (
-            existingByKey.status !== 'CANCELLED' &&
-            currentItems.length !== eventCount
-          ) {
-            throw new ConflictException(
-              'Stored cash settlement snapshot is inconsistent',
-            );
-          }
-
-          return {
-            changed: false,
-            action: 'UNCHANGED' as const,
-
-            settlement:
-              this.mapDriverCodCashSettlement(
-                existingByKey,
-                currentItems.length,
-                eventCount,
-              ),
-          };
+        if (eventCount <= 0 || referenceCount !== eventCount) {
+          throw new ConflictException(
+            'Stored cash settlement idempotency state is inconsistent',
+          );
         }
 
-        const openResult =
-          await client.query<{
-            id: string;
-          }>(
-            `
+        const currentItems = await this.loadDriverCodCashSettlementItems(
+          client,
+          existingByKey.id,
+        );
+
+        if (
+          existingByKey.status !== 'CANCELLED' &&
+          currentItems.length !== eventCount
+        ) {
+          throw new ConflictException(
+            'Stored cash settlement snapshot is inconsistent',
+          );
+        }
+
+        return {
+          changed: false,
+          action: 'UNCHANGED' as const,
+
+          settlement: this.mapDriverCodCashSettlement(
+            existingByKey,
+            currentItems.length,
+            eventCount,
+          ),
+        };
+      }
+
+      const openResult = await client.query<{
+        id: string;
+      }>(
+        `
               select
                 id::text
 
@@ -2969,29 +2793,23 @@ export class PaymentsService {
 
               for update
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              driverId,
-              currency,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, driverId, currency],
+      );
 
-        if (openResult.rows[0]) {
-          throw new ConflictException(
-            'Driver already has an open cash settlement for this currency',
-          );
-        }
+      if (openResult.rows[0]) {
+        throw new ConflictException(
+          'Driver already has an open cash settlement for this currency',
+        );
+      }
 
-        const collectionsResult =
-          await client.query<{
-            id: string;
-            payment_id: string;
-            amount: string;
-            currency: string;
-            collected_at: string | Date;
-          }>(
-            `
+      const collectionsResult = await client.query<{
+        id: string;
+        payment_id: string;
+        amount: string;
+        currency: string;
+        collected_at: string | Date;
+      }>(
+        `
               select
                 c.id::text,
                 c.payment_id::text,
@@ -3027,33 +2845,23 @@ export class PaymentsService {
 
               for update of c
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              driverId,
-              currency,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, driverId, currency],
+      );
 
-        const collections =
-          collectionsResult.rows;
+      const collections = collectionsResult.rows;
 
-        if (collections.length === 0) {
-          throw new ConflictException(
-            'Driver has no unsettled COD cash collections for this currency',
-          );
-        }
+      if (collections.length === 0) {
+        throw new ConflictException(
+          'Driver has no unsettled COD cash collections for this currency',
+        );
+      }
 
-        const collectionIds =
-          collections.map(
-            (collection) => collection.id,
-          );
+      const collectionIds = collections.map((collection) => collection.id);
 
-        const totalResult =
-          await client.query<{
-            expected_amount: string;
-          }>(
-            `
+      const totalResult = await client.query<{
+        expected_amount: string;
+      }>(
+        `
               select
                 coalesce(
                   sum(c.amount),
@@ -3066,28 +2874,19 @@ export class PaymentsService {
                 and c.branch_id = $2::uuid
                 and c.id = any($3::uuid[])
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              collectionIds,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, collectionIds],
+      );
 
-        const expectedAmount =
-          totalResult.rows[0]?.expected_amount;
+      const expectedAmount = totalResult.rows[0]?.expected_amount;
 
-        if (
-          !expectedAmount ||
-          Number(expectedAmount) <= 0
-        ) {
-          throw new ConflictException(
-            'Cash settlement expected amount is invalid',
-          );
-        }
+      if (!expectedAmount || Number(expectedAmount) <= 0) {
+        throw new ConflictException(
+          'Cash settlement expected amount is invalid',
+        );
+      }
 
-        const settlementResult =
-          await client.query<DriverCodCashSettlementRow>(
-            `
+      const settlementResult = await client.query<DriverCodCashSettlementRow>(
+        `
               insert into public.delivery_cash_settlements (
                 tenant_id,
                 branch_id,
@@ -3126,29 +2925,25 @@ export class PaymentsService {
                 created_at,
                 updated_at
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              driverId,
-              currency,
-              expectedAmount,
-              storedIdempotencyKey,
-              notes,
-            ],
-          );
+        [
+          scope.tenant_id,
+          scope.branch_id,
+          driverId,
+          currency,
+          expectedAmount,
+          storedIdempotencyKey,
+          notes,
+        ],
+      );
 
-        const settlement =
-          settlementResult.rows[0];
+      const settlement = settlementResult.rows[0];
 
-        if (!settlement) {
-          throw new ConflictException(
-            'Cash settlement was not created',
-          );
-        }
+      if (!settlement) {
+        throw new ConflictException('Cash settlement was not created');
+      }
 
-        const itemsResult =
-          await client.query(
-            `
+      const itemsResult = await client.query(
+        `
               insert into public.delivery_cash_settlement_items (
                 tenant_id,
                 branch_id,
@@ -3174,64 +2969,50 @@ export class PaymentsService {
                 and c.branch_id = $2::uuid
                 and c.id = any($4::uuid[])
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              settlement.id,
-              collectionIds,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, settlement.id, collectionIds],
+      );
 
-        if (
-          (itemsResult.rowCount ?? 0) !==
-          collections.length
-        ) {
-          throw new ConflictException(
-            'Cash settlement snapshot was not created completely',
-          );
-        }
+      if ((itemsResult.rowCount ?? 0) !== collections.length) {
+        throw new ConflictException(
+          'Cash settlement snapshot was not created completely',
+        );
+      }
 
-        const eventKey =
-          `driver-cod-settlement-open:${settlement.id}:${idempotencyToken}`;
+      const eventKey = `driver-cod-settlement-open:${settlement.id}:${idempotencyToken}`;
 
-        for (const collection of collections) {
-          await this.insertPaymentEvent(client, {
-            tenantId: scope.tenant_id,
-            branchId: scope.branch_id,
-            paymentId: collection.payment_id,
-            eventType:
-              'DRIVER_COD_CASH_SETTLEMENT_OPENED',
-            providerEventId: eventKey,
-            source: 'RECONCILIATION',
-            processingStatus: 'PROCESSED',
-            payload: {
-              settlementId: settlement.id,
-              driverId,
-              collectionId: collection.id,
-              amount: Number(collection.amount),
-              currency,
-              expectedAmount:
-                Number(expectedAmount),
-              cashierReference,
-              snapshotItemCount:
-                collections.length,
-            },
-          });
-        }
+      for (const collection of collections) {
+        await this.insertPaymentEvent(client, {
+          tenantId: scope.tenant_id,
+          branchId: scope.branch_id,
+          paymentId: collection.payment_id,
+          eventType: 'DRIVER_COD_CASH_SETTLEMENT_OPENED',
+          providerEventId: eventKey,
+          source: 'RECONCILIATION',
+          processingStatus: 'PROCESSED',
+          payload: {
+            settlementId: settlement.id,
+            driverId,
+            collectionId: collection.id,
+            amount: Number(collection.amount),
+            currency,
+            expectedAmount: Number(expectedAmount),
+            cashierReference,
+            snapshotItemCount: collections.length,
+          },
+        });
+      }
 
-        return {
-          changed: true,
-          action: 'SETTLEMENT_OPENED' as const,
+      return {
+        changed: true,
+        action: 'SETTLEMENT_OPENED' as const,
 
-          settlement:
-            this.mapDriverCodCashSettlement(
-              settlement,
-              collections.length,
-              collections.length,
-            ),
-        };
-      },
-    );
+        settlement: this.mapDriverCodCashSettlement(
+          settlement,
+          collections.length,
+          collections.length,
+        ),
+      };
+    });
   }
 
   // =====================================================
@@ -3244,45 +3025,38 @@ export class PaymentsService {
   ) {
     this.assertCashierAccessKey(input.cashierAccessKey);
 
-    const tenantCode =
-      this.requireCashCode(input.tenantCode, 'tenantCode');
+    const tenantCode = this.requireCashCode(input.tenantCode, 'tenantCode');
 
-    const branchCode =
-      this.requireCashCode(input.branchCode, 'branchCode');
+    const branchCode = this.requireCashCode(input.branchCode, 'branchCode');
 
-    const receivedAmount =
-      this.requireSettlementReceivedAmount(
-        input.receivedAmount,
-      );
+    const receivedAmount = this.requireSettlementReceivedAmount(
+      input.receivedAmount,
+    );
 
-    const cashierReference =
-      this.requireAuditReference(
-        input.cashierReference,
-        'cashierReference',
-      );
+    const cashierReference = this.requireAuditReference(
+      input.cashierReference,
+      'cashierReference',
+    );
 
-    const idempotencyToken =
-      this.requireIdempotencyToken(input.idempotencyKey);
+    const idempotencyToken = this.requireIdempotencyToken(input.idempotencyKey);
 
-    const eventKey =
-      `driver-cod-settlement-settle:${settlementId}:${idempotencyToken}`;
+    const eventKey = `driver-cod-settlement-settle:${settlementId}:${idempotencyToken}`;
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        await client.query(
-          `
+    return this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `
             select pg_advisory_xact_lock(
               hashtextextended($1, 0)
             )
           `,
-          [eventKey],
-        );
+        [eventKey],
+      );
 
-        const scopeResult = await client.query<{
-          tenant_id: string;
-          branch_id: string;
-        }>(
-          `
+      const scopeResult = await client.query<{
+        tenant_id: string;
+        branch_id: string;
+      }>(
+        `
             select
               t.id::text as tenant_id,
               b.id::text as branch_id
@@ -3297,20 +3071,17 @@ export class PaymentsService {
 
             limit 1
           `,
-          [tenantCode, branchCode],
-        );
+        [tenantCode, branchCode],
+      );
 
-        const scope = scopeResult.rows[0];
+      const scope = scopeResult.rows[0];
 
-        if (!scope) {
-          throw new NotFoundException(
-            'Tenant/branch payment scope not found',
-          );
-        }
+      if (!scope) {
+        throw new NotFoundException('Tenant/branch payment scope not found');
+      }
 
-        const settlementResult =
-          await client.query<DriverCodCashSettlementRow>(
-            `
+      const settlementResult = await client.query<DriverCodCashSettlementRow>(
+        `
               select
                 id::text,
                 tenant_id::text,
@@ -3337,35 +3108,26 @@ export class PaymentsService {
 
               for update
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              settlementId,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, settlementId],
+      );
 
-        const settlement =
-          settlementResult.rows[0];
+      const settlement = settlementResult.rows[0];
 
-        if (!settlement) {
-          throw new NotFoundException(
-            'Cash settlement not found',
-          );
-        }
+      if (!settlement) {
+        throw new NotFoundException('Cash settlement not found');
+      }
 
-        const items =
-          await this.loadDriverCodCashSettlementItems(
-            client,
-            settlement.id,
-          );
+      const items = await this.loadDriverCodCashSettlementItems(
+        client,
+        settlement.id,
+      );
 
-        if (settlement.status === 'SETTLED') {
-          const replayEventResult =
-            await client.query<{
-              event_count: string;
-              reference_count: string;
-            }>(
-              `
+      if (settlement.status === 'SETTLED') {
+        const replayEventResult = await client.query<{
+          event_count: string;
+          reference_count: string;
+        }>(
+          `
                 select
                   count(*)::text as event_count,
 
@@ -3384,70 +3146,62 @@ export class PaymentsService {
                   and pe.processing_status = 'PROCESSED'
                   and pe.payload ->> 'settlementId' = $4
               `,
-              [
-                scope.tenant_id,
-                scope.branch_id,
-                eventKey,
-                settlement.id,
-                cashierReference,
-              ],
-            );
+          [
+            scope.tenant_id,
+            scope.branch_id,
+            eventKey,
+            settlement.id,
+            cashierReference,
+          ],
+        );
 
-          const replayEvent =
-            replayEventResult.rows[0];
+        const replayEvent = replayEventResult.rows[0];
 
-          const eventCount =
-            Number(replayEvent?.event_count ?? 0);
+        const eventCount = Number(replayEvent?.event_count ?? 0);
 
-          const referenceCount =
-            Number(replayEvent?.reference_count ?? 0);
+        const referenceCount = Number(replayEvent?.reference_count ?? 0);
 
-          const sameAmount =
-            settlement.received_amount !== null &&
-            Number(settlement.received_amount) ===
-              Number(receivedAmount);
+        const sameAmount =
+          settlement.received_amount !== null &&
+          Number(settlement.received_amount) === Number(receivedAmount);
 
-          if (
-            sameAmount &&
-            items.length > 0 &&
-            eventCount === items.length &&
-            referenceCount === eventCount
-          ) {
-            return {
-              changed: false,
-              action: 'UNCHANGED' as const,
+        if (
+          sameAmount &&
+          items.length > 0 &&
+          eventCount === items.length &&
+          referenceCount === eventCount
+        ) {
+          return {
+            changed: false,
+            action: 'UNCHANGED' as const,
 
-              settlement:
-                this.mapDriverCodCashSettlement(
-                  settlement,
-                  items.length,
-                  items.length,
-                ),
-            };
-          }
-
-          throw new ConflictException(
-            'Cash settlement has already been settled',
-          );
+            settlement: this.mapDriverCodCashSettlement(
+              settlement,
+              items.length,
+              items.length,
+            ),
+          };
         }
 
-        if (settlement.status === 'CANCELLED') {
-          throw new ConflictException(
-            'Cancelled cash settlement cannot be settled',
-          );
-        }
+        throw new ConflictException('Cash settlement has already been settled');
+      }
 
-        if (items.length === 0) {
-          throw new ConflictException(
-            'Open cash settlement has no snapshot items',
-          );
-        }
+      if (settlement.status === 'CANCELLED') {
+        throw new ConflictException(
+          'Cancelled cash settlement cannot be settled',
+        );
+      }
 
-        const itemTotalResult =
-          await client.query<{
-            item_total: string;
-          }>(
-            `
+      if (items.length === 0) {
+        throw new ConflictException(
+          'Open cash settlement has no snapshot items',
+        );
+      }
+
+      const itemTotalResult = await client.query<{
+        item_total: string;
+      }>(
+        `
               select
                 coalesce(
                   sum(si.amount),
@@ -3460,28 +3214,19 @@ export class PaymentsService {
                 and si.branch_id = $2::uuid
                 and si.settlement_id = $3::uuid
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              settlement.id,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, settlement.id],
+      );
 
-        const itemTotal =
-          itemTotalResult.rows[0]?.item_total ?? '0';
+      const itemTotal = itemTotalResult.rows[0]?.item_total ?? '0';
 
-        if (
-          Number(itemTotal) !==
-          Number(settlement.expected_amount)
-        ) {
-          throw new ConflictException(
-            'Cash settlement expected amount does not match its snapshot',
-          );
-        }
+      if (Number(itemTotal) !== Number(settlement.expected_amount)) {
+        throw new ConflictException(
+          'Cash settlement expected amount does not match its snapshot',
+        );
+      }
 
-        const updatedResult =
-          await client.query<DriverCodCashSettlementRow>(
-            `
+      const updatedResult = await client.query<DriverCodCashSettlementRow>(
+        `
               update public.delivery_cash_settlements
 
               set
@@ -3516,63 +3261,49 @@ export class PaymentsService {
                 created_at,
                 updated_at
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              settlement.id,
-              receivedAmount,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, settlement.id, receivedAmount],
+      );
 
-        const updated =
-          updatedResult.rows[0];
+      const updated = updatedResult.rows[0];
 
-        if (!updated) {
-          throw new ConflictException(
-            'Cash settlement could not be settled',
-          );
-        }
+      if (!updated) {
+        throw new ConflictException('Cash settlement could not be settled');
+      }
 
-        for (const item of items) {
-          await this.insertPaymentEvent(client, {
-            tenantId: scope.tenant_id,
-            branchId: scope.branch_id,
-            paymentId: item.payment_id,
-            eventType:
-              'DRIVER_COD_CASH_SETTLEMENT_SETTLED',
-            providerEventId: eventKey,
-            source: 'RECONCILIATION',
-            processingStatus: 'PROCESSED',
-            payload: {
-              settlementId: updated.id,
-              driverId: updated.driver_id,
-              collectionId: item.collection_id,
-              amount: Number(item.amount),
-              currency: updated.currency,
-              expectedAmount:
-                Number(updated.expected_amount),
-              receivedAmount:
-                Number(updated.received_amount),
-              differenceAmount:
-                Number(updated.difference_amount),
-              cashierReference,
-            },
-          });
-        }
+      for (const item of items) {
+        await this.insertPaymentEvent(client, {
+          tenantId: scope.tenant_id,
+          branchId: scope.branch_id,
+          paymentId: item.payment_id,
+          eventType: 'DRIVER_COD_CASH_SETTLEMENT_SETTLED',
+          providerEventId: eventKey,
+          source: 'RECONCILIATION',
+          processingStatus: 'PROCESSED',
+          payload: {
+            settlementId: updated.id,
+            driverId: updated.driver_id,
+            collectionId: item.collection_id,
+            amount: Number(item.amount),
+            currency: updated.currency,
+            expectedAmount: Number(updated.expected_amount),
+            receivedAmount: Number(updated.received_amount),
+            differenceAmount: Number(updated.difference_amount),
+            cashierReference,
+          },
+        });
+      }
 
-        return {
-          changed: true,
-          action: 'SETTLEMENT_SETTLED' as const,
+      return {
+        changed: true,
+        action: 'SETTLEMENT_SETTLED' as const,
 
-          settlement:
-            this.mapDriverCodCashSettlement(
-              updated,
-              items.length,
-              items.length,
-            ),
-        };
-      },
-    );
+        settlement: this.mapDriverCodCashSettlement(
+          updated,
+          items.length,
+          items.length,
+        ),
+      };
+    });
   }
 
   // =====================================================
@@ -3585,40 +3316,34 @@ export class PaymentsService {
   ) {
     this.assertCashierAccessKey(input.cashierAccessKey);
 
-    const tenantCode =
-      this.requireCashCode(input.tenantCode, 'tenantCode');
+    const tenantCode = this.requireCashCode(input.tenantCode, 'tenantCode');
 
-    const branchCode =
-      this.requireCashCode(input.branchCode, 'branchCode');
+    const branchCode = this.requireCashCode(input.branchCode, 'branchCode');
 
-    const cashierReference =
-      this.requireAuditReference(
-        input.cashierReference,
-        'cashierReference',
-      );
+    const cashierReference = this.requireAuditReference(
+      input.cashierReference,
+      'cashierReference',
+    );
 
-    const idempotencyToken =
-      this.requireIdempotencyToken(input.idempotencyKey);
+    const idempotencyToken = this.requireIdempotencyToken(input.idempotencyKey);
 
-    const eventKey =
-      `driver-cod-settlement-cancel:${settlementId}:${idempotencyToken}`;
+    const eventKey = `driver-cod-settlement-cancel:${settlementId}:${idempotencyToken}`;
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        await client.query(
-          `
+    return this.databaseService.withTransaction(async (client) => {
+      await client.query(
+        `
             select pg_advisory_xact_lock(
               hashtextextended($1, 0)
             )
           `,
-          [eventKey],
-        );
+        [eventKey],
+      );
 
-        const scopeResult = await client.query<{
-          tenant_id: string;
-          branch_id: string;
-        }>(
-          `
+      const scopeResult = await client.query<{
+        tenant_id: string;
+        branch_id: string;
+      }>(
+        `
             select
               t.id::text as tenant_id,
               b.id::text as branch_id
@@ -3633,20 +3358,17 @@ export class PaymentsService {
 
             limit 1
           `,
-          [tenantCode, branchCode],
-        );
+        [tenantCode, branchCode],
+      );
 
-        const scope = scopeResult.rows[0];
+      const scope = scopeResult.rows[0];
 
-        if (!scope) {
-          throw new NotFoundException(
-            'Tenant/branch payment scope not found',
-          );
-        }
+      if (!scope) {
+        throw new NotFoundException('Tenant/branch payment scope not found');
+      }
 
-        const settlementResult =
-          await client.query<DriverCodCashSettlementRow>(
-            `
+      const settlementResult = await client.query<DriverCodCashSettlementRow>(
+        `
               select
                 id::text,
                 tenant_id::text,
@@ -3673,29 +3395,21 @@ export class PaymentsService {
 
               for update
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              settlementId,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, settlementId],
+      );
 
-        const settlement =
-          settlementResult.rows[0];
+      const settlement = settlementResult.rows[0];
 
-        if (!settlement) {
-          throw new NotFoundException(
-            'Cash settlement not found',
-          );
-        }
+      if (!settlement) {
+        throw new NotFoundException('Cash settlement not found');
+      }
 
-        if (settlement.status === 'CANCELLED') {
-          const replayEventResult =
-            await client.query<{
-              event_count: string;
-              reference_count: string;
-            }>(
-              `
+      if (settlement.status === 'CANCELLED') {
+        const replayEventResult = await client.query<{
+          event_count: string;
+          reference_count: string;
+        }>(
+          `
                 select
                   count(*)::text as event_count,
 
@@ -3714,116 +3428,97 @@ export class PaymentsService {
                   and pe.processing_status = 'PROCESSED'
                   and pe.payload ->> 'settlementId' = $4
               `,
-              [
-                scope.tenant_id,
-                scope.branch_id,
-                eventKey,
-                settlement.id,
-                cashierReference,
-              ],
-            );
-
-          const replayEvent =
-            replayEventResult.rows[0];
-
-          const eventCount =
-            Number(replayEvent?.event_count ?? 0);
-
-          const referenceCount =
-            Number(replayEvent?.reference_count ?? 0);
-
-          if (
-            eventCount > 0 &&
-            referenceCount === eventCount
-          ) {
-            return {
-              changed: false,
-              action: 'UNCHANGED' as const,
-              releasedItemCount: eventCount,
-
-              settlement:
-                this.mapDriverCodCashSettlement(
-                  settlement,
-                  0,
-                  eventCount,
-                ),
-            };
-          }
-
-          throw new ConflictException(
-            'Cash settlement has already been cancelled',
-          );
-        }
-
-        if (settlement.status === 'SETTLED') {
-          throw new ConflictException(
-            'Settled cash settlement cannot be cancelled',
-          );
-        }
-
-        const items =
-          await this.loadDriverCodCashSettlementItems(
-            client,
+          [
+            scope.tenant_id,
+            scope.branch_id,
+            eventKey,
             settlement.id,
-          );
+            cashierReference,
+          ],
+        );
 
-        if (items.length === 0) {
-          throw new ConflictException(
-            'Open cash settlement has no snapshot items',
-          );
+        const replayEvent = replayEventResult.rows[0];
+
+        const eventCount = Number(replayEvent?.event_count ?? 0);
+
+        const referenceCount = Number(replayEvent?.reference_count ?? 0);
+
+        if (eventCount > 0 && referenceCount === eventCount) {
+          return {
+            changed: false,
+            action: 'UNCHANGED' as const,
+            releasedItemCount: eventCount,
+
+            settlement: this.mapDriverCodCashSettlement(
+              settlement,
+              0,
+              eventCount,
+            ),
+          };
         }
 
-        for (const item of items) {
-          await this.insertPaymentEvent(client, {
-            tenantId: scope.tenant_id,
-            branchId: scope.branch_id,
-            paymentId: item.payment_id,
-            eventType:
-              'DRIVER_COD_CASH_SETTLEMENT_CANCELLED',
-            providerEventId: eventKey,
-            source: 'RECONCILIATION',
-            processingStatus: 'PROCESSED',
-            payload: {
-              settlementId: settlement.id,
-              driverId: settlement.driver_id,
-              collectionId: item.collection_id,
-              amount: Number(item.amount),
-              currency: settlement.currency,
-              expectedAmount:
-                Number(settlement.expected_amount),
-              cashierReference,
-            },
-          });
-        }
+        throw new ConflictException(
+          'Cash settlement has already been cancelled',
+        );
+      }
 
-        const deleteItemsResult =
-          await client.query(
-            `
+      if (settlement.status === 'SETTLED') {
+        throw new ConflictException(
+          'Settled cash settlement cannot be cancelled',
+        );
+      }
+
+      const items = await this.loadDriverCodCashSettlementItems(
+        client,
+        settlement.id,
+      );
+
+      if (items.length === 0) {
+        throw new ConflictException(
+          'Open cash settlement has no snapshot items',
+        );
+      }
+
+      for (const item of items) {
+        await this.insertPaymentEvent(client, {
+          tenantId: scope.tenant_id,
+          branchId: scope.branch_id,
+          paymentId: item.payment_id,
+          eventType: 'DRIVER_COD_CASH_SETTLEMENT_CANCELLED',
+          providerEventId: eventKey,
+          source: 'RECONCILIATION',
+          processingStatus: 'PROCESSED',
+          payload: {
+            settlementId: settlement.id,
+            driverId: settlement.driver_id,
+            collectionId: item.collection_id,
+            amount: Number(item.amount),
+            currency: settlement.currency,
+            expectedAmount: Number(settlement.expected_amount),
+            cashierReference,
+          },
+        });
+      }
+
+      const deleteItemsResult = await client.query(
+        `
               delete from public.delivery_cash_settlement_items
 
               where tenant_id = $1::uuid
                 and branch_id = $2::uuid
                 and settlement_id = $3::uuid
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              settlement.id,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, settlement.id],
+      );
 
-        if (
-          (deleteItemsResult.rowCount ?? 0) !==
-          items.length
-        ) {
-          throw new ConflictException(
-            'Cash settlement items were not released completely',
-          );
-        }
+      if ((deleteItemsResult.rowCount ?? 0) !== items.length) {
+        throw new ConflictException(
+          'Cash settlement items were not released completely',
+        );
+      }
 
-        const updatedResult =
-          await client.query<DriverCodCashSettlementRow>(
-            `
+      const updatedResult = await client.query<DriverCodCashSettlementRow>(
+        `
               update public.delivery_cash_settlements
 
               set
@@ -3857,36 +3552,23 @@ export class PaymentsService {
                 created_at,
                 updated_at
             `,
-            [
-              scope.tenant_id,
-              scope.branch_id,
-              settlement.id,
-            ],
-          );
+        [scope.tenant_id, scope.branch_id, settlement.id],
+      );
 
-        const updated =
-          updatedResult.rows[0];
+      const updated = updatedResult.rows[0];
 
-        if (!updated) {
-          throw new ConflictException(
-            'Cash settlement could not be cancelled',
-          );
-        }
+      if (!updated) {
+        throw new ConflictException('Cash settlement could not be cancelled');
+      }
 
-        return {
-          changed: true,
-          action: 'SETTLEMENT_CANCELLED' as const,
-          releasedItemCount: items.length,
+      return {
+        changed: true,
+        action: 'SETTLEMENT_CANCELLED' as const,
+        releasedItemCount: items.length,
 
-          settlement:
-            this.mapDriverCodCashSettlement(
-              updated,
-              0,
-              items.length,
-            ),
-        };
-      },
-    );
+        settlement: this.mapDriverCodCashSettlement(updated, 0, items.length),
+      };
+    });
   }
   async confirmCashPayment(orderId: string, input: ConfirmCashPaymentInput) {
     const tenantCode = this.requireCashCode(input.tenantCode, 'tenantCode');
@@ -3917,9 +3599,10 @@ export class PaymentsService {
 
     const idempotencyToken = this.requireIdempotencyToken(input.idempotencyKey);
 
-    const cashResult = await this.databaseService.withTransaction(async (client) => {
-      const orderResult = await client.query<PaymentOrderRow>(
-        `
+    const cashResult = await this.databaseService.withTransaction(
+      async (client) => {
+        const orderResult = await client.query<PaymentOrderRow>(
+          `
               select
                 o.id::text,
                 o.order_number::text,
@@ -3955,24 +3638,24 @@ export class PaymentsService {
 
               for update of o
             `,
-        [orderId, tenantCode, branchCode],
-      );
+          [orderId, tenantCode, branchCode],
+        );
 
-      const order = orderResult.rows[0];
+        const order = orderResult.rows[0];
 
-      if (!order) {
-        throw new NotFoundException('Order not found in cashier branch');
-      }
-
-      assertLocalCashAllowed(order.order_type ?? '');
-      const idempotencyKey = `cash:${order.id}:${idempotencyToken}`;
-
-      const existingResult = await client.query<
-        PaymentAttemptRow & {
-          received_amount_matches: boolean;
+        if (!order) {
+          throw new NotFoundException('Order not found in cashier branch');
         }
-      >(
-        `
+
+        assertLocalCashAllowed(order.order_type ?? '');
+        const idempotencyKey = `cash:${order.id}:${idempotencyToken}`;
+
+        const existingResult = await client.query<
+          PaymentAttemptRow & {
+            received_amount_matches: boolean;
+          }
+        >(
+          `
             select
               id::text,
               tenant_id::text,
@@ -4008,96 +3691,96 @@ export class PaymentsService {
 
             for update
           `,
-        [idempotencyKey, cashReceivedAmount],
-      );
+          [idempotencyKey, cashReceivedAmount],
+        );
 
-      const existingPayment = existingResult.rows[0];
+        const existingPayment = existingResult.rows[0];
 
-      if (existingPayment) {
-        const sameOperation =
-          existingPayment.tenant_id === order.tenant_id &&
-          existingPayment.branch_id === order.branch_id &&
-          existingPayment.order_id === order.id &&
-          existingPayment.method === 'CASH' &&
-          existingPayment.provider === 'CASHIER' &&
-          existingPayment.received_amount_matches;
+        if (existingPayment) {
+          const sameOperation =
+            existingPayment.tenant_id === order.tenant_id &&
+            existingPayment.branch_id === order.branch_id &&
+            existingPayment.order_id === order.id &&
+            existingPayment.method === 'CASH' &&
+            existingPayment.provider === 'CASHIER' &&
+            existingPayment.received_amount_matches;
 
-        if (!sameOperation) {
+          if (!sameOperation) {
+            throw new ConflictException(
+              'Idempotency key was already used by another cash operation',
+            );
+          }
+
+          if (existingPayment.status !== 'PAID') {
+            throw new ConflictException(
+              `Cash payment cannot be replayed from ${existingPayment.status}`,
+            );
+          }
+
+          return {
+            changed: false,
+            order: this.mapOrder(order),
+            payment: this.mapPayment(existingPayment),
+          };
+        }
+
+        if (order.payment_status === 'NOT_REQUIRED') {
           throw new ConflictException(
-            'Idempotency key was already used by another cash operation',
+            'Legacy order does not require a cash payment',
           );
         }
 
-        if (existingPayment.status !== 'PAID') {
+        if (order.payment_status === 'PAID') {
+          throw new ConflictException('Order is already paid');
+        }
+
+        if (
+          order.payment_status === 'REFUND_PENDING' ||
+          order.payment_status === 'REFUNDED' ||
+          order.payment_status === 'REVIEW_REQUIRED'
+        ) {
           throw new ConflictException(
-            `Cash payment cannot be replayed from ${existingPayment.status}`,
+            `Order cannot receive cash from ${order.payment_status}`,
           );
         }
 
-        return {
-          changed: false,
-          order: this.mapOrder(order),
-          payment: this.mapPayment(existingPayment),
-        };
-      }
+        if (order.status !== 'PENDING' && order.status !== 'CONFIRMED') {
+          throw new ConflictException(
+            `Order cannot receive cash from ${order.status}`,
+          );
+        }
 
-      if (order.payment_status === 'NOT_REQUIRED') {
-        throw new ConflictException(
-          'Legacy order does not require a cash payment',
-        );
-      }
+        if (Number(order.total) <= 0) {
+          throw new ConflictException('Order total must be greater than zero');
+        }
 
-      if (order.payment_status === 'PAID') {
-        throw new ConflictException('Order is already paid');
-      }
-
-      if (
-        order.payment_status === 'REFUND_PENDING' ||
-        order.payment_status === 'REFUNDED' ||
-        order.payment_status === 'REVIEW_REQUIRED'
-      ) {
-        throw new ConflictException(
-          `Order cannot receive cash from ${order.payment_status}`,
-        );
-      }
-
-      if (order.status !== 'PENDING' && order.status !== 'CONFIRMED') {
-        throw new ConflictException(
-          `Order cannot receive cash from ${order.status}`,
-        );
-      }
-
-      if (Number(order.total) <= 0) {
-        throw new ConflictException('Order total must be greater than zero');
-      }
-
-      const coverageResult = await client.query<{
-        sufficient: boolean;
-      }>(
-        `
+        const coverageResult = await client.query<{
+          sufficient: boolean;
+        }>(
+          `
               select
                 $1::numeric >=
                   $2::numeric as sufficient
             `,
-        [cashReceivedAmount, order.total],
-      );
-
-      if (!coverageResult.rows[0]?.sufficient) {
-        throw new BadRequestException(
-          'Cash received amount is lower than the order total',
+          [cashReceivedAmount, order.total],
         );
-      }
 
-      const blockingResult = await client.query<{
-        id: string;
-        tenant_id: string;
-        branch_id: string;
-        method: 'QR' | 'CASH';
-        provider: string;
-        provider_payment_id: string | null;
-        status: PaymentAttemptStatus;
-      }>(
-        `
+        if (!coverageResult.rows[0]?.sufficient) {
+          throw new BadRequestException(
+            'Cash received amount is lower than the order total',
+          );
+        }
+
+        const blockingResult = await client.query<{
+          id: string;
+          tenant_id: string;
+          branch_id: string;
+          method: 'QR' | 'CASH';
+          provider: string;
+          provider_payment_id: string | null;
+          status: PaymentAttemptStatus;
+        }>(
+          `
               select
                 id::text,
                 tenant_id::text,
@@ -4124,37 +3807,31 @@ export class PaymentsService {
 
               for update
             `,
-        [order.tenant_id, order.branch_id, order.id],
-      );
-
-      const protectedPayment = blockingResult.rows.find(
-        (payment) =>
-          payment.status === 'PAID' ||
-          payment.status === 'REFUND_PENDING' ||
-          payment.status === 'REVIEW_REQUIRED',
-      );
-
-      if (protectedPayment) {
-        throw new ConflictException(
-          `Order has a protected payment in ${protectedPayment.status}`,
+          [order.tenant_id, order.branch_id, order.id],
         );
-      }
 
-      const activeDriverCod =
-        blockingResult.rows.find(
+        const protectedPayment = blockingResult.rows.find(
+          (payment) =>
+            payment.status === 'PAID' ||
+            payment.status === 'REFUND_PENDING' ||
+            payment.status === 'REVIEW_REQUIRED',
+        );
+
+        if (protectedPayment) {
+          throw new ConflictException(
+            `Order has a protected payment in ${protectedPayment.status}`,
+          );
+        }
+
+        const activeDriverCod = blockingResult.rows.find(
           (payment) =>
             payment.method === 'CASH' &&
-            payment.provider
-              .trim()
-              .toUpperCase() ===
-              'DRIVER_COD' &&
-            payment.status ===
-              'AWAITING_CONFIRMATION',
+            payment.provider.trim().toUpperCase() === 'DRIVER_COD' &&
+            payment.status === 'AWAITING_CONFIRMATION',
         );
 
-      if (activeDriverCod) {
-        const deliveryResult =
-          await client.query<{
+        if (activeDriverCod) {
+          const deliveryResult = await client.query<{
             status: string;
           }>(
             `
@@ -4171,50 +3848,42 @@ export class PaymentsService {
 
               for update of d
             `,
-            [
-              order.tenant_id,
-              order.branch_id,
-              order.id,
-            ],
+            [order.tenant_id, order.branch_id, order.id],
           );
 
-        const delivery =
-          deliveryResult.rows[0] ??
-          null;
+          const delivery = deliveryResult.rows[0] ?? null;
 
-        if (!delivery) {
-          throw new ConflictException(
-            'Cash on delivery state is inconsistent',
-          );
+          if (!delivery) {
+            throw new ConflictException(
+              'Cash on delivery state is inconsistent',
+            );
+          }
+
+          if (delivery.status !== 'CREATED') {
+            throw new ConflictException(
+              'Payment method is locked after delivery dispatch',
+            );
+          }
         }
-
-        if (
-          delivery.status !== 'CREATED'
-        ) {
-          throw new ConflictException(
-            'Payment method is locked after delivery dispatch',
-          );
-        }
-      }
-      const bcpCreationInProgress = blockingResult.rows.find(
-        (payment) =>
-          payment.method === 'QR' &&
-          payment.provider.trim().toUpperCase() === 'BCP_QR' &&
-          payment.status === 'CREATED',
-      );
-
-      if (bcpCreationInProgress) {
-        throw new ConflictException(
-          'BCP QR creation is still in progress; cash payment is blocked',
+        const bcpCreationInProgress = blockingResult.rows.find(
+          (payment) =>
+            payment.method === 'QR' &&
+            payment.provider.trim().toUpperCase() === 'BCP_QR' &&
+            payment.status === 'CREATED',
         );
-      }
 
-      const markCancellationReviewRequired = async (
-        activePayment: (typeof blockingResult.rows)[number],
-        message: string,
-      ) => {
-        await client.query(
-          `
+        if (bcpCreationInProgress) {
+          throw new ConflictException(
+            'BCP QR creation is still in progress; cash payment is blocked',
+          );
+        }
+
+        const markCancellationReviewRequired = async (
+          activePayment: (typeof blockingResult.rows)[number],
+          message: string,
+        ) => {
+          await client.query(
+            `
               update public.order_payments
               set status = 'REVIEW_REQUIRED'
               where id = $1::uuid
@@ -4223,98 +3892,101 @@ export class PaymentsService {
                   'AWAITING_CONFIRMATION'
                 )
             `,
-          [activePayment.id],
-        );
+            [activePayment.id],
+          );
 
-        await client.query(
-          `
+          await client.query(
+            `
               update public.orders
               set payment_status = 'REVIEW_REQUIRED'
               where id = $1::uuid
                 and payment_status <> 'PAID'
             `,
-          [order.id],
-        );
+            [order.id],
+          );
 
-        await this.insertPaymentEvent(client, {
-          tenantId: activePayment.tenant_id,
-          branchId: activePayment.branch_id,
-          paymentId: activePayment.id,
-          eventType: 'QR_CANCELLATION_OUTCOME_UNKNOWN',
-          source: 'CASHIER',
-          processingStatus: 'FAILED',
-          payload: {
-            reason: 'CASH_PAYMENT_REQUIRES_QR_CANCELLATION',
-            provider: activePayment.provider,
-            providerPaymentId: activePayment.provider_payment_id,
-            operatorUserId,
-            operatorCode,
-            operatorDisplayName,
-            terminalReference,
-          },
-          errorMessage: message.slice(0, 500),
-        });
+          await this.insertPaymentEvent(client, {
+            tenantId: activePayment.tenant_id,
+            branchId: activePayment.branch_id,
+            paymentId: activePayment.id,
+            eventType: 'QR_CANCELLATION_OUTCOME_UNKNOWN',
+            source: 'CASHIER',
+            processingStatus: 'FAILED',
+            payload: {
+              reason: 'CASH_PAYMENT_REQUIRES_QR_CANCELLATION',
+              provider: activePayment.provider,
+              providerPaymentId: activePayment.provider_payment_id,
+              operatorUserId,
+              operatorCode,
+              operatorDisplayName,
+              terminalReference,
+            },
+            errorMessage: message.slice(0, 500),
+          });
 
-        return {
-          reconciliationRequired: true as const,
+          return {
+            reconciliationRequired: true as const,
+          };
         };
-      };
 
-      for (const activePayment of blockingResult.rows) {
-        const normalizedProvider = activePayment.provider.trim().toUpperCase();
+        for (const activePayment of blockingResult.rows) {
+          const normalizedProvider = activePayment.provider
+            .trim()
+            .toUpperCase();
 
-        if (
-          activePayment.method === 'QR' &&
-          normalizedProvider === 'BCP_QR' &&
-          activePayment.status === 'AWAITING_CONFIRMATION'
-        ) {
-          if (!activePayment.provider_payment_id) {
+          if (
+            activePayment.method === 'QR' &&
+            normalizedProvider === 'BCP_QR' &&
+            activePayment.status === 'AWAITING_CONFIRMATION'
+          ) {
+            if (!activePayment.provider_payment_id) {
+              return markCancellationReviewRequired(
+                activePayment,
+                'BCP QR provider payment identifier is missing',
+              );
+            }
+
+            try {
+              const provider = this.getProviderByName(activePayment.provider);
+
+              const cancellation = await provider.cancelQrPayment({
+                providerPaymentId: activePayment.provider_payment_id,
+                reason: 'CASH_PAYMENT_REPLACED_ACTIVE_ATTEMPT',
+              });
+
+              if (
+                cancellation.status !== 'CANCELLED' ||
+                cancellation.providerPaymentId !==
+                  activePayment.provider_payment_id
+              ) {
+                return markCancellationReviewRequired(
+                  activePayment,
+                  'BCP QR cancellation confirmation was inconsistent',
+                );
+              }
+            } catch (error) {
+              const message =
+                error instanceof Error
+                  ? error.message
+                  : 'BCP QR cancellation outcome is unknown';
+
+              return markCancellationReviewRequired(activePayment, message);
+            }
+          }
+
+          if (
+            activePayment.method === 'QR' &&
+            normalizedProvider !== 'MOCK' &&
+            normalizedProvider !== 'BCP_QR'
+          ) {
             return markCancellationReviewRequired(
               activePayment,
-              'BCP QR provider payment identifier is missing',
+              'Stored QR payment provider cannot be cancelled safely',
             );
           }
 
-          try {
-            const provider = this.getProviderByName(activePayment.provider);
-
-            const cancellation = await provider.cancelQrPayment({
-              providerPaymentId: activePayment.provider_payment_id,
-              reason: 'CASH_PAYMENT_REPLACED_ACTIVE_ATTEMPT',
-            });
-
-            if (
-              cancellation.status !== 'CANCELLED' ||
-              cancellation.providerPaymentId !== activePayment.provider_payment_id
-            ) {
-              return markCancellationReviewRequired(
-                activePayment,
-                'BCP QR cancellation confirmation was inconsistent',
-              );
-            }
-          } catch (error) {
-            const message =
-              error instanceof Error
-                ? error.message
-                : 'BCP QR cancellation outcome is unknown';
-
-            return markCancellationReviewRequired(activePayment, message);
-          }
-        }
-
-        if (
-          activePayment.method === 'QR' &&
-          normalizedProvider !== 'MOCK' &&
-          normalizedProvider !== 'BCP_QR'
-        ) {
-          return markCancellationReviewRequired(
-            activePayment,
-            'Stored QR payment provider cannot be cancelled safely',
-          );
-        }
-
-        await client.query(
-          `
+          await client.query(
+            `
               update public.order_payments
               set status = 'CANCELLED'
               where id = $1::uuid
@@ -4323,47 +3995,48 @@ export class PaymentsService {
                   'AWAITING_CONFIRMATION'
                 )
             `,
-          [activePayment.id],
-        );
+            [activePayment.id],
+          );
 
-        await this.insertPaymentEvent(client, {
-          tenantId: activePayment.tenant_id,
+          await this.insertPaymentEvent(client, {
+            tenantId: activePayment.tenant_id,
 
-          branchId: activePayment.branch_id,
+            branchId: activePayment.branch_id,
 
-          paymentId: activePayment.id,
+            paymentId: activePayment.id,
 
-          eventType: 'PAYMENT_CANCELLED',
+            eventType: 'PAYMENT_CANCELLED',
 
-          source: 'CASHIER',
+            source: 'CASHIER',
 
-          processingStatus: 'PROCESSED',
+            processingStatus: 'PROCESSED',
 
-          payload: {
-            reason: 'CASH_PAYMENT_REPLACED_ACTIVE_ATTEMPT',
+            payload: {
+              reason: 'CASH_PAYMENT_REPLACED_ACTIVE_ATTEMPT',
 
-            previousMethod: activePayment.method,
+              previousMethod: activePayment.method,
 
-            previousProvider: activePayment.provider,
+              previousProvider: activePayment.provider,
 
-            remoteCancellationConfirmed:
-              activePayment.method === 'QR' && normalizedProvider === 'BCP_QR',
+              remoteCancellationConfirmed:
+                activePayment.method === 'QR' &&
+                normalizedProvider === 'BCP_QR',
 
-            operatorUserId,
+              operatorUserId,
 
-            operatorCode,
+              operatorCode,
 
-            operatorDisplayName,
+              operatorDisplayName,
 
-            terminalReference,
-          },
-        });
-      }
+              terminalReference,
+            },
+          });
+        }
 
-      const attemptResult = await client.query<{
-        attempt_number: number;
-      }>(
-        `
+        const attemptResult = await client.query<{
+          attempt_number: number;
+        }>(
+          `
               select
                 coalesce(
                   max(attempt_number),
@@ -4375,19 +4048,19 @@ export class PaymentsService {
               where tenant_id = $1::uuid
                 and order_id = $2::uuid
             `,
-        [order.tenant_id, order.id],
-      );
+          [order.tenant_id, order.id],
+        );
 
-      const attemptNumber = attemptResult.rows[0].attempt_number;
+        const attemptNumber = attemptResult.rows[0].attempt_number;
 
-      const externalReference = `CASH-${order.order_number}-${attemptNumber}`;
+        const externalReference = `CASH-${order.order_number}-${attemptNumber}`;
 
-      const transactionId = `CASH-TX-${randomUUID()}`;
+        const transactionId = `CASH-TX-${randomUUID()}`;
 
-      const paidAt = new Date();
+        const paidAt = new Date();
 
-      const paymentResult = await client.query<PaymentAttemptRow>(
-        `
+        const paymentResult = await client.query<PaymentAttemptRow>(
+          `
               insert into public.order_payments (
                 tenant_id,
                 branch_id,
@@ -4457,34 +4130,34 @@ export class PaymentsService {
                 created_at,
                 updated_at
             `,
-        [
-          order.tenant_id,
-          order.branch_id,
-          order.id,
-          attemptNumber,
-          order.total,
-          order.currency,
-          externalReference,
-          transactionId,
-          idempotencyKey,
-          paidAt.toISOString(),
-          operatorUserId,
-          cashReceivedAmount,
-        ],
-      );
+          [
+            order.tenant_id,
+            order.branch_id,
+            order.id,
+            attemptNumber,
+            order.total,
+            order.currency,
+            externalReference,
+            transactionId,
+            idempotencyKey,
+            paidAt.toISOString(),
+            operatorUserId,
+            cashReceivedAmount,
+          ],
+        );
 
-      const payment = paymentResult.rows[0];
+        const payment = paymentResult.rows[0];
 
-      const reservationAllowsConfirmation =
-        !order.reservation_id ||
-        order.reservation_status === 'CONFIRMED' ||
-        order.reservation_status === 'SEATED';
+        const reservationAllowsConfirmation =
+          !order.reservation_id ||
+          order.reservation_status === 'CONFIRMED' ||
+          order.reservation_status === 'SEATED';
 
-      const updatedOrderResult = await client.query<{
-        status: OrderStatus;
-        payment_status: OrderPaymentStatus;
-      }>(
-        `
+        const updatedOrderResult = await client.query<{
+          status: OrderStatus;
+          payment_status: OrderPaymentStatus;
+        }>(
+          `
               update public.orders
               set
                 payment_status = 'PAID',
@@ -4499,61 +4172,62 @@ export class PaymentsService {
                 status,
                 payment_status
             `,
-        [order.id, reservationAllowsConfirmation],
-      );
+          [order.id, reservationAllowsConfirmation],
+        );
 
-      const updatedOrder = updatedOrderResult.rows[0];
+        const updatedOrder = updatedOrderResult.rows[0];
 
-      await this.insertPaymentEvent(client, {
-        tenantId: payment.tenant_id,
+        await this.insertPaymentEvent(client, {
+          tenantId: payment.tenant_id,
 
-        branchId: payment.branch_id,
+          branchId: payment.branch_id,
 
-        paymentId: payment.id,
+          paymentId: payment.id,
 
-        eventType: 'CASH_PAYMENT_CONFIRMED',
+          eventType: 'CASH_PAYMENT_CONFIRMED',
 
-        providerEventId: transactionId,
+          providerEventId: transactionId,
 
-        source: 'CASHIER',
+          source: 'CASHIER',
 
-        processingStatus: 'PROCESSED',
+          processingStatus: 'PROCESSED',
 
-        payload: {
-          operatorUserId,
+          payload: {
+            operatorUserId,
 
-          operatorCode,
+            operatorCode,
 
-          operatorDisplayName,
+            operatorDisplayName,
 
-          terminalReference,
+            terminalReference,
 
-          externalReference: payment.external_reference,
+            externalReference: payment.external_reference,
 
-          amount: payment.amount,
+            amount: payment.amount,
 
-          currency: payment.currency,
+            currency: payment.currency,
 
-          cashReceivedAmount: payment.cash_received_amount,
+            cashReceivedAmount: payment.cash_received_amount,
 
-          cashChangeAmount: payment.cash_change_amount,
-        },
-      });
+            cashChangeAmount: payment.cash_change_amount,
+          },
+        });
 
-      return {
-        changed: true,
+        return {
+          changed: true,
 
-        order: this.mapOrder({
-          ...order,
+          order: this.mapOrder({
+            ...order,
 
-          status: updatedOrder.status,
+            status: updatedOrder.status,
 
-          payment_status: updatedOrder.payment_status,
-        }),
+            payment_status: updatedOrder.payment_status,
+          }),
 
-        payment: this.mapPayment(payment),
-      };
-    });
+          payment: this.mapPayment(payment),
+        };
+      },
+    );
 
     if ('reconciliationRequired' in cashResult) {
       throw new ServiceUnavailableException(
@@ -4567,7 +4241,11 @@ export class PaymentsService {
   // CONFIRMACIÃ“N MOCK - SOLO LABORATORIO
   // =====================================================
 
-  async confirmMockPayment(paymentId: string, labAccessKey: string | undefined, principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>) {
+  async confirmMockPayment(
+    paymentId: string,
+    labAccessKey: string | undefined,
+    principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
+  ) {
     this.assertMockConfirmationAllowed(labAccessKey);
     this.getMockProvider();
 
@@ -4879,51 +4557,34 @@ export class PaymentsService {
     value: string | undefined,
     field: string,
   ): string {
-    const normalized =
-      value?.trim().toLowerCase() || '';
+    const normalized = value?.trim().toLowerCase() || '';
 
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
         normalized,
       )
     ) {
-      throw new BadRequestException(
-        `${field} must be a valid UUID`,
-      );
+      throw new BadRequestException(`${field} must be a valid UUID`);
     }
 
     return normalized;
   }
 
-  private requireSettlementCurrency(
-    value: string | undefined,
-  ): string {
-    const normalized =
-      value?.trim().toUpperCase() || '';
+  private requireSettlementCurrency(value: string | undefined): string {
+    const normalized = value?.trim().toUpperCase() || '';
 
     if (!/^[A-Z]{3}$/.test(normalized)) {
-      throw new BadRequestException(
-        'currency must be a three-letter ISO code',
-      );
+      throw new BadRequestException('currency must be a three-letter ISO code');
     }
 
     return normalized;
   }
 
-  private requireSettlementReceivedAmount(
-    value: unknown,
-  ): string {
-    const normalized =
-      String(value ?? '').trim();
+  private requireSettlementReceivedAmount(value: unknown): string {
+    const normalized = String(value ?? '').trim();
 
-    if (
-      !/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(
-        normalized,
-      )
-    ) {
-      throw new BadRequestException(
-        'receivedAmount is invalid',
-      );
+    if (!/^(?:0|[1-9]\d{0,9})(?:\.\d{1,2})?$/.test(normalized)) {
+      throw new BadRequestException('receivedAmount is invalid');
     }
 
     return normalized;
@@ -4932,22 +4593,14 @@ export class PaymentsService {
   private requireOptionalSettlementNotes(
     value: string | undefined,
   ): string | null {
-    const normalized =
-      value?.trim() || '';
+    const normalized = value?.trim() || '';
 
     if (!normalized) {
       return null;
     }
 
-    if (
-      normalized.length > 500 ||
-      /[\u0000-\u001f\u007f]/.test(
-        normalized,
-      )
-    ) {
-      throw new BadRequestException(
-        'notes is invalid',
-      );
+    if (normalized.length > 500 || /[\u0000-\u001f\u007f]/.test(normalized)) {
+      throw new BadRequestException('notes is invalid');
     }
 
     return normalized;
@@ -4956,12 +4609,9 @@ export class PaymentsService {
   private async loadDriverCodCashSettlementItems(
     client: PoolClient,
     settlementId: string,
-  ): Promise<
-    DriverCodCashSettlementItemPaymentRow[]
-  > {
-    const result =
-      await client.query<DriverCodCashSettlementItemPaymentRow>(
-        `
+  ): Promise<DriverCodCashSettlementItemPaymentRow[]> {
+    const result = await client.query<DriverCodCashSettlementItemPaymentRow>(
+      `
           select
             si.id::text,
             si.collection_id::text,
@@ -4982,8 +4632,8 @@ export class PaymentsService {
             si.created_at,
             si.id
         `,
-        [settlementId],
-      );
+      [settlementId],
+    );
 
     return result.rows;
   }
@@ -4997,46 +4647,34 @@ export class PaymentsService {
       id: settlement.id,
       status: settlement.status,
 
-      driverId:
-        settlement.driver_id,
+      driverId: settlement.driver_id,
 
-      currency:
-        settlement.currency,
+      currency: settlement.currency,
 
-      expectedAmount:
-        Number(settlement.expected_amount),
+      expectedAmount: Number(settlement.expected_amount),
 
       receivedAmount:
         settlement.received_amount === null
           ? null
-          : Number(
-              settlement.received_amount,
-            ),
+          : Number(settlement.received_amount),
 
       differenceAmount:
         settlement.difference_amount === null
           ? null
-          : Number(
-              settlement.difference_amount,
-            ),
+          : Number(settlement.difference_amount),
 
       itemCount,
       snapshotItemCount,
 
-      openedAt:
-        settlement.opened_at,
+      openedAt: settlement.opened_at,
 
-      settledAt:
-        settlement.settled_at,
+      settledAt: settlement.settled_at,
 
-      cancelledAt:
-        settlement.cancelled_at,
+      cancelledAt: settlement.cancelled_at,
 
-      notes:
-        settlement.notes,
+      notes: settlement.notes,
 
-      updatedAt:
-        settlement.updated_at,
+      updatedAt: settlement.updated_at,
     };
   }
   private assertCashierAccessKey(providedKey?: string): void {
@@ -5371,14 +5009,8 @@ export class PaymentsService {
     });
   }
 
-  private requireBcpCallbackConfigurationValue(
-    key: string,
-  ): string {
-    const value =
-      (
-        this.configService.get<string>(key) ||
-        ''
-      ).trim();
+  private requireBcpCallbackConfigurationValue(key: string): string {
+    const value = (this.configService.get<string>(key) || '').trim();
 
     if (!value) {
       throw new ServiceUnavailableException(
@@ -5394,123 +5026,65 @@ export class PaymentsService {
     expectedUsername: string,
     expectedPublicToken: string,
   ): boolean {
-    const normalized =
-      authorization?.trim() || '';
+    const normalized = authorization?.trim() || '';
 
-    const match =
-      /^Basic\s+([A-Za-z0-9+/]+={0,2})$/i.exec(
-        normalized,
-      );
+    const match = /^Basic\s+([A-Za-z0-9+/]+={0,2})$/i.exec(normalized);
 
     if (!match) {
       return false;
     }
 
-    const encoded =
-      match[1];
+    const encoded = match[1];
 
-    if (
-      encoded.length === 0 ||
-      encoded.length % 4 !== 0
-    ) {
+    if (encoded.length === 0 || encoded.length % 4 !== 0) {
       return false;
     }
 
     let decoded: string;
 
     try {
-      decoded =
-        Buffer.from(
-          encoded,
-          'base64',
-        ).toString('utf8');
+      decoded = Buffer.from(encoded, 'base64').toString('utf8');
     } catch {
       return false;
     }
 
-    const separatorIndex =
-      decoded.indexOf(':');
+    const separatorIndex = decoded.indexOf(':');
 
     if (separatorIndex <= 0) {
       return false;
     }
 
-    const username =
-      decoded.slice(
-        0,
-        separatorIndex,
-      );
+    const username = decoded.slice(0, separatorIndex);
 
-    const publicToken =
-      decoded.slice(
-        separatorIndex + 1,
-      );
+    const publicToken = decoded.slice(separatorIndex + 1);
 
     return (
-      this.secureBcpCallbackEquals(
-        username,
-        expectedUsername,
-      ) &&
-      this.secureBcpCallbackEquals(
-        publicToken,
-        expectedPublicToken,
-      )
+      this.secureBcpCallbackEquals(username, expectedUsername) &&
+      this.secureBcpCallbackEquals(publicToken, expectedPublicToken)
     );
   }
 
-  private secureBcpCallbackEquals(
-    received: string,
-    expected: string,
-  ): boolean {
-    const receivedBuffer =
-      Buffer.from(
-        received,
-        'utf8',
-      );
+  private secureBcpCallbackEquals(received: string, expected: string): boolean {
+    const receivedBuffer = Buffer.from(received, 'utf8');
 
-    const expectedBuffer =
-      Buffer.from(
-        expected,
-        'utf8',
-      );
+    const expectedBuffer = Buffer.from(expected, 'utf8');
 
-    if (
-      receivedBuffer.length !==
-      expectedBuffer.length
-    ) {
+    if (receivedBuffer.length !== expectedBuffer.length) {
       return false;
     }
 
-    return timingSafeEqual(
-      receivedBuffer,
-      expectedBuffer,
-    );
+    return timingSafeEqual(receivedBuffer, expectedBuffer);
   }
 
-  private normalizeBcpCallbackId(
-    value: unknown,
-  ): number | null {
-    if (
-      typeof value === 'number' &&
-      Number.isSafeInteger(value) &&
-      value > 0
-    ) {
+  private normalizeBcpCallbackId(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) {
       return value;
     }
 
-    if (
-      typeof value === 'string' &&
-      /^[1-9]\d{0,15}$/.test(
-        value.trim(),
-      )
-    ) {
-      const parsed =
-        Number(value.trim());
+    if (typeof value === 'string' && /^[1-9]\d{0,15}$/.test(value.trim())) {
+      const parsed = Number(value.trim());
 
-      if (
-        Number.isSafeInteger(parsed) &&
-        parsed > 0
-      ) {
+      if (Number.isSafeInteger(parsed) && parsed > 0) {
         return parsed;
       }
     }
@@ -5526,15 +5100,12 @@ export class PaymentsService {
       return null;
     }
 
-    const normalized =
-      value.trim();
+    const normalized = value.trim();
 
     if (
       normalized.length === 0 ||
       normalized.length > maxLength ||
-      /[\u0000-\u001F\u007F]/.test(
-        normalized,
-      )
+      /[\u0000-\u001F\u007F]/.test(normalized)
     ) {
       return null;
     }
@@ -5542,9 +5113,7 @@ export class PaymentsService {
     return normalized;
   }
 
-  private normalizeBcpCallbackAmount(
-    value: unknown,
-  ): string | null {
+  private normalizeBcpCallbackAmount(value: unknown): string | null {
     const text =
       typeof value === 'number'
         ? String(value)
@@ -5552,32 +5121,20 @@ export class PaymentsService {
           ? value.trim()
           : '';
 
-    if (
-      !/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(
-        text,
-      )
-    ) {
+    if (!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,2})?$/.test(text)) {
       return null;
     }
 
-    const parts =
-      text.split('.');
+    const parts = text.split('.');
 
-    const whole =
-      parts[0];
+    const whole = parts[0];
 
-    const fraction =
-      (parts[1] || '').padEnd(
-        2,
-        '0',
-      );
+    const fraction = (parts[1] || '').padEnd(2, '0');
 
     return `${whole}.${fraction}`;
   }
 
-  private buildBcpCallbackSuccessResponse(
-    callbackId: number,
-  ) {
+  private buildBcpCallbackSuccessResponse(callbackId: number) {
     return {
       State: '000',
       Message: 'Correcto',
@@ -5644,11 +5201,15 @@ export class PaymentsService {
       const row = lockedResult.rows[0];
 
       if (!row) {
-        throw new NotFoundException('Order payment not found for reconciliation');
+        throw new NotFoundException(
+          'Order payment not found for reconciliation',
+        );
       }
 
       if (String(row.payment_provider).trim().toUpperCase() !== 'BCP_QR') {
-        throw new ConflictException('Payment provider changed during reconciliation');
+        throw new ConflictException(
+          'Payment provider changed during reconciliation',
+        );
       }
 
       if (
@@ -5665,11 +5226,15 @@ export class PaymentsService {
       }
 
       if (row.payment_status !== 'REVIEW_REQUIRED') {
-        throw new ConflictException('Payment status changed during reconciliation');
+        throw new ConflictException(
+          'Payment status changed during reconciliation',
+        );
       }
 
       if (row.order_payment_status !== 'REVIEW_REQUIRED') {
-        throw new ConflictException('Order payment status changed during reconciliation');
+        throw new ConflictException(
+          'Order payment status changed during reconciliation',
+        );
       }
 
       const paymentUpdate = await client.query(
@@ -5686,7 +5251,9 @@ export class PaymentsService {
       );
 
       if (paymentUpdate.rowCount !== 1) {
-        throw new ConflictException('Payment terminal reconciliation write was not applied');
+        throw new ConflictException(
+          'Payment terminal reconciliation write was not applied',
+        );
       }
 
       const orderUpdate = await client.query<{
@@ -5706,7 +5273,9 @@ export class PaymentsService {
       );
 
       if (orderUpdate.rowCount !== 1) {
-        throw new ConflictException('Order terminal payment reconciliation write was not applied');
+        throw new ConflictException(
+          'Order terminal payment reconciliation write was not applied',
+        );
       }
 
       const updatedOrder = orderUpdate.rows[0];
@@ -5715,7 +5284,10 @@ export class PaymentsService {
         tenantId: row.tenant_id,
         branchId: row.branch_id,
         paymentId: row.payment_id,
-        eventType: terminalStatus === 'EXPIRED' ? 'PAYMENT_EXPIRED' : 'PAYMENT_CANCELLED',
+        eventType:
+          terminalStatus === 'EXPIRED'
+            ? 'PAYMENT_EXPIRED'
+            : 'PAYMENT_CANCELLED',
         source: 'RECONCILIATION',
         processingStatus: 'PROCESSED',
         payload: {

@@ -1,4 +1,7 @@
-import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import {
+  OperationsAccess,
+  OperationPermission,
+} from '../operations/operations-access';
 import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
@@ -24,9 +27,7 @@ export class OpsOrderController {
 
   @Get()
   @OperationPermission('orders.read')
-  getOperationalOrders(
-    @Req() request: StaffAuthenticatedRequest,
-  ) {
+  getOperationalOrders(@Req() request: StaffAuthenticatedRequest) {
     return this.orderService.getOperationalOrders(
       request.staff.tenantCode,
       request.staff.branchCode,

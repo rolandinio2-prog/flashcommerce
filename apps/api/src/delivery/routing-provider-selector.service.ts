@@ -7,15 +7,11 @@ import { ValhallaRoutingProvider } from './valhalla-routing.provider';
 @Injectable()
 export class RoutingProviderSelector {
   constructor(
-    private readonly googleRoutingProvider:
-      GoogleRoutingProvider,
-    private readonly valhallaRoutingProvider:
-      ValhallaRoutingProvider,
+    private readonly googleRoutingProvider: GoogleRoutingProvider,
+    private readonly valhallaRoutingProvider: ValhallaRoutingProvider,
   ) {}
 
-  select(
-    providerId: GeoRoutingProviderId,
-  ): RoutingProvider {
+  select(providerId: GeoRoutingProviderId): RoutingProvider {
     switch (providerId) {
       case 'GOOGLE':
         return this.googleRoutingProvider;
@@ -24,14 +20,10 @@ export class RoutingProviderSelector {
         return this.valhallaRoutingProvider;
 
       default: {
-        const unsupportedProvider:
-          never =
-            providerId;
+        const unsupportedProvider: never = providerId;
 
         throw new Error(
-          `UNSUPPORTED_ROUTING_PROVIDER_${String(
-            unsupportedProvider,
-          )}`,
+          `UNSUPPORTED_ROUTING_PROVIDER_${String(unsupportedProvider)}`,
         );
       }
     }

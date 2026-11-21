@@ -1,20 +1,13 @@
-import {
-  createHmac,
-  timingSafeEqual,
-} from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const DELIVERY_POD_VERSION = 1;
 
-const DELIVERY_POD_SPACE =
-  10_000;
+const DELIVERY_POD_SPACE = 10_000;
 
-const UINT32_SPACE =
-  0x1_0000_0000;
+const UINT32_SPACE = 0x1_0000_0000;
 
 const DELIVERY_POD_ACCEPT_LIMIT =
-  Math.floor(
-    UINT32_SPACE / DELIVERY_POD_SPACE,
-  ) * DELIVERY_POD_SPACE;
+  Math.floor(UINT32_SPACE / DELIVERY_POD_SPACE) * DELIVERY_POD_SPACE;
 
 export interface DeliveryPodDerivationInput {
   tenantId: string;
@@ -26,27 +19,20 @@ export interface DeliveryPodDerivationInput {
 }
 
 function getDeliveryPodSecret() {
-  const secret =
-    process.env.FLASH_DELIVERY_POD_SECRET?.trim();
+  const secret = process.env.FLASH_DELIVERY_POD_SECRET?.trim();
 
   if (!secret) {
-    throw new Error(
-      'FLASH_DELIVERY_POD_SECRET is required',
-    );
+    throw new Error('FLASH_DELIVERY_POD_SECRET is required');
   }
 
   if (secret.length < 32) {
-    throw new Error(
-      'FLASH_DELIVERY_POD_SECRET must be at least 32 characters',
-    );
+    throw new Error('FLASH_DELIVERY_POD_SECRET must be at least 32 characters');
   }
 
   return secret;
 }
 
-function buildDeliveryPodMaterial(
-  input: DeliveryPodDerivationInput,
-) {
+function buildDeliveryPodMaterial(input: DeliveryPodDerivationInput) {
   return JSON.stringify({
     version: DELIVERY_POD_VERSION,
 
@@ -55,24 +41,14 @@ function buildDeliveryPodMaterial(
 
     deliveryId: input.deliveryId,
 
-    deliveryTrackingToken:
-      input.deliveryTrackingToken,
+    deliveryTrackingToken: input.deliveryTrackingToken,
   });
 }
 
-export function deriveDeliveryPod(
-  input: DeliveryPodDerivationInput,
-) {
-  const digest =
-    createHmac(
-      'sha256',
-      getDeliveryPodSecret(),
-    )
-      .update(
-        buildDeliveryPodMaterial(input),
-        'utf8',
-      )
-      .digest();
+export function deriveDeliveryPod(input: DeliveryPodDerivationInput) {
+  const digest = createHmac('sha256', getDeliveryPodSecret())
+    .update(buildDeliveryPodMaterial(input), 'utf8')
+    .digest();
 
   // --------------------------------------------------------
   // Avoid modulo bias.
@@ -82,33 +58,17 @@ export function deriveDeliveryPod(
   // multiple of 10,000 that fits in the uint32 space.
   // --------------------------------------------------------
 
-  for (
-    let offset = 0;
-    offset + 4 <= digest.length;
-    offset += 4
-  ) {
-    const candidate =
-      digest.readUInt32BE(offset);
+  for (let offset = 0; offset + 4 <= digest.length; offset += 4) {
+    const candidate = digest.readUInt32BE(offset);
 
-    if (
-      candidate <
-      DELIVERY_POD_ACCEPT_LIMIT
-    ) {
-      return String(
-        candidate %
-          DELIVERY_POD_SPACE,
-      ).padStart(
-        4,
-        '0',
-      );
+    if (candidate < DELIVERY_POD_ACCEPT_LIMIT) {
+      return String(candidate % DELIVERY_POD_SPACE).padStart(4, '0');
     }
   }
 
   // With SHA-256 this path is practically unreachable,
   // but failing closed is preferable to biased fallback.
-  throw new Error(
-    'Unable to derive delivery POD',
-  );
+  throw new Error('Unable to derive delivery POD');
 }
 export function verifyDeliveryPod(
   input: DeliveryPodDerivationInput,
@@ -118,27 +78,14 @@ export function verifyDeliveryPod(
     return false;
   }
 
-  const expectedPod =
-    deriveDeliveryPod(input);
+  const expectedPod = deriveDeliveryPod(input);
 
-  const expectedBuffer =
-    Buffer.from(
-      expectedPod,
-      'utf8',
-    );
+  const expectedBuffer = Buffer.from(expectedPod, 'utf8');
 
-  const submittedBuffer =
-    Buffer.from(
-      submittedPod,
-      'utf8',
-    );
+  const submittedBuffer = Buffer.from(submittedPod, 'utf8');
 
   return (
-    submittedBuffer.length ===
-      expectedBuffer.length &&
-    timingSafeEqual(
-      submittedBuffer,
-      expectedBuffer,
-    )
+    submittedBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(submittedBuffer, expectedBuffer)
   );
 }

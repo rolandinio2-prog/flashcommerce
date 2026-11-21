@@ -10,10 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 import { DatabaseService } from '../database/database.service';
 import type { StaffSessionPrincipal } from '../staff/staff.types';
-import {
-  PaymentsService,
-  type BcpQrCallbackInput,
-} from './payments.service';
+import { PaymentsService, type BcpQrCallbackInput } from './payments.service';
 
 interface DevQrCandidateRow {
   order_number: string;
@@ -51,25 +48,16 @@ export class AdminDevQrPaymentService {
     };
   }
 
-  async simulateQrPaid(
-    staff: StaffSessionPrincipal,
-    orderNumberInput: string,
-  ) {
+  async simulateQrPaid(staff: StaffSessionPrincipal, orderNumberInput: string) {
     this.assertEnabled();
 
-    const orderNumber =
-      String(orderNumberInput ?? '').trim();
+    const orderNumber = String(orderNumberInput ?? '').trim();
 
     if (!/^[1-9]\d{0,9}$/.test(orderNumber)) {
-      throw new BadRequestException(
-        'orderNumber is invalid',
-      );
+      throw new BadRequestException('orderNumber is invalid');
     }
 
-    const before = await this.loadCandidate(
-      staff,
-      orderNumber,
-    );
+    const before = await this.loadCandidate(staff, orderNumber);
 
     if (!before) {
       throw new NotFoundException(
@@ -88,8 +76,7 @@ export class AdminDevQrPaymentService {
 
     if (
       before.order_status !== 'PENDING' ||
-      before.order_payment_status !==
-        'AWAITING_CONFIRMATION'
+      before.order_payment_status !== 'AWAITING_CONFIRMATION'
     ) {
       throw new ConflictException(
         'Order is not eligible for a fresh QR payment simulation',
@@ -99,8 +86,7 @@ export class AdminDevQrPaymentService {
     if (
       before.method !== 'QR' ||
       before.provider !== 'BCP_QR' ||
-      before.payment_status !==
-        'AWAITING_CONFIRMATION'
+      before.payment_status !== 'AWAITING_CONFIRMATION'
     ) {
       throw new ConflictException(
         'Latest payment is not an awaiting BCP_QR attempt',
@@ -113,23 +99,19 @@ export class AdminDevQrPaymentService {
       !before.amount ||
       !before.payment_currency
     ) {
-      throw new ConflictException(
-        'BCP_QR payment data is incomplete',
-      );
+      throw new ConflictException('BCP_QR payment data is incomplete');
     }
 
     if (
       before.expires_at &&
-      new Date(before.expires_at).getTime() <=
-        Date.now()
+      new Date(before.expires_at).getTime() <= Date.now()
     ) {
       throw new ConflictException(
         'BCP_QR attempt expired; generate a fresh QR first',
       );
     }
 
-    const providerPaymentId =
-      before.provider_payment_id.trim();
+    const providerPaymentId = before.provider_payment_id.trim();
 
     if (
       !/^[1-9]\d{0,15}$/.test(providerPaymentId) ||
@@ -140,25 +122,14 @@ export class AdminDevQrPaymentService {
       );
     }
 
-    const username = this.requireConfig(
-      'BCP_QR_USERNAME',
-    );
-    const publicToken = this.requireConfig(
-      'BCP_QR_PUBLIC_TOKEN',
-    );
-    const serviceCode = this.requireConfig(
-      'BCP_QR_SERVICE_CODE',
-    );
-    const businessCode = this.requireConfig(
-      'BCP_QR_BUSINESS_CODE',
-    );
+    const username = this.requireConfig('BCP_QR_USERNAME');
+    const publicToken = this.requireConfig('BCP_QR_PUBLIC_TOKEN');
+    const serviceCode = this.requireConfig('BCP_QR_SERVICE_CODE');
+    const businessCode = this.requireConfig('BCP_QR_BUSINESS_CODE');
 
     const authorization =
       'Basic ' +
-      Buffer.from(
-        `${username}:${publicToken}`,
-        'utf8',
-      ).toString('base64');
+      Buffer.from(`${username}:${publicToken}`, 'utf8').toString('base64');
 
     const callback: BcpQrCallbackInput = {
       Id: Number(providerPaymentId),
@@ -169,15 +140,13 @@ export class AdminDevQrPaymentService {
       Currency: before.payment_currency,
       ResponseCode: '000',
       Status: 'P',
-      OperationNumber:
-        `DEVQR-${randomUUID()}`,
+      OperationNumber: `DEVQR-${randomUUID()}`,
     };
 
-    const callbackResult =
-      await this.paymentsService.handleBcpQrCallback(
-        authorization,
-        callback,
-      );
+    const callbackResult = await this.paymentsService.handleBcpQrCallback(
+      authorization,
+      callback,
+    );
 
     if (String(callbackResult.State ?? '') !== '000') {
       throw new ConflictException(
@@ -185,10 +154,7 @@ export class AdminDevQrPaymentService {
       );
     }
 
-    const after = await this.loadCandidate(
-      staff,
-      orderNumber,
-    );
+    const after = await this.loadCandidate(staff, orderNumber);
 
     if (
       !after ||
@@ -197,9 +163,7 @@ export class AdminDevQrPaymentService {
       after.method !== 'QR' ||
       after.provider !== 'BCP_QR'
     ) {
-      throw new ConflictException(
-        'Payment core did not finish in PAID state',
-      );
+      throw new ConflictException('Payment core did not finish in PAID state');
     }
 
     return this.mapResult(true, after);
@@ -209,9 +173,8 @@ export class AdminDevQrPaymentService {
     staff: StaffSessionPrincipal,
     orderNumber: string,
   ): Promise<DevQrCandidateRow | null> {
-    const result =
-      await this.databaseService.query<DevQrCandidateRow>(
-        `
+    const result = await this.databaseService.query<DevQrCandidateRow>(
+      `
           select
             o.order_number::text,
             o.status as order_status,
@@ -252,12 +215,8 @@ export class AdminDevQrPaymentService {
             and o.order_number::text = $3
           limit 2
         `,
-        [
-          staff.tenantId,
-          staff.branchId,
-          orderNumber,
-        ],
-      );
+      [staff.tenantId, staff.branchId, orderNumber],
+    );
 
     if (result.rows.length > 1) {
       throw new ConflictException(
@@ -268,18 +227,9 @@ export class AdminDevQrPaymentService {
     return result.rows[0] ?? null;
   }
 
-  private mapResult(
-    changed: boolean,
-    row: DevQrCandidateRow,
-  ) {
-    if (
-      row.attempt_number === null ||
-      !row.payment_status ||
-      !row.provider
-    ) {
-      throw new ConflictException(
-        'Payment result is incomplete',
-      );
+  private mapResult(changed: boolean, row: DevQrCandidateRow) {
+    if (row.attempt_number === null || !row.payment_status || !row.provider) {
+      throw new ConflictException('Payment result is incomplete');
     }
 
     return {
@@ -287,8 +237,7 @@ export class AdminDevQrPaymentService {
       order: {
         number: row.order_number,
         status: row.order_status,
-        paymentStatus:
-          row.order_payment_status,
+        paymentStatus: row.order_payment_status,
       },
       payment: {
         attemptNumber: row.attempt_number,
@@ -299,32 +248,21 @@ export class AdminDevQrPaymentService {
   }
 
   private assertEnabled() {
-    const environment = this.readConfig(
-      'BCP_QR_ENVIRONMENT',
-    ).toLowerCase();
+    const environment = this.readConfig('BCP_QR_ENVIRONMENT').toLowerCase();
 
-    if (
-      !this.devToolsEnabled() ||
-      environment !== 'sandbox'
-    ) {
-      throw new NotFoundException(
-        'Development payment tools are unavailable',
-      );
+    if (!this.devToolsEnabled() || environment !== 'sandbox') {
+      throw new NotFoundException('Development payment tools are unavailable');
     }
   }
 
   private devToolsEnabled() {
     return (
-      this.readConfig(
-        'PAYMENT_DEV_TOOLS_ENABLED',
-      ).toLowerCase() === 'true'
+      this.readConfig('PAYMENT_DEV_TOOLS_ENABLED').toLowerCase() === 'true'
     );
   }
 
   private readConfig(name: string) {
-    return String(
-      this.configService.get<string>(name) ?? '',
-    ).trim();
+    return String(this.configService.get<string>(name) ?? '').trim();
   }
 
   private requireConfig(name: string) {

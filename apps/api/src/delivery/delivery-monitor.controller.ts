@@ -1,4 +1,7 @@
-import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import {
+  OperationsAccess,
+  OperationPermission,
+} from '../operations/operations-access';
 import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Controller,
@@ -17,29 +20,27 @@ import { DeliveryMonitorService } from './delivery-monitor.service';
 @OperationsAccess()
 export class DeliveryMonitorController {
   constructor(
-    private readonly deliveryMonitorService:
-      DeliveryMonitorService,
+    private readonly deliveryMonitorService: DeliveryMonitorService,
 
-    private readonly realtimeSessionService:
-      DeliveryMonitorRealtimeSessionService,
+    private readonly realtimeSessionService: DeliveryMonitorRealtimeSessionService,
   ) {}
 
   @Get('active')
   @OperationPermission('delivery.monitor')
-  getActiveDeliveries(
-    @Req() request: StaffAuthenticatedRequest,
-  ) {
-    return this.deliveryMonitorService
-      .getActiveSnapshot(
-        request.staff.tenantCode,
-        request.staff.branchCode,
-      );
+  getActiveDeliveries(@Req() request: StaffAuthenticatedRequest) {
+    return this.deliveryMonitorService.getActiveSnapshot(
+      request.staff.tenantCode,
+      request.staff.branchCode,
+    );
   }
   @Get('state')
   @OperationPermission('delivery.monitor')
   getActiveDeliveryState(@Req() request: StaffAuthenticatedRequest) {
     return this.deliveryMonitorService.getActiveSnapshot(
-      request.staff.tenantCode, request.staff.branchCode, undefined, false,
+      request.staff.tenantCode,
+      request.staff.branchCode,
+      undefined,
+      false,
     );
   }
 
@@ -50,22 +51,16 @@ export class DeliveryMonitorController {
     @Param('deliveryId', new ParseUUIDPipe())
     deliveryId: string,
   ) {
-    return this.deliveryMonitorService
-      .getActiveDeliveryRoute(
-        request.staff.tenantCode,
-        request.staff.branchCode,
-        deliveryId,
-      );
+    return this.deliveryMonitorService.getActiveDeliveryRoute(
+      request.staff.tenantCode,
+      request.staff.branchCode,
+      deliveryId,
+    );
   }
 
   @Post('realtime-session')
   @OperationPermission('delivery.monitor')
-  createRealtimeSession(
-    @Req() request: StaffAuthenticatedRequest,
-  ) {
-    return this.realtimeSessionService
-      .createSession(
-        request.staff,
-      );
+  createRealtimeSession(@Req() request: StaffAuthenticatedRequest) {
+    return this.realtimeSessionService.createSession(request.staff);
   }
 }

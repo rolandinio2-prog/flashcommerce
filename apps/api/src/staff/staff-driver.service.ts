@@ -220,9 +220,7 @@ export class StaffDriverService {
       } catch (error) {
         const constraint = this.getUniqueConstraint(error);
 
-        if (
-          constraint === 'uq_delivery_drivers_code'
-        ) {
+        if (constraint === 'uq_delivery_drivers_code') {
           continue;
         }
 
@@ -231,9 +229,7 @@ export class StaffDriverService {
       }
     }
 
-    throw new ServiceUnavailableException(
-      'Could not allocate driver account',
-    );
+    throw new ServiceUnavailableException('Could not allocate driver account');
   }
 
   async updateDriverProfile(
@@ -303,13 +299,14 @@ export class StaffDriverService {
     const temporaryPassword = this.generateTemporaryPassword();
     const passwordHash = this.hashPassword(temporaryPassword);
 
-    const driver = await this.databaseService.withTransaction(async (client) => {
-      const driverResult = await client.query<{
-        id: string;
-        code: string;
-        display_name: string;
-      }>(
-        `
+    const driver = await this.databaseService.withTransaction(
+      async (client) => {
+        const driverResult = await client.query<{
+          id: string;
+          code: string;
+          display_name: string;
+        }>(
+          `
           select
             drv.id::text,
             drv.code,
@@ -323,17 +320,19 @@ export class StaffDriverService {
             and drv.id = $3::uuid
           for update of drv
         `,
-        [principal.tenantId, principal.branchId, driverId],
-      );
+          [principal.tenantId, principal.branchId, driverId],
+        );
 
-      const row = driverResult.rows[0];
+        const row = driverResult.rows[0];
 
-      if (!row) {
-        throw new NotFoundException('Delivery driver not found in this branch');
-      }
+        if (!row) {
+          throw new NotFoundException(
+            'Delivery driver not found in this branch',
+          );
+        }
 
-      await client.query(
-        `
+        await client.query(
+          `
           update public.delivery_drivers
           set
             password_hash = $3,
@@ -343,11 +342,11 @@ export class StaffDriverService {
           where tenant_id = $1::uuid
             and id = $2::uuid
         `,
-        [principal.tenantId, driverId, passwordHash],
-      );
+          [principal.tenantId, driverId, passwordHash],
+        );
 
-      await client.query(
-        `
+        await client.query(
+          `
           update public.delivery_driver_credentials
           set
             status = 'REVOKED',
@@ -357,13 +356,12 @@ export class StaffDriverService {
             and driver_id = $2::uuid
             and status = 'ACTIVE'
         `,
-        [principal.tenantId, driverId],
-      );
+          [principal.tenantId, driverId],
+        );
 
-
-
-      return row;
-    });
+        return row;
+      },
+    );
 
     return {
       driver: {
@@ -586,10 +584,7 @@ export class StaffDriverService {
 
     const normalized = value.trim().replace(/\s+/g, ' ');
 
-    if (
-      normalized.length < minLength ||
-      normalized.length > maxLength
-    ) {
+    if (normalized.length < minLength || normalized.length > maxLength) {
       throw new BadRequestException(`${field} is invalid`);
     }
 

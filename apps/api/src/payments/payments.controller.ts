@@ -1,4 +1,7 @@
-import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import {
+  OperationsAccess,
+  OperationPermission,
+} from '../operations/operations-access';
 import {
   Body,
   Controller,
@@ -19,7 +22,6 @@ interface ConfirmCashPaymentBody {
   cashReceivedAmount?: string | number;
   terminalReference?: string;
 }
-
 
 interface OpenDriverCodCashSettlementBody {
   tenantCode?: string;
@@ -54,7 +56,10 @@ export class PaymentsController {
     trackingToken: string,
     @Body() body?: { customerPhone?: unknown },
   ) {
-    return this.paymentsService.createQrPayment(trackingToken, body?.customerPhone);
+    return this.paymentsService.createQrPayment(
+      trackingToken,
+      body?.customerPhone,
+    );
   }
 
   // POST /api/v1/payments/orders/:trackingToken/cod
@@ -165,17 +170,14 @@ export class OpsPaymentsController {
     @Body()
     body: SettleDriverCodCashSettlementBody,
   ) {
-    return this.paymentsService.settleDriverCodCashSettlement(
-      settlementId,
-      {
-        tenantCode: request.staff.tenantCode,
-        branchCode: request.staff.branchCode,
-        receivedAmount: body?.receivedAmount,
-        cashierReference: body?.cashierReference,
-        idempotencyKey,
-        cashierAccessKey,
-      },
-    );
+    return this.paymentsService.settleDriverCodCashSettlement(settlementId, {
+      tenantCode: request.staff.tenantCode,
+      branchCode: request.staff.branchCode,
+      receivedAmount: body?.receivedAmount,
+      cashierReference: body?.cashierReference,
+      idempotencyKey,
+      cashierAccessKey,
+    });
   }
 
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -195,16 +197,13 @@ export class OpsPaymentsController {
     @Body()
     body: CancelDriverCodCashSettlementBody,
   ) {
-    return this.paymentsService.cancelDriverCodCashSettlement(
-      settlementId,
-      {
-        tenantCode: request.staff.tenantCode,
-        branchCode: request.staff.branchCode,
-        cashierReference: body?.cashierReference,
-        idempotencyKey,
-        cashierAccessKey,
-      },
-    );
+    return this.paymentsService.cancelDriverCodCashSettlement(settlementId, {
+      tenantCode: request.staff.tenantCode,
+      branchCode: request.staff.branchCode,
+      cashierReference: body?.cashierReference,
+      idempotencyKey,
+      cashierAccessKey,
+    });
   }
   // SOLO LABORATORIO:
   // POST /api/v1/ops/payments/:paymentId/mock-confirm
@@ -219,7 +218,11 @@ export class OpsPaymentsController {
     @Headers('x-payment-lab-key')
     paymentLabKey: string | undefined,
   ) {
-    return this.paymentsService.confirmMockPayment(paymentId, paymentLabKey, request.staff);
+    return this.paymentsService.confirmMockPayment(
+      paymentId,
+      paymentLabKey,
+      request.staff,
+    );
   }
 
   // R6.13.4.8.3 - Ops provider-truth reconciliation

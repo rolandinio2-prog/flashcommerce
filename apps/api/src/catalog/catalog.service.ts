@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 
 interface CatalogRow {
@@ -33,7 +37,9 @@ export class CatalogService {
 
   private requireCode(value: string | undefined): string {
     if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(value)) {
-      throw new BadRequestException('A valid commerce and branch identifier is required');
+      throw new BadRequestException(
+        'A valid commerce and branch identifier is required',
+      );
     }
     return value;
   }
@@ -41,23 +47,39 @@ export class CatalogService {
   async getBranches(tenantCode: string | undefined) {
     const tenant = this.requireCode(tenantCode);
     const result = await this.databaseService.query<{
-      tenant_code: string; tenant_name: string; branch_code: string; branch_name: string;
-    }>(`
+      tenant_code: string;
+      tenant_name: string;
+      branch_code: string;
+      branch_name: string;
+    }>(
+      `
       select t.code as tenant_code, t.name as tenant_name,
              b.code as branch_code, b.name as branch_name
       from public.tenants t
       inner join public.branches b on b.tenant_id = t.id
       where t.code = $1 and t.status = 'ACTIVE' and b.status = 'ACTIVE'
       order by b.name, b.code
-    `, [tenant]);
-    if (!result.rows.length) throw new NotFoundException('Commerce unavailable');
+    `,
+      [tenant],
+    );
+    if (!result.rows.length)
+      throw new NotFoundException('Commerce unavailable');
     return {
-      tenant: { code: result.rows[0].tenant_code, name: result.rows[0].tenant_name },
-      branches: result.rows.map(row => ({ code: row.branch_code, name: row.branch_name })),
+      tenant: {
+        code: result.rows[0].tenant_code,
+        name: result.rows[0].tenant_name,
+      },
+      branches: result.rows.map((row) => ({
+        code: row.branch_code,
+        name: row.branch_name,
+      })),
     };
   }
 
-  async getCatalog(tenantCode: string | undefined, branchCode: string | undefined) {
+  async getCatalog(
+    tenantCode: string | undefined,
+    branchCode: string | undefined,
+  ) {
     tenantCode = this.requireCode(tenantCode);
     branchCode = this.requireCode(branchCode);
     const branchResult = await this.databaseService.query<{
@@ -171,7 +193,7 @@ export class CatalogService {
           garnishImageUrl: string | null;
           garnishSortOrder: number;
 
-        presentationParentId: string | null;
+          presentationParentId: string | null;
           presentationLabel: string | null;
           presentationSortOrder: number;
           name: string;

@@ -1,9 +1,4 @@
-import {
-  Controller,
-  Get,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Req, UseGuards } from '@nestjs/common';
 
 import { StaffRoleGuard } from './staff-role.guard';
 import { StaffRoles } from './staff-roles.decorator';
@@ -15,16 +10,10 @@ import type { StaffAuthenticatedRequest } from './staff.types';
 @UseGuards(StaffSessionGuard, StaffRoleGuard)
 @StaffRoles('ADMIN', 'MANAGER', 'CASHIER')
 export class StaffTrackingController {
-  constructor(
-    private readonly staffTrackingService: StaffTrackingService,
-  ) {}
+  constructor(private readonly staffTrackingService: StaffTrackingService) {}
 
   @Get('deliveries')
-  getDeliveries(
-    @Req() request: StaffAuthenticatedRequest,
-  ) {
-    return this.staffTrackingService.getBranchTracking(
-      request.staff,
-    );
+  getDeliveries(@Req() request: StaffAuthenticatedRequest) {
+    return this.staffTrackingService.getBranchTracking(request.staff);
   }
 }

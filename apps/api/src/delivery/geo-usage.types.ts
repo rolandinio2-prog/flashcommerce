@@ -1,7 +1,4 @@
-export type GeoUsageProvider =
-  | 'GOOGLE'
-  | 'VALHALLA'
-  | 'OPEN';
+export type GeoUsageProvider = 'GOOGLE' | 'VALHALLA' | 'OPEN';
 
 export type GeoUsageOperation =
   | 'ROUTE'
@@ -21,5 +18,4 @@ export interface GeoUsageRecordInput {
   cacheHit?: boolean;
 }
 
-export type GeoUsageMeasureInput =
-  Omit<GeoUsageRecordInput, 'latencyMs'>;
+export type GeoUsageMeasureInput = Omit<GeoUsageRecordInput, 'latencyMs'>;

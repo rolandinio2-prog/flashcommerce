@@ -6,7 +6,13 @@ import { lockBranchAdmission } from '../branch-operations/service-policy';
 import type { StaffSessionPrincipal } from '../staff/staff.types';
 import { sauceOrderItems } from '../cart/sauce-pricing';
 import { prepareRiceItems } from '../cart/rice-choice';
-import { recoveryPhone, recoveryPhoneAliases, sameRecoveryPhone, RECOVERY_PAGE_SIZE, RECOVERY_UUID } from './recovery-access';
+import {
+  recoveryPhone,
+  recoveryPhoneAliases,
+  sameRecoveryPhone,
+  RECOVERY_PAGE_SIZE,
+  RECOVERY_UUID,
+} from './recovery-access';
 import {
   BadRequestException,
   ConflictException,
@@ -278,10 +284,7 @@ interface OpsOrderRow {
   operational_driver_code: string | null;
   operational_driver_name: string | null;
 
-  operational_delivery_role:
-    | 'PRIMARY'
-    | 'ADDITIONAL'
-    | null;
+  operational_delivery_role: 'PRIMARY' | 'ADDITIONAL' | null;
 
   operational_delivery_member_count: number | null;
 
@@ -344,8 +347,7 @@ interface AdditionalDeliveryPreflightRow {
   destination_longitude: string;
 }
 
-interface AdditionalDeliveryOrderContextRow
-  extends AdditionalDeliveryPreflightRow {
+interface AdditionalDeliveryOrderContextRow extends AdditionalDeliveryPreflightRow {
   has_active_assignment: boolean;
 }
 
@@ -416,52 +418,108 @@ export class OrderService {
   // =======================================================
 
   async quoteDelivery(input: CreateOrderInput) {
-    if (input.orderType !== 'DELIVERY') throw new BadRequestException('Solo se cotizan envíos DELIVERY.');
+    if (input.orderType !== 'DELIVERY')
+      throw new BadRequestException('Solo se cotizan envíos DELIVERY.');
     const result = await this.checkout(input, undefined, true);
     if (result.kind !== 'quote') throw new Error('Quote invariant failed');
     return result.quote;
   }
 
-  async createOrder(input: CreateOrderInput, customerRecoverySessionToken?: string | null) {
-    const result = await this.checkout(input, customerRecoverySessionToken, false);
+  async createOrder(
+    input: CreateOrderInput,
+    customerRecoverySessionToken?: string | null,
+  ) {
+    const result = await this.checkout(
+      input,
+      customerRecoverySessionToken,
+      false,
+    );
     if (result.kind !== 'order') throw new Error('Order invariant failed');
     return result.order;
   }
 
-  async createPosOrder(input:PosCheckoutInput,staff:StaffSessionPrincipal):Promise<unknown> {
-    const value=normalizePosCheckout(input);
-    const replay=async()=>{
-      const result=await this.databaseService.query<{order_id:string;tracking_token:string;checkout_hash:string}>('select o.id::text as order_id,o.tracking_token::text,d.checkout_hash from public.pos_drafts d join public.carts c on c.id=d.cart_id join public.orders o on o.id=d.order_id where c.cart_token=$1::uuid and d.tenant_id=$2::uuid and d.branch_id=$3::uuid and d.staff_user_id=$4::uuid',[value.cartToken,staff.tenantId,staff.branchId,staff.userId]);
-      const row=result.rows[0];if(!row)return null;
-      if(row.checkout_hash!==value.intentHash)throw new ConflictException('El pedido ya fue creado con otros datos.');
-      return {...await this.getOrderTracking(row.tracking_token),id:row.order_id};
+  async createPosOrder(
+    input: PosCheckoutInput,
+    staff: StaffSessionPrincipal,
+  ): Promise<unknown> {
+    const value = normalizePosCheckout(input);
+    const replay = async () => {
+      const result = await this.databaseService.query<{
+        order_id: string;
+        tracking_token: string;
+        checkout_hash: string;
+      }>(
+        'select o.id::text as order_id,o.tracking_token::text,d.checkout_hash from public.pos_drafts d join public.carts c on c.id=d.cart_id join public.orders o on o.id=d.order_id where c.cart_token=$1::uuid and d.tenant_id=$2::uuid and d.branch_id=$3::uuid and d.staff_user_id=$4::uuid',
+        [value.cartToken, staff.tenantId, staff.branchId, staff.userId],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      if (row.checkout_hash !== value.intentHash)
+        throw new ConflictException('El pedido ya fue creado con otros datos.');
+      return {
+        ...(await this.getOrderTracking(row.tracking_token)),
+        id: row.order_id,
+      };
     };
-    const saved=await replay();if(saved)return saved;
+    const saved = await replay();
+    if (saved) return saved;
     try {
-      const result=await this.checkout(value,undefined,false,{staff,intentHash:value.intentHash,expectedTotal:value.expectedTotal,expectedRevision:value.expectedRevision});
-      if(result.kind!=='order')throw new Error('POS invariant');return result.order;
-    } catch(error){
+      const result = await this.checkout(value, undefined, false, {
+        staff,
+        intentHash: value.intentHash,
+        expectedTotal: value.expectedTotal,
+        expectedRevision: value.expectedRevision,
+      });
+      if (result.kind !== 'order') throw new Error('POS invariant');
+      return result.order;
+    } catch (error) {
       // Only read a committed concurrent result; never retry checkout writes.
-      if(error instanceof ConflictException){const saved=await replay();if(saved)return saved;}
+      if (error instanceof ConflictException) {
+        const saved = await replay();
+        if (saved) return saved;
+      }
       throw error;
     }
   }
 
-  private async checkout(input: CreateOrderInput, customerRecoverySessionToken: string | null | undefined, quoteOnly: boolean,pos?:{staff:StaffSessionPrincipal;intentHash:string;expectedTotal:number;expectedRevision:string}) {
+  private async checkout(
+    input: CreateOrderInput,
+    customerRecoverySessionToken: string | null | undefined,
+    quoteOnly: boolean,
+    pos?: {
+      staff: StaffSessionPrincipal;
+      intentHash: string;
+      expectedTotal: number;
+      expectedRevision: string;
+    },
+  ) {
     // Quote mode must never enter reservation/table-session mutation paths.
-    if (quoteOnly && (input.orderType !== 'DELIVERY' || input.tableCode || input.tableContextToken || input.reservationTrackingToken)) {
-      throw new BadRequestException('Contexto no válido para cotizar un envío.');
+    if (
+      quoteOnly &&
+      (input.orderType !== 'DELIVERY' ||
+        input.tableCode ||
+        input.tableContextToken ||
+        input.reservationTrackingToken)
+    ) {
+      throw new BadRequestException(
+        'Contexto no válido para cotizar un envío.',
+      );
     }
-    if (input.orderType === 'DELIVERY' && !quoteOnly) requireQuoteToken(input.deliveryQuoteToken);
-    if (typeof input.cartToken !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.cartToken.trim())) {
+    if (input.orderType === 'DELIVERY' && !quoteOnly)
+      requireQuoteToken(input.deliveryQuoteToken);
+    if (
+      typeof input.cartToken !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        input.cartToken.trim(),
+      )
+    ) {
       throw new BadRequestException('cartToken must be a valid UUID');
     }
-    const customerRecoverySession =
-      customerRecoverySessionToken
-        ? await this.findCustomerRecoverySessionByToken(
-            customerRecoverySessionToken,
-          )
-        : null;
+    const customerRecoverySession = customerRecoverySessionToken
+      ? await this.findCustomerRecoverySessionByToken(
+          customerRecoverySessionToken,
+        )
+      : null;
     // ----------------------------------------------------
     // 1.1. Extraer y normalizar datos del request.
     // ----------------------------------------------------
@@ -501,16 +559,12 @@ export class OrderService {
     const hasRequestedDeliveryDestination =
       deliveryAddress !== null ||
       deliveryReference !== null ||
-      (
-        deliveryLatitude !== undefined &&
+      (deliveryLatitude !== undefined &&
         deliveryLatitude !== null &&
-        deliveryLatitude !== ''
-      ) ||
-      (
-        deliveryLongitude !== undefined &&
+        deliveryLatitude !== '') ||
+      (deliveryLongitude !== undefined &&
         deliveryLongitude !== null &&
-        deliveryLongitude !== ''
-      );
+        deliveryLongitude !== '');
 
     const customerNotes = input.customerNotes?.trim() || null;
 
@@ -589,10 +643,7 @@ export class OrderService {
     }
 
     if (additionalToTrackingToken) {
-      if (
-        orderType !== 'DINE_IN' &&
-        orderType !== 'DELIVERY'
-      ) {
+      if (orderType !== 'DINE_IN' && orderType !== 'DELIVERY') {
         throw new BadRequestException(
           'additionalToTrackingToken is only valid for DINE_IN or DELIVERY orders',
         );
@@ -640,8 +691,18 @@ export class OrderService {
       // ==================================================
 
       case 'TAKEAWAY': {
-        if (!pos && !customerName) throw new BadRequestException('customerName is required for TAKEAWAY');
-        if (!pos && (!customerPhone || !/^[0-9]{7,15}$/.test(customerPhone.replace(/\D/g, '')))) throw new BadRequestException('A valid customerPhone is required for TAKEAWAY');
+        if (!pos && !customerName)
+          throw new BadRequestException(
+            'customerName is required for TAKEAWAY',
+          );
+        if (
+          !pos &&
+          (!customerPhone ||
+            !/^[0-9]{7,15}$/.test(customerPhone.replace(/\D/g, '')))
+        )
+          throw new BadRequestException(
+            'A valid customerPhone is required for TAKEAWAY',
+          );
         break;
       }
 
@@ -703,14 +764,10 @@ export class OrderService {
     // 1.5. Transacción de checkout.
     // ----------------------------------------------------
 
-    let additionalDeliveryPreflight:
-      AdditionalDeliveryPreflightRow | null =
+    let additionalDeliveryPreflight: AdditionalDeliveryPreflightRow | null =
       null;
 
-    if (
-      orderType === 'DELIVERY' &&
-      additionalToTrackingToken
-    ) {
+    if (orderType === 'DELIVERY' && additionalToTrackingToken) {
       const sourceResult =
         await this.databaseService.query<AdditionalDeliveryPreflightRow>(
           `
@@ -795,8 +852,7 @@ export class OrderService {
           [additionalToTrackingToken, cartToken.trim()],
         );
 
-      additionalDeliveryPreflight =
-        sourceResult.rows[0] ?? null;
+      additionalDeliveryPreflight = sourceResult.rows[0] ?? null;
 
       if (!additionalDeliveryPreflight) {
         throw new ConflictException(
@@ -804,44 +860,33 @@ export class OrderService {
         );
       }
 
-      customerName =
-        customerName ??
-        additionalDeliveryPreflight.customer_name;
+      customerName = customerName ?? additionalDeliveryPreflight.customer_name;
 
       customerPhone =
-        customerPhone ??
-        additionalDeliveryPreflight.customer_phone;
+        customerPhone ?? additionalDeliveryPreflight.customer_phone;
 
       if (!hasRequestedDeliveryDestination) {
-        deliveryAddress =
-          additionalDeliveryPreflight.address_text;
+        deliveryAddress = additionalDeliveryPreflight.address_text;
 
-        deliveryReference =
-          additionalDeliveryPreflight.address_reference;
+        deliveryReference = additionalDeliveryPreflight.address_reference;
 
-        deliveryLatitude =
-          Number(
-            additionalDeliveryPreflight.destination_latitude,
-          );
+        deliveryLatitude = Number(
+          additionalDeliveryPreflight.destination_latitude,
+        );
 
-        deliveryLongitude =
-          Number(
-            additionalDeliveryPreflight.destination_longitude,
-          );
+        deliveryLongitude = Number(
+          additionalDeliveryPreflight.destination_longitude,
+        );
       }
     }
 
     if (orderType === 'DELIVERY') {
       if (!customerName) {
-        throw new BadRequestException(
-          'customerName is required for DELIVERY',
-        );
+        throw new BadRequestException('customerName is required for DELIVERY');
       }
 
       if (!customerPhone) {
-        throw new BadRequestException(
-          'customerPhone is required for DELIVERY',
-        );
+        throw new BadRequestException('customerPhone is required for DELIVERY');
       }
 
       if (!deliveryAddress) {
@@ -851,9 +896,7 @@ export class OrderService {
       }
     }
 
-    let deliveryRouteSnapshot:
-      DeliveryCheckoutRouteSnapshot | null =
-      null;
+    let deliveryRouteSnapshot: DeliveryCheckoutRouteSnapshot | null = null;
 
     if (orderType === 'DELIVERY') {
       deliveryRouteSnapshot =
@@ -903,9 +946,17 @@ export class OrderService {
         throw new NotFoundException('Cart not found');
       }
 
-      await assertPosCartAccess(client,cart.id,pos?.staff);
-      if(pos && (cart.tenant_id!==pos.staff.tenantId || cart.branch_id!==pos.staff.branchId)) throw new NotFoundException("Cart not found");
-      await lockBranchAdmission(client, cart.tenant_id, cart.branch_id, ['ORDERING', orderType]);
+      await assertPosCartAccess(client, cart.id, pos?.staff);
+      if (
+        pos &&
+        (cart.tenant_id !== pos.staff.tenantId ||
+          cart.branch_id !== pos.staff.branchId)
+      )
+        throw new NotFoundException('Cart not found');
+      await lockBranchAdmission(client, cart.tenant_id, cart.branch_id, [
+        'ORDERING',
+        orderType,
+      ]);
 
       if (cart.status !== 'OPEN') {
         throw new ConflictException(`Cart is not open: ${cart.status}`);
@@ -934,16 +985,12 @@ export class OrderService {
       // Delivery.
       // --------------------------------------------------
 
-      let additionalDeliveryContext:
-        AdditionalDeliveryOrderContextRow | null =
+      let additionalDeliveryContext: AdditionalDeliveryOrderContextRow | null =
         null;
 
       let joinAdditionalToExistingDelivery = false;
 
-      if (
-        additionalToTrackingToken &&
-        orderType === 'DELIVERY'
-      ) {
+      if (additionalToTrackingToken && orderType === 'DELIVERY') {
         const additionalDeliveryResult =
           await client.query<AdditionalDeliveryOrderContextRow>(
             `
@@ -1037,15 +1084,10 @@ export class OrderService {
 
               for update of o, m, d
             `,
-            [
-              additionalToTrackingToken,
-              cart.tenant_id,
-              cart.branch_id,
-            ],
+            [additionalToTrackingToken, cart.tenant_id, cart.branch_id],
           );
 
-        additionalDeliveryContext =
-          additionalDeliveryResult.rows[0] ?? null;
+        additionalDeliveryContext = additionalDeliveryResult.rows[0] ?? null;
 
         if (!additionalDeliveryContext) {
           throw new ConflictException(
@@ -1067,47 +1109,36 @@ export class OrderService {
         // source. Explicit values remain authoritative for
         // the new Order and make it separate when they differ.
 
-        customerName =
-          customerName ??
-          additionalDeliveryContext.customer_name;
+        customerName = customerName ?? additionalDeliveryContext.customer_name;
 
         customerPhone =
-          customerPhone ??
-          additionalDeliveryContext.customer_phone;
+          customerPhone ?? additionalDeliveryContext.customer_phone;
 
         if (!hasRequestedDeliveryDestination) {
-          deliveryAddress =
-            additionalDeliveryContext.address_text;
+          deliveryAddress = additionalDeliveryContext.address_text;
 
-          deliveryReference =
-            additionalDeliveryContext.address_reference;
+          deliveryReference = additionalDeliveryContext.address_reference;
 
-          deliveryLatitude =
-            Number(
-              additionalDeliveryContext.destination_latitude,
-            );
-
-          deliveryLongitude =
-            Number(
-              additionalDeliveryContext.destination_longitude,
-            );
-        }
-
-        const effectiveLatitude =
-          Number(deliveryLatitude);
-
-        const effectiveLongitude =
-          Number(deliveryLongitude);
-
-        const sourceLatitude =
-          Number(
+          deliveryLatitude = Number(
             additionalDeliveryContext.destination_latitude,
           );
 
-        const sourceLongitude =
-          Number(
+          deliveryLongitude = Number(
             additionalDeliveryContext.destination_longitude,
           );
+        }
+
+        const effectiveLatitude = Number(deliveryLatitude);
+
+        const effectiveLongitude = Number(deliveryLongitude);
+
+        const sourceLatitude = Number(
+          additionalDeliveryContext.destination_latitude,
+        );
+
+        const sourceLongitude = Number(
+          additionalDeliveryContext.destination_longitude,
+        );
 
         // Conservative V1:
         // the physical Delivery still owns one recipient.
@@ -1116,37 +1147,26 @@ export class OrderService {
         // member-aware.
         const sameRecipient =
           (customerName ?? '').trim().toLowerCase() ===
-            (
-              additionalDeliveryContext.customer_name ??
-              ''
-            ).trim().toLowerCase() &&
+            (additionalDeliveryContext.customer_name ?? '')
+              .trim()
+              .toLowerCase() &&
           (customerPhone ?? '').trim() ===
-            (
-              additionalDeliveryContext.customer_phone ??
-              ''
-            ).trim();
+            (additionalDeliveryContext.customer_phone ?? '').trim();
 
         const sameAddress =
           (deliveryAddress ?? '').trim().toLowerCase() ===
-          additionalDeliveryContext.address_text
-            .trim()
-            .toLowerCase();
+          additionalDeliveryContext.address_text.trim().toLowerCase();
 
         const sameCoordinates =
           Number.isFinite(effectiveLatitude) &&
           Number.isFinite(effectiveLongitude) &&
           Number.isFinite(sourceLatitude) &&
           Number.isFinite(sourceLongitude) &&
-          Math.abs(
-            effectiveLatitude - sourceLatitude,
-          ) <= 0.000001 &&
-          Math.abs(
-            effectiveLongitude - sourceLongitude,
-          ) <= 0.000001;
+          Math.abs(effectiveLatitude - sourceLatitude) <= 0.000001 &&
+          Math.abs(effectiveLongitude - sourceLongitude) <= 0.000001;
 
         joinAdditionalToExistingDelivery =
-          additionalDeliveryContext.delivery_status ===
-            'CREATED' &&
+          additionalDeliveryContext.delivery_status === 'CREATED' &&
           !additionalDeliveryContext.has_active_assignment &&
           sameRecipient &&
           sameAddress &&
@@ -1162,10 +1182,7 @@ export class OrderService {
 
       let additionalOrderContext: AdditionalOrderContextRow | null = null;
 
-      if (
-        additionalToTrackingToken &&
-        orderType === 'DINE_IN'
-      ) {
+      if (additionalToTrackingToken && orderType === 'DINE_IN') {
         const additionalOrderResult =
           await client.query<AdditionalOrderContextRow>(
             `
@@ -1194,11 +1211,7 @@ export class OrderService {
 
               for update of o, ts
             `,
-            [
-              additionalToTrackingToken,
-              cart.tenant_id,
-              cart.branch_id,
-            ],
+            [additionalToTrackingToken, cart.tenant_id, cart.branch_id],
           );
 
         additionalOrderContext = additionalOrderResult.rows[0] ?? null;
@@ -1209,10 +1222,7 @@ export class OrderService {
           );
         }
 
-        if (
-          tableCode &&
-          tableCode !== additionalOrderContext.table_code
-        ) {
+        if (tableCode && tableCode !== additionalOrderContext.table_code) {
           throw new BadRequestException(
             'Additional order must use the same table as the source order',
           );
@@ -1537,7 +1547,10 @@ export class OrderService {
       );
 
       const items = itemsResult.rows;
-      if(pos && posCartRevision(items)!==pos.expectedRevision)throw new ConflictException("Los productos cambiaron. Revisa el carrito.");
+      if (pos && posCartRevision(items) !== pos.expectedRevision)
+        throw new ConflictException(
+          'Los productos cambiaron. Revisa el carrito.',
+        );
       const quantitiesByProduct = prepareRiceItems(items);
 
       if (items.length === 0) {
@@ -1559,7 +1572,8 @@ export class OrderService {
 
         if (
           item.available_quantity !== null &&
-          (quantitiesByProduct.get(item.product_id) ?? 0) > item.available_quantity
+          (quantitiesByProduct.get(item.product_id) ?? 0) >
+            item.available_quantity
         ) {
           throw new ConflictException(
             `${item.name}: only ${item.available_quantity} units are available`,
@@ -1575,8 +1589,15 @@ export class OrderService {
       // 1.5.4. Calcular valores usando precio actual.
       // --------------------------------------------------
 
-      const pricedOrderItems = sauceOrderItems(cart.tenant_code, cart.branch_code, items);
-      const subtotal = pricedOrderItems.reduce((total, item) => total + Number(item.price) * item.quantity, 0);
+      const pricedOrderItems = sauceOrderItems(
+        cart.tenant_code,
+        cart.branch_code,
+        items,
+      );
+      const subtotal = pricedOrderItems.reduce(
+        (total, item) => total + Number(item.price) * item.quantity,
+        0,
+      );
       const discountTotal = 0;
 
       let deliveryQuote: DeliveryCheckoutQuote | null = null;
@@ -1585,30 +1606,26 @@ export class OrderService {
 
       if (orderType === 'DELIVERY') {
         if (!deliveryRouteSnapshot) {
-          throw new Error(
-            'Delivery route snapshot invariant failed',
-          );
+          throw new Error('Delivery route snapshot invariant failed');
         }
 
-        deliveryQuote =
-          await this.deliveryService.quoteDeliveryForCheckout(
-            client,
-            {
-              tenantId: cart.tenant_id,
-              branchId: cart.branch_id,
+        deliveryQuote = await this.deliveryService.quoteDeliveryForCheckout(
+          client,
+          {
+            tenantId: cart.tenant_id,
+            branchId: cart.branch_id,
 
-              latitude: deliveryLatitude,
-              longitude: deliveryLongitude,
+            latitude: deliveryLatitude,
+            longitude: deliveryLongitude,
 
-              subtotal,
-              routeSnapshot: deliveryRouteSnapshot,
-            },
-          );
+            subtotal,
+            routeSnapshot: deliveryRouteSnapshot,
+          },
+        );
 
-        deliveryFee =
-          joinAdditionalToExistingDelivery
-            ? 0
-            : deliveryQuote.deliveryFee;
+        deliveryFee = joinAdditionalToExistingDelivery
+          ? 0
+          : deliveryQuote.deliveryFee;
       }
 
       const total = subtotal - discountTotal + deliveryFee;
@@ -1618,49 +1635,95 @@ export class OrderService {
         // Route travel time is an estimate; only the origin/destination and commercial terms are bound.
         const context = JSON.stringify({
           cart: [cart.id, cart.tenant_id, cart.branch_id, cart.currency],
-          items: items.map(item => [item.product_id, item.rice_choice, item.quantity, Number(item.price), item.currency])
+          items: items
+            .map((item) => [
+              item.product_id,
+              item.rice_choice,
+              item.quantity,
+              Number(item.price),
+              item.currency,
+            ])
             .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-          destination: [deliveryAddress, deliveryReference, deliveryLatitude, deliveryLongitude],
+          destination: [
+            deliveryAddress,
+            deliveryReference,
+            deliveryLatitude,
+            deliveryLongitude,
+          ],
           recipient: [customerName, customerPhone],
           origin: deliveryRouteSnapshot.origin,
-          additional: [additionalToTrackingToken, additionalDeliveryContext?.delivery_id ?? null, joinAdditionalToExistingDelivery],
-          zone: [deliveryQuote.zoneId, deliveryQuote.zone.code, deliveryQuote.minimumOrder],
+          additional: [
+            additionalToTrackingToken,
+            additionalDeliveryContext?.delivery_id ?? null,
+            joinAdditionalToExistingDelivery,
+          ],
+          zone: [
+            deliveryQuote.zoneId,
+            deliveryQuote.zone.code,
+            deliveryQuote.minimumOrder,
+          ],
           totals: [subtotal, discountTotal, deliveryFee, total],
         });
-        if (quoteOnly) return { kind: 'quote' as const, quote: {
-          ...issueQuote(context), coverage: true as const,
-          tenant: cart.tenant_code, branch: cart.branch_code, currency: cart.currency,
-          zone: deliveryQuote.zone, minimumOrder: deliveryQuote.minimumOrder,
-          subtotal, discountTotal, deliveryFee, total,
-          eta: deliveryQuote.eta,
-          deliveryMode: joinAdditionalToExistingDelivery ? 'JOINED_EXISTING' as const : 'SEPARATE_DELIVERY' as const,
-        } };
+        if (quoteOnly)
+          return {
+            kind: 'quote' as const,
+            quote: {
+              ...issueQuote(context),
+              coverage: true as const,
+              tenant: cart.tenant_code,
+              branch: cart.branch_code,
+              currency: cart.currency,
+              zone: deliveryQuote.zone,
+              minimumOrder: deliveryQuote.minimumOrder,
+              subtotal,
+              discountTotal,
+              deliveryFee,
+              total,
+              eta: deliveryQuote.eta,
+              deliveryMode: joinAdditionalToExistingDelivery
+                ? ('JOINED_EXISTING' as const)
+                : ('SEPARATE_DELIVERY' as const),
+            },
+          };
         // Failure rolls back; it never silently creates an order at a different price.
         verifyQuote(input.deliveryQuoteToken, context);
       }
       if (quoteOnly) throw new Error('Delivery quote invariant failed');
 
-
       // Gate 7B.1: una reserva confirmada ya no confirma por si sola
       // el pedido. Todo pedido nuevo espera confirmacion de pago.
-      if(pos && Math.round(total*100)!==Math.round(pos.expectedTotal*100))throw new ConflictException("El total cambió. Revisa el carrito.");
+      if (
+        pos &&
+        Math.round(total * 100) !== Math.round(pos.expectedTotal * 100)
+      )
+        throw new ConflictException('El total cambió. Revisa el carrito.');
       const initialOrderStatus: OrderStatus = 'PENDING';
       const initialPaymentStatus: OrderPaymentStatus = 'PENDING';
 
-      const orderOrigin: OrderOrigin = pos ? 'OPS_STAFF' : reservationContext
-        ? 'RESERVATION_PREORDER'
-        : tableContext
-          ? 'TABLE_QR'
-          : 'PUBLIC_MENU';
+      const orderOrigin: OrderOrigin = pos
+        ? 'OPS_STAFF'
+        : reservationContext
+          ? 'RESERVATION_PREORDER'
+          : tableContext
+            ? 'TABLE_QR'
+            : 'PUBLIC_MENU';
 
       // --------------------------------------------------
       // 1.5.5. Crear Order + Fulfillment + Table Session.
       // --------------------------------------------------
 
-      if (input.requireRecoveryProfile && (!customerRecoverySession ||
-        customerRecoverySession.tenant_id !== cart.tenant_id ||
-        !sameRecoveryPhone(customerPhone, customerRecoverySession.phone_normalized))) {
-        throw new UnauthorizedException('Recovery session required before checkout');
+      if (
+        input.requireRecoveryProfile &&
+        (!customerRecoverySession ||
+          customerRecoverySession.tenant_id !== cart.tenant_id ||
+          !sameRecoveryPhone(
+            customerPhone,
+            customerRecoverySession.phone_normalized,
+          ))
+      ) {
+        throw new UnauthorizedException(
+          'Recovery session required before checkout',
+        );
       }
       const orderResult = await client.query<CreatedOrderRow>(
         `
@@ -1781,7 +1844,10 @@ export class OrderService {
             additionalDeliveryContext?.order_group_id ??
             null,
           customerRecoverySession?.tenant_id === cart.tenant_id &&
-          sameRecoveryPhone(customerPhone, customerRecoverySession.phone_normalized)
+          sameRecoveryPhone(
+            customerPhone,
+            customerRecoverySession.phone_normalized,
+          )
             ? customerRecoverySession.customer_account_id
             : null,
           additionalToTrackingToken,
@@ -1789,7 +1855,11 @@ export class OrderService {
       );
 
       const order = orderResult.rows[0];
-      if(pos)await client.query("update public.pos_drafts set order_id=$2::uuid,checkout_hash=$3 where cart_id=$1::uuid",[cart.id,order.id,pos.intentHash]);
+      if (pos)
+        await client.query(
+          'update public.pos_drafts set order_id=$2::uuid,checkout_hash=$3 where cart_id=$1::uuid',
+          [cart.id, order.id, pos.intentHash],
+        );
 
       let createdDelivery: CreatedDelivery | null = null;
 
@@ -1800,15 +1870,10 @@ export class OrderService {
           !customerPhone ||
           !deliveryAddress
         ) {
-          throw new Error(
-            'Delivery checkout invariant failed',
-          );
+          throw new Error('Delivery checkout invariant failed');
         }
 
-        if (
-          joinAdditionalToExistingDelivery &&
-          additionalDeliveryContext
-        ) {
+        if (joinAdditionalToExistingDelivery && additionalDeliveryContext) {
           await client.query(
             `
               insert into public.delivery_order_memberships (
@@ -1837,43 +1902,34 @@ export class OrderService {
           );
 
           createdDelivery = {
-            id:
-              additionalDeliveryContext.delivery_id,
+            id: additionalDeliveryContext.delivery_id,
 
-            trackingToken:
-              additionalDeliveryContext
-                .delivery_tracking_token,
+            trackingToken: additionalDeliveryContext.delivery_tracking_token,
 
             status: 'CREATED',
           };
-        }
-        else {
-          createdDelivery =
-            await this.deliveryService
-              .createDeliveryForOrder(
-                client,
-                {
-                  tenantId: cart.tenant_id,
-                  branchId: cart.branch_id,
+        } else {
+          createdDelivery = await this.deliveryService.createDeliveryForOrder(
+            client,
+            {
+              tenantId: cart.tenant_id,
+              branchId: cart.branch_id,
 
-                  orderId: order.id,
+              orderId: order.id,
 
-                  quote: deliveryQuote,
+              quote: deliveryQuote,
 
-                  recipientName: customerName,
-                  recipientPhone: customerPhone,
+              recipientName: customerName,
+              recipientPhone: customerPhone,
 
-                  addressText: deliveryAddress,
-                  addressReference:
-                    deliveryReference,
+              addressText: deliveryAddress,
+              addressReference: deliveryReference,
 
-                  latitude:
-                    deliveryLatitude as number,
+              latitude: deliveryLatitude as number,
 
-                  longitude:
-                    deliveryLongitude as number,
-                },
-              );
+              longitude: deliveryLongitude as number,
+            },
+          );
         }
       }
 
@@ -1948,123 +2004,124 @@ export class OrderService {
       // 1.5.8. Respuesta.
       // --------------------------------------------------
 
-      return { kind: 'order' as const, order: {
-        id: order.id,
+      return {
+        kind: 'order' as const,
+        order: {
+          id: order.id,
 
-        orderNumber: order.order_number,
+          orderNumber: order.order_number,
 
-        trackingToken: order.tracking_token,
+          trackingToken: order.tracking_token,
 
-        orderGroup: order.order_group_id,
+          orderGroup: order.order_group_id,
 
-        orderType: order.order_type,
+          orderType: order.order_type,
 
-        status: order.status,
+          status: order.status,
 
-        paymentStatus: order.payment_status,
+          paymentStatus: order.payment_status,
 
-        orderOrigin: order.order_origin,
+          orderOrigin: order.order_origin,
 
-        currency: order.currency,
+          currency: order.currency,
 
-        // ----------------------------------------------
-        // Fulfillment V0.1
-        // ----------------------------------------------
+          // ----------------------------------------------
+          // Fulfillment V0.1
+          // ----------------------------------------------
 
-        fulfillment: {
-          scheduledFor: order.scheduled_for,
+          fulfillment: {
+            scheduledFor: order.scheduled_for,
 
-          customerName: order.customer_name,
+            customerName: order.customer_name,
 
-          customerPhone: order.customer_phone,
+            customerPhone: order.customer_phone,
 
-          tableCode: order.table_code,
+            tableCode: order.table_code,
 
-          deliveryAddress: order.delivery_address,
+            deliveryAddress: order.delivery_address,
 
-          customerNotes: order.customer_notes,
-        },
-
-        deliveryRelationship:
-          orderType === 'DELIVERY' &&
-          additionalToTrackingToken
-            ? {
-                mode:
-                  joinAdditionalToExistingDelivery
-                    ? 'JOINED_EXISTING'
-                    : 'SEPARATE_DELIVERY',
-              }
-            : null,
-
-        delivery:
-          createdDelivery && deliveryQuote
-            ? {
-                status: createdDelivery.status,
-
-                zone: {
-                  code: deliveryQuote.zone.code,
-                  name: deliveryQuote.zone.name,
-                },
-
-                deliveryFee,
-
-                eta: {
-                  minMinutes: deliveryQuote.eta.minMinutes,
-                  maxMinutes: deliveryQuote.eta.maxMinutes,
-                },
-              }
-            : null,
-
-        reservation: reservationContext
-          ? {
-              id: reservationContext.id,
-              reservationCode: reservationContext.reservation_code,
-              trackingToken: reservationContext.tracking_token,
-              reservedFor: reservationContext.reserved_for,
-              table: {
-                id: reservationContext.table_id,
-                code: reservationContext.table_code,
-                name: reservationContext.table_name,
-              },
-            }
-          : null,
-
-        tenant: {
-          code: cart.tenant_code,
-        },
-
-        branch: {
-          code: cart.branch_code,
-        },
-
-        items: pricedOrderItems.map((item) => ({
-          product: {
-            id: item.product_id,
-            sku: item.sku,
-            name: item.name,
+            customerNotes: order.customer_notes,
           },
 
-          quantity: item.quantity,
+          deliveryRelationship:
+            orderType === 'DELIVERY' && additionalToTrackingToken
+              ? {
+                  mode: joinAdditionalToExistingDelivery
+                    ? 'JOINED_EXISTING'
+                    : 'SEPARATE_DELIVERY',
+                }
+              : null,
 
-          unitPrice: Number(item.price),
+          delivery:
+            createdDelivery && deliveryQuote
+              ? {
+                  status: createdDelivery.status,
 
-          lineTotal: Number(item.price) * item.quantity,
+                  zone: {
+                    code: deliveryQuote.zone.code,
+                    name: deliveryQuote.zone.name,
+                  },
 
-          currency: item.currency,
-        })),
+                  deliveryFee,
 
-        totals: {
-          subtotal: Number(order.subtotal),
+                  eta: {
+                    minMinutes: deliveryQuote.eta.minMinutes,
+                    maxMinutes: deliveryQuote.eta.maxMinutes,
+                  },
+                }
+              : null,
 
-          discountTotal: Number(order.discount_total),
+          reservation: reservationContext
+            ? {
+                id: reservationContext.id,
+                reservationCode: reservationContext.reservation_code,
+                trackingToken: reservationContext.tracking_token,
+                reservedFor: reservationContext.reserved_for,
+                table: {
+                  id: reservationContext.table_id,
+                  code: reservationContext.table_code,
+                  name: reservationContext.table_name,
+                },
+              }
+            : null,
 
-          deliveryFee: Number(order.delivery_fee),
+          tenant: {
+            code: cart.tenant_code,
+          },
 
-          total: Number(order.total),
+          branch: {
+            code: cart.branch_code,
+          },
+
+          items: pricedOrderItems.map((item) => ({
+            product: {
+              id: item.product_id,
+              sku: item.sku,
+              name: item.name,
+            },
+
+            quantity: item.quantity,
+
+            unitPrice: Number(item.price),
+
+            lineTotal: Number(item.price) * item.quantity,
+
+            currency: item.currency,
+          })),
+
+          totals: {
+            subtotal: Number(order.subtotal),
+
+            discountTotal: Number(order.discount_total),
+
+            deliveryFee: Number(order.delivery_fee),
+
+            total: Number(order.total),
+          },
+
+          createdAt: order.created_at,
         },
-
-        createdAt: order.created_at,
-      } };
+      };
     });
   }
 
@@ -2285,9 +2342,8 @@ export class OrderService {
     latitude: unknown,
     longitude: unknown,
   ): Promise<DeliveryCheckoutRouteSnapshot> {
-    const cartResult =
-      await this.databaseService.query<CartRow>(
-        `
+    const cartResult = await this.databaseService.query<CartRow>(
+      `
           select
             c.id::text,
             c.tenant_id::text,
@@ -2307,39 +2363,25 @@ export class OrderService {
           where c.cart_token = $1::uuid
           limit 1
         `,
-        [
-          cartToken,
-        ],
-      );
+      [cartToken],
+    );
 
-    const cart =
-      cartResult.rows[0];
+    const cart = cartResult.rows[0];
 
     if (!cart) {
-      throw new NotFoundException(
-        'Cart not found',
-      );
+      throw new NotFoundException('Cart not found');
     }
 
     if (cart.status !== 'OPEN') {
-      throw new ConflictException(
-        `Cart is not open: ${cart.status}`,
-      );
+      throw new ConflictException(`Cart is not open: ${cart.status}`);
     }
 
-    if (
-      new Date(
-        cart.expires_at,
-      ).getTime() <= Date.now()
-    ) {
-      throw new ConflictException(
-        'Cart has expired',
-      );
+    if (new Date(cart.expires_at).getTime() <= Date.now()) {
+      throw new ConflictException('Cart has expired');
     }
 
-    const itemsResult =
-      await this.databaseService.query<CheckoutItemRow>(
-        `
+    const itemsResult = await this.databaseService.query<CheckoutItemRow>(
+      `
           select
             ci.product_id::text,
             ci.rice_choice,
@@ -2366,91 +2408,66 @@ export class OrderService {
             and ci.cart_id = $2::uuid
           order by ci.created_at, ci.id
         `,
-        [
-          cart.tenant_id,
-          cart.id,
-          cart.branch_id,
-        ],
-      );
+      [cart.tenant_id, cart.id, cart.branch_id],
+    );
 
-    const items =
-      itemsResult.rows;
-      const quantitiesByProduct = prepareRiceItems(items);
+    const items = itemsResult.rows;
+    const quantitiesByProduct = prepareRiceItems(items);
 
     if (items.length === 0) {
-      throw new BadRequestException(
-        'Cart is empty',
-      );
+      throw new BadRequestException('Cart is empty');
     }
 
     for (const item of items) {
-      if (
-        !item.is_available ||
-        item.price === null ||
-        item.currency === null
-      ) {
-        throw new ConflictException(
-          `${item.name} is no longer available`,
-        );
+      if (!item.is_available || item.price === null || item.currency === null) {
+        throw new ConflictException(`${item.name} is no longer available`);
       }
 
       if (
         item.available_quantity !== null &&
-        (quantitiesByProduct.get(item.product_id) ?? 0) > item.available_quantity
+        (quantitiesByProduct.get(item.product_id) ?? 0) >
+          item.available_quantity
       ) {
         throw new ConflictException(
           `${item.name}: only ${item.available_quantity} units are available`,
         );
       }
 
-      if (
-        item.currency !== cart.currency
-      ) {
-        throw new ConflictException(
-          `${item.name} has a different currency`,
-        );
+      if (item.currency !== cart.currency) {
+        throw new ConflictException(`${item.name} has a different currency`);
       }
     }
 
-    const pricedOrderItems = sauceOrderItems(cart.tenant_code, cart.branch_code, items);
-    const subtotal =
-      pricedOrderItems.reduce(
-        (total, item) =>
-          total +
-          Number(item.price) *
-            item.quantity,
-        0,
-      );
+    const pricedOrderItems = sauceOrderItems(
+      cart.tenant_code,
+      cart.branch_code,
+      items,
+    );
+    const subtotal = pricedOrderItems.reduce(
+      (total, item) => total + Number(item.price) * item.quantity,
+      0,
+    );
 
-    return this.deliveryService
-      .prepareDeliveryCheckoutRoute({
-        tenantId:
-          cart.tenant_id,
+    return this.deliveryService.prepareDeliveryCheckoutRoute({
+      tenantId: cart.tenant_id,
 
-        branchId:
-          cart.branch_id,
+      branchId: cart.branch_id,
 
-        latitude,
-        longitude,
+      latitude,
+      longitude,
 
-        subtotal,
-      });
+      subtotal,
+    });
   }
-  async getDeliveryLocation(
-    trackingToken: string,
-  ) {
-    return this.deliveryService
-      .getPublicDeliveryLocationByOrderTrackingToken(
-        trackingToken,
-      );
+  async getDeliveryLocation(trackingToken: string) {
+    return this.deliveryService.getPublicDeliveryLocationByOrderTrackingToken(
+      trackingToken,
+    );
   }
-  async getDeliveryPod(
-    trackingToken: string,
-  ) {
-    return this.deliveryService
-      .getPublicDeliveryPodByOrderTrackingToken(
-        trackingToken,
-      );
+  async getDeliveryPod(trackingToken: string) {
+    return this.deliveryService.getPublicDeliveryPodByOrderTrackingToken(
+      trackingToken,
+    );
   }
   // =======================================================
   // 3. ACTUALIZAR ESTADO OPERATIVO
@@ -2560,32 +2577,33 @@ export class OrderService {
         );
       }
 
-      if (order.order_type === 'DELIVERY' && ['CONFIRMED', 'PREPARING', 'READY'].includes(nextStatus)) {
-        await assertDeliveryQrPaid(client, {tenant_id: order.tenant_id, branch_id: order.branch_id, order_id: order.id});
+      if (
+        order.order_type === 'DELIVERY' &&
+        ['CONFIRMED', 'PREPARING', 'READY'].includes(nextStatus)
+      ) {
+        await assertDeliveryQrPaid(client, {
+          tenant_id: order.tenant_id,
+          branch_id: order.branch_id,
+          order_id: order.id,
+        });
       }
 
-      const paymentVerified =
-        ['PAID', 'NOT_REQUIRED'].includes(
-          order.payment_status,
-        );
+      const paymentVerified = ['PAID', 'NOT_REQUIRED'].includes(
+        order.payment_status,
+      );
 
       let explicitDriverCod = false;
 
       if (
-        (
-          nextStatus === 'CONFIRMED' ||
-          nextStatus === 'PREPARING'
-        ) &&
+        (nextStatus === 'CONFIRMED' || nextStatus === 'PREPARING') &&
         !paymentVerified &&
         order.order_type === 'DELIVERY' &&
-        order.payment_status ===
-          'AWAITING_CONFIRMATION'
+        order.payment_status === 'AWAITING_CONFIRMATION'
       ) {
-        const codResult =
-          await client.query<{
-            eligible: boolean;
-          }>(
-            `
+        const codResult = await client.query<{
+          eligible: boolean;
+        }>(
+          `
               select exists (
                 select 1
 
@@ -2600,16 +2618,10 @@ export class OrderService {
                     'AWAITING_CONFIRMATION'
               ) as eligible
             `,
-            [
-              order.tenant_id,
-              order.branch_id,
-              order.id,
-            ],
-          );
+          [order.tenant_id, order.branch_id, order.id],
+        );
 
-        explicitDriverCod =
-          codResult.rows[0]?.eligible ??
-          false;
+        explicitDriverCod = codResult.rows[0]?.eligible ?? false;
       }
 
       if (
@@ -3197,25 +3209,17 @@ export class OrderService {
               id: order.operational_delivery_id,
               status: order.operational_delivery_status,
 
-              relationshipRole:
-                order.operational_delivery_role,
+              relationshipRole: order.operational_delivery_role,
 
-              memberCount:
-                order.operational_delivery_member_count ??
-                1,
+              memberCount: order.operational_delivery_member_count ?? 1,
 
-              isShared:
-                (
-                  order.operational_delivery_member_count ??
-                  1
-                ) > 1,
+              isShared: (order.operational_delivery_member_count ?? 1) > 1,
 
               assignment: order.operational_assignment_id
                 ? {
                     id: order.operational_assignment_id,
                     status: order.operational_assignment_status,
-                    acceptedAt:
-                      order.operational_assignment_accepted_at,
+                    acceptedAt: order.operational_assignment_accepted_at,
                     driver: order.operational_driver_id
                       ? {
                           id: order.operational_driver_id,
@@ -3241,11 +3245,9 @@ export class OrderService {
   // CUSTOMER ORDER RECOVERY V1
   // =========================================================
 
-  private readonly customerRecoveryCookieName =
-    'flash_customer_session';
+  private readonly customerRecoveryCookieName = 'flash_customer_session';
 
-  private readonly customerRecoverySessionMaxAgeMs =
-    30 * 24 * 60 * 60 * 1000;
+  private readonly customerRecoverySessionMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
 
   getCustomerRecoverySessionCookieName(): string {
     return this.customerRecoveryCookieName;
@@ -3255,9 +3257,7 @@ export class OrderService {
     return this.customerRecoverySessionMaxAgeMs;
   }
 
-  extractCustomerRecoverySessionToken(
-    cookieHeader?: string,
-  ): string | null {
+  extractCustomerRecoverySessionToken(cookieHeader?: string): string | null {
     const cookieText = cookieHeader || '';
 
     for (const pair of cookieText.split(';')) {
@@ -3281,37 +3281,29 @@ export class OrderService {
     return null;
   }
 
-  async enrollCustomerRecovery(
-    input: CustomerRecoveryEnrollInput,
-  ) {
-    const trackingToken =
-      input.trackingToken?.trim() || '';
+  async enrollCustomerRecovery(input: CustomerRecoveryEnrollInput) {
+    const trackingToken = input.trackingToken?.trim() || '';
 
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
         trackingToken,
       )
     ) {
-      throw new BadRequestException(
-        'trackingToken must be a valid UUID',
-      );
+      throw new BadRequestException('trackingToken must be a valid UUID');
     }
 
-    const phoneNormalized =
-      this.normalizeCustomerRecoveryPhone(input.phone);
+    const phoneNormalized = this.normalizeCustomerRecoveryPhone(input.phone);
 
-    const pin =
-      this.normalizeCustomerRecoveryPin(input.pin);
+    const pin = this.normalizeCustomerRecoveryPin(input.pin);
 
-    const orderResult =
-      await this.databaseService.query<{
-        tenant_id: string;
-        tenant_code: string;
-        order_group_id: string;
-        customer_account_id: string | null;
-        customer_phone: string | null;
-      }>(
-        `
+    const orderResult = await this.databaseService.query<{
+      tenant_id: string;
+      tenant_code: string;
+      order_group_id: string;
+      customer_account_id: string | null;
+      customer_phone: string | null;
+    }>(
+      `
           select
             o.tenant_id::text,
             t.code as tenant_code,
@@ -3328,8 +3320,8 @@ export class OrderService {
 
           limit 1
         `,
-        [trackingToken],
-      );
+      [trackingToken],
+    );
 
     const order = orderResult.rows[0];
 
@@ -3338,30 +3330,27 @@ export class OrderService {
     }
 
     if (!sameRecoveryPhone(order.customer_phone, phoneNormalized)) {
-      throw new BadRequestException('Usa el telefono de contacto de este pedido para activar su recuperacion');
+      throw new BadRequestException(
+        'Usa el telefono de contacto de este pedido para activar su recuperacion',
+      );
     }
 
-    let account =
-      await this.findCustomerRecoveryAccount(
-        order.tenant_id,
-        phoneNormalized,
-      );
+    let account = await this.findCustomerRecoveryAccount(
+      order.tenant_id,
+      phoneNormalized,
+    );
 
     if (account) {
-      await this.assertCustomerRecoveryPin(
-        account,
-        pin,
-      );
+      await this.assertCustomerRecoveryPin(account, pin);
     } else {
-      const created =
-        await this.databaseService.query<{
-          id: string;
-          tenant_id: string;
-          pin_hash: string;
-          failed_attempts: number;
-          locked_until: string | Date | null;
-        }>(
-          `
+      const created = await this.databaseService.query<{
+        id: string;
+        tenant_id: string;
+        pin_hash: string;
+        failed_attempts: number;
+        locked_until: string | Date | null;
+      }>(
+        `
             insert into public.customer_accounts (
               tenant_id,
               phone_normalized,
@@ -3384,21 +3373,16 @@ export class OrderService {
               failed_attempts,
               locked_until
           `,
-          [
-            order.tenant_id,
-            phoneNormalized,
-            this.hashCustomerRecoveryPin(pin),
-          ],
-        );
+        [order.tenant_id, phoneNormalized, this.hashCustomerRecoveryPin(pin)],
+      );
 
       account = created.rows[0] ?? null;
 
       if (!account) {
-        account =
-          await this.findCustomerRecoveryAccount(
-            order.tenant_id,
-            phoneNormalized,
-          );
+        account = await this.findCustomerRecoveryAccount(
+          order.tenant_id,
+          phoneNormalized,
+        );
 
         if (!account) {
           throw new ConflictException(
@@ -3406,17 +3390,11 @@ export class OrderService {
           );
         }
 
-        await this.assertCustomerRecoveryPin(
-          account,
-          pin,
-        );
+        await this.assertCustomerRecoveryPin(account, pin);
       }
     }
 
-    if (
-      order.customer_account_id &&
-      order.customer_account_id !== account.id
-    ) {
+    if (order.customer_account_id && order.customer_account_id !== account.id) {
       throw new ConflictException(
         'Order is already linked to another recovery account',
       );
@@ -3426,72 +3404,115 @@ export class OrderService {
       `update public.orders set customer_account_id=$3::uuid, updated_at=now()
        where tenant_id=$1::uuid and tracking_token=$2::uuid
          and (customer_account_id is null or customer_account_id=$3::uuid)
-       returning id`, [order.tenant_id, trackingToken, account.id]);
-    if (linked.rows.length !== 1) throw new ConflictException('Order is already linked to another recovery account');
-
-    const sessionToken =
-      await this.createCustomerRecoverySession(
-        order.tenant_id,
-        account.id,
+       returning id`,
+      [order.tenant_id, trackingToken, account.id],
+    );
+    if (linked.rows.length !== 1)
+      throw new ConflictException(
+        'Order is already linked to another recovery account',
       );
 
-    const recoveredResult =
-      await this.databaseService.query<{
-        count: string;
-      }>(
-        `
+    const sessionToken = await this.createCustomerRecoverySession(
+      order.tenant_id,
+      account.id,
+    );
+
+    const recoveredResult = await this.databaseService.query<{
+      count: string;
+    }>(
+      `
           select count(*)::text as count
           from public.orders
           where tenant_id = $1::uuid
             and customer_account_id = $2::uuid
         `,
-        [
-          order.tenant_id,
-          account.id,
-        ],
-      );
+      [order.tenant_id, account.id],
+    );
 
     return {
       sessionToken,
       tenantCode: order.tenant_code,
-      recoveredOrderCount:
-        Number(recoveredResult.rows[0]?.count ?? 0),
+      recoveredOrderCount: Number(recoveredResult.rows[0]?.count ?? 0),
     };
   }
 
-  async getCustomerRecoveryProfile(cookieHeader: string | undefined, tenantCode: string) {
+  async getCustomerRecoveryProfile(
+    cookieHeader: string | undefined,
+    tenantCode: string,
+  ) {
     const raw = this.extractCustomerRecoverySessionToken(cookieHeader);
-    const session = raw ? await this.findCustomerRecoverySessionByToken(raw) : null;
-    if (!session || session.tenant_code !== tenantCode) throw new UnauthorizedException('Recovery session required');
-    const result = await this.databaseService.query<{full_name: string | null}>(
+    const session = raw
+      ? await this.findCustomerRecoverySessionByToken(raw)
+      : null;
+    if (!session || session.tenant_code !== tenantCode)
+      throw new UnauthorizedException('Recovery session required');
+    const result = await this.databaseService.query<{
+      full_name: string | null;
+    }>(
       'select full_name from public.customer_accounts where id=$1::uuid and tenant_id=$2::uuid',
-      [session.customer_account_id, session.tenant_id]);
-    return { fullName: result.rows[0]?.full_name ?? '', phone: recoveryPhone(session.phone_normalized), tenantCode };
+      [session.customer_account_id, session.tenant_id],
+    );
+    return {
+      fullName: result.rows[0]?.full_name ?? '',
+      phone: recoveryPhone(session.phone_normalized),
+      tenantCode,
+    };
   }
 
-  async registerCustomerRecovery(input: CustomerRecoveryLoginInput & {fullName?: string}, cookieHeader?: string) {
-    const tenantCode = typeof input.tenantCode === 'string' ? input.tenantCode.trim() : '';
-    const fullName = typeof input.fullName === 'string' ? input.fullName.trim().replace(/\s+/g, ' ') : '';
-    if (fullName.length < 2 || fullName.length > 120) throw new BadRequestException('Enter a full name between 2 and 120 characters');
+  async registerCustomerRecovery(
+    input: CustomerRecoveryLoginInput & { fullName?: string },
+    cookieHeader?: string,
+  ) {
+    const tenantCode =
+      typeof input.tenantCode === 'string' ? input.tenantCode.trim() : '';
+    const fullName =
+      typeof input.fullName === 'string'
+        ? input.fullName.trim().replace(/\s+/g, ' ')
+        : '';
+    if (fullName.length < 2 || fullName.length > 120)
+      throw new BadRequestException(
+        'Enter a full name between 2 and 120 characters',
+      );
     const phone = this.normalizeCustomerRecoveryPhone(input.phone);
-    const tenant = (await this.databaseService.query<{id:string;code:string}>(
-      'select id::text,code from public.tenants where code=$1 limit 1', [tenantCode])).rows[0];
-    if (!tenant) throw new UnauthorizedException('Invalid recovery credentials');
+    const tenant = (
+      await this.databaseService.query<{ id: string; code: string }>(
+        'select id::text,code from public.tenants where code=$1 limit 1',
+        [tenantCode],
+      )
+    ).rows[0];
+    if (!tenant)
+      throw new UnauthorizedException('Invalid recovery credentials');
     const raw = this.extractCustomerRecoverySessionToken(cookieHeader);
-    const session = raw ? await this.findCustomerRecoverySessionByToken(raw) : null;
+    const session = raw
+      ? await this.findCustomerRecoverySessionByToken(raw)
+      : null;
     let account = await this.findCustomerRecoveryAccount(tenant.id, phone);
-    const authenticated = Boolean(account && session && session.tenant_id === tenant.id &&
-      session.customer_account_id === account.id && sameRecoveryPhone(phone, session.phone_normalized));
+    const authenticated = Boolean(
+      account &&
+      session &&
+      session.tenant_id === tenant.id &&
+      session.customer_account_id === account.id &&
+      sameRecoveryPhone(phone, session.phone_normalized),
+    );
     if (!authenticated) {
-      if (!input.pin) throw new UnauthorizedException('Recovery credentials required');
+      if (!input.pin)
+        throw new UnauthorizedException('Recovery credentials required');
       const pin = this.normalizeCustomerRecoveryPin(input.pin);
       if (!account) {
         // Never claim historical orders by phone or replace a disabled/legacy account.
-        await this.databaseService.query(`insert into public.customer_accounts (tenant_id,phone_normalized,pin_hash,full_name)
+        await this.databaseService.query(
+          `insert into public.customer_accounts (tenant_id,phone_normalized,pin_hash,full_name)
           select $1::uuid,$2,$3,$4 where not exists (
             select 1 from public.customer_accounts where tenant_id=$1::uuid and phone_normalized=any($5::text[]))
           on conflict (tenant_id,phone_normalized) do nothing`,
-          [tenant.id, phone, this.hashCustomerRecoveryPin(pin), fullName, recoveryPhoneAliases(phone)]);
+          [
+            tenant.id,
+            phone,
+            this.hashCustomerRecoveryPin(pin),
+            fullName,
+            recoveryPhoneAliases(phone),
+          ],
+        );
         account = await this.findCustomerRecoveryAccount(tenant.id, phone);
       }
       if (!account) {
@@ -3500,25 +3521,48 @@ export class OrderService {
       }
       await this.assertCustomerRecoveryPin(account, pin);
     }
-    if (!account) throw new UnauthorizedException('Invalid recovery credentials');
+    if (!account)
+      throw new UnauthorizedException('Invalid recovery credentials');
     // Registration authenticates existing accounts but never renames them.
     // An explicit, session-bound and PIN-verified action updates the name.
-    const sessionToken = authenticated ? raw! : await this.createCustomerRecoverySession(tenant.id, account.id);
+    const sessionToken = authenticated
+      ? raw!
+      : await this.createCustomerRecoverySession(tenant.id, account.id);
     return { sessionToken, tenantCode, fullName, phone };
   }
 
-  async updateCustomerRecoveryName(input: CustomerRecoveryLoginInput & {fullName?: string}, cookieHeader?: string) {
-    const tenantCode = typeof input.tenantCode === 'string' ? input.tenantCode.trim() : '';
+  async updateCustomerRecoveryName(
+    input: CustomerRecoveryLoginInput & { fullName?: string },
+    cookieHeader?: string,
+  ) {
+    const tenantCode =
+      typeof input.tenantCode === 'string' ? input.tenantCode.trim() : '';
     const raw = this.extractCustomerRecoverySessionToken(cookieHeader);
-    const session = raw ? await this.findCustomerRecoverySessionByToken(raw) : null;
+    const session = raw
+      ? await this.findCustomerRecoverySessionByToken(raw)
+      : null;
     const phone = this.normalizeCustomerRecoveryPhone(input.phone);
-    if (!session || session.tenant_code !== tenantCode || !sameRecoveryPhone(phone, session.phone_normalized))
+    if (
+      !session ||
+      session.tenant_code !== tenantCode ||
+      !sameRecoveryPhone(phone, session.phone_normalized)
+    )
       throw new UnauthorizedException('Invalid recovery credentials');
-    const fullName = typeof input.fullName === 'string' ? input.fullName.trim().replace(/\s+/g, ' ') : '';
-    if (fullName.length < 2 || fullName.length > 120) throw new BadRequestException('Enter a full name between 2 and 120 characters');
+    const fullName =
+      typeof input.fullName === 'string'
+        ? input.fullName.trim().replace(/\s+/g, ' ')
+        : '';
+    if (fullName.length < 2 || fullName.length > 120)
+      throw new BadRequestException(
+        'Enter a full name between 2 and 120 characters',
+      );
     const pin = this.normalizeCustomerRecoveryPin(input.pin);
-    const account = await this.findCustomerRecoveryAccount(session.tenant_id, phone);
-    if (!account || account.id !== session.customer_account_id) throw new UnauthorizedException('Invalid recovery credentials');
+    const account = await this.findCustomerRecoveryAccount(
+      session.tenant_id,
+      phone,
+    );
+    if (!account || account.id !== session.customer_account_id)
+      throw new UnauthorizedException('Invalid recovery credentials');
     await this.assertCustomerRecoveryPin(account, pin);
     // Recheck session validity at the write, including revocation during the request.
     const changed = await this.databaseService.query(
@@ -3526,35 +3570,35 @@ export class OrderService {
        where a.id=$2::uuid and a.tenant_id=$3::uuid and a.status='ACTIVE'
        and exists(select 1 from public.customer_sessions s where s.customer_account_id=a.id
          and s.tenant_id=a.tenant_id and s.token_hash=$4 and s.revoked_at is null and s.expires_at>now())
-       returning a.id`, [fullName, account.id, session.tenant_id, this.hashCustomerRecoverySessionToken(raw!)]);
-    if (!changed.rows.length) throw new UnauthorizedException('Invalid recovery credentials');
-    return {authenticated:true};
+       returning a.id`,
+      [
+        fullName,
+        account.id,
+        session.tenant_id,
+        this.hashCustomerRecoverySessionToken(raw!),
+      ],
+    );
+    if (!changed.rows.length)
+      throw new UnauthorizedException('Invalid recovery credentials');
+    return { authenticated: true };
   }
 
-  async loginCustomerRecovery(
-    input: CustomerRecoveryLoginInput,
-  ) {
-    const tenantCode =
-      input.tenantCode?.trim() || '';
+  async loginCustomerRecovery(input: CustomerRecoveryLoginInput) {
+    const tenantCode = input.tenantCode?.trim() || '';
 
     if (!tenantCode) {
-      throw new BadRequestException(
-        'tenantCode is required',
-      );
+      throw new BadRequestException('tenantCode is required');
     }
 
-    const phoneNormalized =
-      this.normalizeCustomerRecoveryPhone(input.phone);
+    const phoneNormalized = this.normalizeCustomerRecoveryPhone(input.phone);
 
-    const pin =
-      this.normalizeCustomerRecoveryPin(input.pin);
+    const pin = this.normalizeCustomerRecoveryPin(input.pin);
 
-    const tenantResult =
-      await this.databaseService.query<{
-        id: string;
-        code: string;
-      }>(
-        `
+    const tenantResult = await this.databaseService.query<{
+      id: string;
+      code: string;
+    }>(
+      `
           select
             id::text,
             code
@@ -3562,41 +3606,32 @@ export class OrderService {
           where code = $1
           limit 1
         `,
-        [tenantCode],
-      );
+      [tenantCode],
+    );
 
     const tenant = tenantResult.rows[0];
 
     if (!tenant) {
       this.performDummyCustomerRecoveryPinWork(pin);
-      throw new UnauthorizedException(
-        'Invalid recovery credentials',
-      );
+      throw new UnauthorizedException('Invalid recovery credentials');
     }
 
-    const account =
-      await this.findCustomerRecoveryAccount(
-        tenant.id,
-        phoneNormalized,
-      );
+    const account = await this.findCustomerRecoveryAccount(
+      tenant.id,
+      phoneNormalized,
+    );
 
     if (!account) {
       this.performDummyCustomerRecoveryPinWork(pin);
-      throw new UnauthorizedException(
-        'Invalid recovery credentials',
-      );
+      throw new UnauthorizedException('Invalid recovery credentials');
     }
 
-    await this.assertCustomerRecoveryPin(
-      account,
-      pin,
-    );
+    await this.assertCustomerRecoveryPin(account, pin);
 
-    const sessionToken =
-      await this.createCustomerRecoverySession(
-        tenant.id,
-        account.id,
-      );
+    const sessionToken = await this.createCustomerRecoverySession(
+      tenant.id,
+      account.id,
+    );
 
     return {
       sessionToken,
@@ -3604,46 +3639,83 @@ export class OrderService {
     };
   }
 
-  async linkCustomerRecoveryOrders(cookieHeader: string | undefined, input: {
-    tenantCode?: string; branchCode?: string; trackingTokens?: unknown;
-  }) {
+  async linkCustomerRecoveryOrders(
+    cookieHeader: string | undefined,
+    input: {
+      tenantCode?: string;
+      branchCode?: string;
+      trackingTokens?: unknown;
+    },
+  ) {
     const tokens = input.trackingTokens;
-    if (!Array.isArray(tokens) || tokens.length > 100 || tokens.some(t => typeof t !== 'string' || !RECOVERY_UUID.test(t))) {
+    if (
+      !Array.isArray(tokens) ||
+      tokens.length > 100 ||
+      tokens.some((t) => typeof t !== 'string' || !RECOVERY_UUID.test(t))
+    ) {
       throw new BadRequestException('Invalid order access list');
     }
     const raw = this.extractCustomerRecoverySessionToken(cookieHeader);
-    const session = raw ? await this.findCustomerRecoverySessionByToken(raw) : null;
-    if (!session || session.tenant_code !== input.tenantCode) throw new UnauthorizedException('Customer recovery session required');
-    const branchCode=input.branchCode?.trim();
+    const session = raw
+      ? await this.findCustomerRecoverySessionByToken(raw)
+      : null;
+    if (!session || session.tenant_code !== input.tenantCode)
+      throw new UnauthorizedException('Customer recovery session required');
+    const branchCode = input.branchCode?.trim();
     if (!branchCode) throw new BadRequestException('branch required');
-    return this.databaseService.withTransaction(async client => {
+    return this.databaseService.withTransaction(async (client) => {
       const result = await client.query<{
-        id: string; customer_account_id: string | null; customer_phone: string | null;
-      }>(`select o.id::text, o.customer_account_id::text, o.customer_phone
+        id: string;
+        customer_account_id: string | null;
+        customer_phone: string | null;
+      }>(
+        `select o.id::text, o.customer_account_id::text, o.customer_phone
         from public.orders o join public.branches b on b.id=o.branch_id and b.tenant_id=o.tenant_id
         where o.tenant_id=$1::uuid and b.code=$2 and o.tracking_token=any($3::uuid[]) for update of o`,
-        [session.tenant_id, branchCode, [...new Set(tokens)]]);
-      const eligible = result.rows.filter(o => sameRecoveryPhone(o.customer_phone, session.phone_normalized)
-        && (!o.customer_account_id || o.customer_account_id === session.customer_account_id));
-      const ids = eligible.filter(o => !o.customer_account_id).map(o => o.id);
-      if (ids.length) await client.query(`update public.orders set customer_account_id=$2::uuid, updated_at=now()
+        [session.tenant_id, branchCode, [...new Set(tokens)]],
+      );
+      const eligible = result.rows.filter(
+        (o) =>
+          sameRecoveryPhone(o.customer_phone, session.phone_normalized) &&
+          (!o.customer_account_id ||
+            o.customer_account_id === session.customer_account_id),
+      );
+      const ids = eligible
+        .filter((o) => !o.customer_account_id)
+        .map((o) => o.id);
+      if (ids.length)
+        await client.query(
+          `update public.orders set customer_account_id=$2::uuid, updated_at=now()
         where tenant_id=$1::uuid and id=any($3::uuid[]) and customer_account_id is null`,
-        [session.tenant_id, session.customer_account_id, ids]);
+          [session.tenant_id, session.customer_account_id, ids],
+        );
       return { linked: ids.length };
     });
   }
 
   async getCustomerRecoveryOrders(
-    cookieHeader: string | undefined, tenantCodeInput: string | undefined,
-    branchCodeInput: string | undefined, cursor?: string,
+    cookieHeader: string | undefined,
+    tenantCodeInput: string | undefined,
+    branchCodeInput: string | undefined,
+    cursor?: string,
   ) {
-    const tenantCode=tenantCodeInput?.trim() || '', branchCode=branchCodeInput?.trim() || '';
-    if (!tenantCode || !branchCode) throw new BadRequestException('tenant and branch are required');
-    if (cursor && !RECOVERY_UUID.test(cursor)) throw new BadRequestException('Invalid recovery cursor');
-    const raw=this.extractCustomerRecoverySessionToken(cookieHeader);
-    const session=raw ? await this.findCustomerRecoverySessionByToken(raw) : null;
-    if (!session || session.tenant_code !== tenantCode) throw new UnauthorizedException('Customer recovery session required');
-    const result=await this.databaseService.query<{id:string; tracking_token:string}>(`
+    const tenantCode = tenantCodeInput?.trim() || '',
+      branchCode = branchCodeInput?.trim() || '';
+    if (!tenantCode || !branchCode)
+      throw new BadRequestException('tenant and branch are required');
+    if (cursor && !RECOVERY_UUID.test(cursor))
+      throw new BadRequestException('Invalid recovery cursor');
+    const raw = this.extractCustomerRecoverySessionToken(cookieHeader);
+    const session = raw
+      ? await this.findCustomerRecoverySessionByToken(raw)
+      : null;
+    if (!session || session.tenant_code !== tenantCode)
+      throw new UnauthorizedException('Customer recovery session required');
+    const result = await this.databaseService.query<{
+      id: string;
+      tracking_token: string;
+    }>(
+      `
       select o.id::text, o.tracking_token::text from public.orders o
       join public.branches b on b.id=o.branch_id and b.tenant_id=o.tenant_id
       where o.tenant_id=$1::uuid and o.customer_account_id=$2::uuid and b.code=$3
@@ -3652,20 +3724,29 @@ export class OrderService {
           where c.id=$4::uuid and c.tenant_id=o.tenant_id and c.customer_account_id=o.customer_account_id and c.branch_id=o.branch_id
         ))
       order by o.created_at desc,o.id desc limit $5`,
-      [session.tenant_id, session.customer_account_id, branchCode, cursor || null, RECOVERY_PAGE_SIZE+1]);
-    const page=result.rows.slice(0,RECOVERY_PAGE_SIZE);
-    return {authenticated:true,tenantCode,branchCode,
-      orderTrackingTokens:page.map(o=>o.tracking_token),
-      nextCursor:result.rows.length>RECOVERY_PAGE_SIZE ? page[page.length-1].id : null};
+      [
+        session.tenant_id,
+        session.customer_account_id,
+        branchCode,
+        cursor || null,
+        RECOVERY_PAGE_SIZE + 1,
+      ],
+    );
+    const page = result.rows.slice(0, RECOVERY_PAGE_SIZE);
+    return {
+      authenticated: true,
+      tenantCode,
+      branchCode,
+      orderTrackingTokens: page.map((o) => o.tracking_token),
+      nextCursor:
+        result.rows.length > RECOVERY_PAGE_SIZE
+          ? page[page.length - 1].id
+          : null,
+    };
   }
 
-  async logoutCustomerRecovery(
-    cookieHeader?: string,
-  ) {
-    const rawToken =
-      this.extractCustomerRecoverySessionToken(
-        cookieHeader,
-      );
+  async logoutCustomerRecovery(cookieHeader?: string) {
+    const rawToken = this.extractCustomerRecoverySessionToken(cookieHeader);
 
     if (!rawToken) {
       return;
@@ -3681,16 +3762,10 @@ export class OrderService {
     );
   }
 
-  private normalizeCustomerRecoveryPhone(
-    value?: string,
-  ): string {
-    const normalized =
-      recoveryPhone(value);
+  private normalizeCustomerRecoveryPhone(value?: string): string {
+    const normalized = recoveryPhone(value);
 
-    if (
-      normalized.length < 7 ||
-      normalized.length > 15
-    ) {
+    if (normalized.length < 7 || normalized.length > 15) {
       throw new BadRequestException(
         'phone must contain between 7 and 15 digits',
       );
@@ -3699,101 +3774,62 @@ export class OrderService {
     return normalized;
   }
 
-  private normalizeCustomerRecoveryPin(
-    value?: string,
-  ): string {
+  private normalizeCustomerRecoveryPin(value?: string): string {
     const pin = value?.trim() || '';
 
     if (!/^\d{6}$/.test(pin)) {
-      throw new BadRequestException(
-        'pin must contain exactly 6 digits',
-      );
+      throw new BadRequestException('pin must contain exactly 6 digits');
     }
 
     return pin;
   }
 
-  private hashCustomerRecoveryPin(
-    pin: string,
-  ): string {
+  private hashCustomerRecoveryPin(pin: string): string {
     const salt = randomBytes(16);
 
-    const derived =
-      scryptSync(pin, salt, 64);
+    const derived = scryptSync(pin, salt, 64);
 
     return `scrypt$${salt.toString('base64url')}$${derived.toString('base64url')}`;
   }
 
-  private verifyCustomerRecoveryPin(
-    pin: string,
-    encoded: string,
-  ): boolean {
-    const [
-      algorithm,
-      saltEncoded,
-      hashEncoded,
-    ] = encoded.split('$');
+  private verifyCustomerRecoveryPin(pin: string, encoded: string): boolean {
+    const [algorithm, saltEncoded, hashEncoded] = encoded.split('$');
 
-    if (
-      algorithm !== 'scrypt' ||
-      !saltEncoded ||
-      !hashEncoded
-    ) {
+    if (algorithm !== 'scrypt' || !saltEncoded || !hashEncoded) {
       return false;
     }
 
     try {
-      const salt =
-        Buffer.from(
-          saltEncoded,
-          'base64url',
-        );
+      const salt = Buffer.from(saltEncoded, 'base64url');
 
-      const expected =
-        Buffer.from(
-          hashEncoded,
-          'base64url',
-        );
+      const expected = Buffer.from(hashEncoded, 'base64url');
 
-      const actual =
-        scryptSync(
-          pin,
-          salt,
-          expected.length,
-        );
+      const actual = scryptSync(pin, salt, expected.length);
 
       return (
-        expected.length === actual.length &&
-        timingSafeEqual(expected, actual)
+        expected.length === actual.length && timingSafeEqual(expected, actual)
       );
     } catch {
       return false;
     }
   }
 
-  private performDummyCustomerRecoveryPinWork(
-    pin: string,
-  ) {
-    scryptSync(
-      pin,
-      Buffer.alloc(16, 1),
-      64,
-    );
+  private performDummyCustomerRecoveryPinWork(pin: string) {
+    scryptSync(pin, Buffer.alloc(16, 1), 64);
   }
 
   private async findCustomerRecoveryAccount(
     tenantId: string,
     phoneNormalized: string,
   ) {
-    const result =
-      await this.databaseService.query<{
-        id: string;
-        tenant_id: string;
-        pin_hash: string;
-        failed_attempts: number;
-        locked_until: string | Date | null;
-      }>(
-        `
+    const result = await this.databaseService.query<{
+      id: string;
+      tenant_id: string;
+      pin_hash: string;
+      failed_attempts: number;
+      locked_until: string | Date | null;
+    }>(
+      `
           select
             id::text,
             tenant_id::text,
@@ -3809,13 +3845,13 @@ export class OrderService {
 
           limit 2
         `,
-        [
-          tenantId,
-          recoveryPhoneAliases(phoneNormalized),
-        ],
-      );
+      [tenantId, recoveryPhoneAliases(phoneNormalized)],
+    );
 
-    if (result.rows.length > 1) throw new ConflictException('Recovery account requires administrative review');
+    if (result.rows.length > 1)
+      throw new ConflictException(
+        'Recovery account requires administrative review',
+      );
     return result.rows[0] ?? null;
   }
 
@@ -3828,26 +3864,24 @@ export class OrderService {
     },
     pin: string,
   ) {
-    const lockedUntil =
-      account.locked_until
-        ? new Date(account.locked_until)
-        : null;
+    const lockedUntil = account.locked_until
+      ? new Date(account.locked_until)
+      : null;
 
-    if (
-      lockedUntil &&
-      lockedUntil.getTime() > Date.now()
-    ) {
+    if (lockedUntil && lockedUntil.getTime() > Date.now()) {
       throw new HttpException(
-        { message: 'Recovery temporarily locked', retryAfterSeconds: Math.max(1, Math.ceil((lockedUntil.getTime() - Date.now()) / 1000)) },
+        {
+          message: 'Recovery temporarily locked',
+          retryAfterSeconds: Math.max(
+            1,
+            Math.ceil((lockedUntil.getTime() - Date.now()) / 1000),
+          ),
+        },
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
 
-    const valid =
-      this.verifyCustomerRecoveryPin(
-        pin,
-        account.pin_hash,
-      );
+    const valid = this.verifyCustomerRecoveryPin(pin, account.pin_hash);
 
     if (!valid) {
       // Increment the persisted counter atomically: concurrent failures cannot overwrite one another.
@@ -3858,17 +3892,14 @@ export class OrderService {
                then greatest(coalesce(locked_until,now()),now()+interval '15 minutes')
                else locked_until end,
              updated_at=now()
-         where id=$1::uuid`, [account.id]);
-
-      throw new UnauthorizedException(
-        'Invalid recovery credentials',
+         where id=$1::uuid`,
+        [account.id],
       );
+
+      throw new UnauthorizedException('Invalid recovery credentials');
     }
 
-    if (
-      account.failed_attempts !== 0 ||
-      account.locked_until
-    ) {
+    if (account.failed_attempts !== 0 || account.locked_until) {
       await this.databaseService.query(
         `
           update public.customer_accounts
@@ -3883,31 +3914,21 @@ export class OrderService {
     }
   }
 
-  private hashCustomerRecoverySessionToken(
-    token: string,
-  ): string {
-    return createHash('sha256')
-      .update(token, 'utf8')
-      .digest('hex');
+  private hashCustomerRecoverySessionToken(token: string): string {
+    return createHash('sha256').update(token, 'utf8').digest('hex');
   }
 
   private async createCustomerRecoverySession(
     tenantId: string,
     customerAccountId: string,
   ): Promise<string> {
-    const rawToken =
-      randomBytes(32).toString('base64url');
+    const rawToken = randomBytes(32).toString('base64url');
 
-    const tokenHash =
-      this.hashCustomerRecoverySessionToken(
-        rawToken,
-      );
+    const tokenHash = this.hashCustomerRecoverySessionToken(rawToken);
 
-    const expiresAt =
-      new Date(
-        Date.now() +
-          this.customerRecoverySessionMaxAgeMs,
-      );
+    const expiresAt = new Date(
+      Date.now() + this.customerRecoverySessionMaxAgeMs,
+    );
 
     await this.databaseService.query(
       `
@@ -3924,33 +3945,22 @@ export class OrderService {
           $4::timestamptz
         )
       `,
-      [
-        tenantId,
-        customerAccountId,
-        tokenHash,
-        expiresAt.toISOString(),
-      ],
+      [tenantId, customerAccountId, tokenHash, expiresAt.toISOString()],
     );
 
     return rawToken;
   }
 
-  private async findCustomerRecoverySessionByToken(
-    rawToken: string,
-  ) {
-    const tokenHash =
-      this.hashCustomerRecoverySessionToken(
-        rawToken,
-      );
+  private async findCustomerRecoverySessionByToken(rawToken: string) {
+    const tokenHash = this.hashCustomerRecoverySessionToken(rawToken);
 
-    const result =
-      await this.databaseService.query<{
-        customer_account_id: string;
-        tenant_id: string;
-        tenant_code: string;
-        phone_normalized: string;
-      }>(
-        `
+    const result = await this.databaseService.query<{
+      customer_account_id: string;
+      tenant_id: string;
+      tenant_code: string;
+      phone_normalized: string;
+    }>(
+      `
           select
             s.customer_account_id::text,
             s.tenant_id::text,
@@ -3973,8 +3983,8 @@ export class OrderService {
 
           limit 1
         `,
-        [tokenHash],
-      );
+      [tokenHash],
+    );
 
     return result.rows[0] ?? null;
   }

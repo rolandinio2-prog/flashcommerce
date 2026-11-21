@@ -12,7 +12,10 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
-import { RecoveryRequestGuard, recoveryCookieSecure } from './recovery-request.guard';
+import {
+  RecoveryRequestGuard,
+  recoveryCookieSecure,
+} from './recovery-request.guard';
 import {
   OrderService,
   type CreateOrderInput,
@@ -33,7 +36,10 @@ export class OrderController {
 
   @Throttle({ default: { limit: 12, ttl: 60_000 } })
   @Post('delivery-quote')
-  quoteDelivery(@Body() body: CreateOrderInput, @Res({ passthrough: true }) response: Response) {
+  quoteDelivery(
+    @Body() body: CreateOrderInput,
+    @Res({ passthrough: true }) response: Response,
+  ) {
     response.setHeader('Cache-Control', 'no-store');
     return this.orderService.quoteDelivery(body);
   }
@@ -46,10 +52,7 @@ export class OrderController {
     const recoverySessionToken =
       this.orderService.extractCustomerRecoverySessionToken(cookieHeader);
 
-    return this.orderService.createOrder(
-      body,
-      recoverySessionToken,
-    );
+    return this.orderService.createOrder(body, recoverySessionToken);
   }
 
   // =======================================================
@@ -63,8 +66,7 @@ export class OrderController {
     @Body() body: CustomerRecoveryEnrollInput,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const result =
-      await this.orderService.enrollCustomerRecovery(body);
+    const result = await this.orderService.enrollCustomerRecovery(body);
 
     response.cookie(
       this.orderService.getCustomerRecoverySessionCookieName(),
@@ -74,8 +76,7 @@ export class OrderController {
         sameSite: 'lax',
         secure: recoveryCookieSecure(),
         path: '/',
-        maxAge:
-          this.orderService.getCustomerRecoverySessionMaxAgeMs(),
+        maxAge: this.orderService.getCustomerRecoverySessionMaxAgeMs(),
       },
     );
 
@@ -93,8 +94,7 @@ export class OrderController {
     @Body() body: CustomerRecoveryLoginInput,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const result =
-      await this.orderService.loginCustomerRecovery(body);
+    const result = await this.orderService.loginCustomerRecovery(body);
 
     response.cookie(
       this.orderService.getCustomerRecoverySessionCookieName(),
@@ -104,8 +104,7 @@ export class OrderController {
         sameSite: 'lax',
         secure: recoveryCookieSecure(),
         path: '/',
-        maxAge:
-          this.orderService.getCustomerRecoverySessionMaxAgeMs(),
+        maxAge: this.orderService.getCustomerRecoverySessionMaxAgeMs(),
       },
     );
 
@@ -123,28 +122,46 @@ export class OrderController {
     @Headers('cookie') cookieHeader: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const result = await this.orderService.registerCustomerRecovery(body, cookieHeader);
+    const result = await this.orderService.registerCustomerRecovery(
+      body,
+      cookieHeader,
+    );
     response.setHeader('Cache-Control', 'no-store');
-    response.cookie(this.orderService.getCustomerRecoverySessionCookieName(), result.sessionToken, {
-      httpOnly: true, sameSite: 'lax', secure: recoveryCookieSecure(), path: '/',
-      maxAge: this.orderService.getCustomerRecoverySessionMaxAgeMs(),
-    });
+    response.cookie(
+      this.orderService.getCustomerRecoverySessionCookieName(),
+      result.sessionToken,
+      {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: recoveryCookieSecure(),
+        path: '/',
+        maxAge: this.orderService.getCustomerRecoverySessionMaxAgeMs(),
+      },
+    );
     return { authenticated: true, tenantCode: result.tenantCode };
   }
 
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @UseGuards(RecoveryRequestGuard)
   @Post('recovery/profile/name')
-  updateCustomerRecoveryName(@Body() body: CustomerRecoveryLoginInput & {fullName?: string},
-    @Headers('cookie') cookieHeader: string | undefined) {
+  updateCustomerRecoveryName(
+    @Body() body: CustomerRecoveryLoginInput & { fullName?: string },
+    @Headers('cookie') cookieHeader: string | undefined,
+  ) {
     return this.orderService.updateCustomerRecoveryName(body, cookieHeader);
   }
 
   @Get('recovery/profile')
-  getCustomerRecoveryProfile(@Query('tenant') tenantCode: string, @Headers('cookie') cookieHeader: string | undefined,
-    @Res({ passthrough: true }) response: Response) {
+  getCustomerRecoveryProfile(
+    @Query('tenant') tenantCode: string,
+    @Headers('cookie') cookieHeader: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
     response.setHeader('Cache-Control', 'no-store');
-    return this.orderService.getCustomerRecoveryProfile(cookieHeader, tenantCode);
+    return this.orderService.getCustomerRecoveryProfile(
+      cookieHeader,
+      tenantCode,
+    );
   }
 
   @UseGuards(RecoveryRequestGuard)
@@ -172,9 +189,16 @@ export class OrderController {
   @UseGuards(RecoveryRequestGuard)
   @Post('recovery/link')
   linkCustomerRecoveryOrders(
-    @Body() body: { tenantCode?: string; branchCode?: string; trackingTokens?: unknown },
+    @Body()
+    body: {
+      tenantCode?: string;
+      branchCode?: string;
+      trackingTokens?: unknown;
+    },
     @Headers('cookie') cookieHeader?: string,
-  ) { return this.orderService.linkCustomerRecoveryOrders(cookieHeader, body); }
+  ) {
+    return this.orderService.linkCustomerRecoveryOrders(cookieHeader, body);
+  }
 
   @Get('recovery/orders')
   getCustomerRecoveryOrders(
@@ -220,17 +244,13 @@ export class OrderController {
     @Param('trackingToken', new ParseUUIDPipe())
     trackingToken: string,
   ) {
-    return this.orderService.getDeliveryLocation(
-      trackingToken,
-    );
+    return this.orderService.getDeliveryLocation(trackingToken);
   }
   @Get('track/:trackingToken/delivery-pod')
   getDeliveryPod(
     @Param('trackingToken', new ParseUUIDPipe())
     trackingToken: string,
   ) {
-    return this.orderService.getDeliveryPod(
-      trackingToken,
-    );
+    return this.orderService.getDeliveryPod(trackingToken);
   }
 }

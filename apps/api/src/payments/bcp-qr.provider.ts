@@ -108,17 +108,13 @@ export class BcpQrProvider implements PaymentProvider {
     const branchOffice = input.branchOffice?.trim() || '';
 
     if (branchOffice.length === 0) {
-      throw new BadRequestException(
-        'BCP QR branchOffice is required',
-      );
+      throw new BadRequestException('BCP QR branchOffice is required');
     }
 
     const customerPhone = input.customerPhone?.trim() || '';
 
     if (customerPhone.length === 0) {
-      throw new BadRequestException(
-        'BCP QR customerPhone is required',
-      );
+      throw new BadRequestException('BCP QR customerPhone is required');
     }
 
     const response = await this.postJson<BcpGenerateResponse>(
@@ -146,7 +142,9 @@ export class BcpQrProvider implements PaymentProvider {
     this.assertSuccessfulState(response.state);
 
     if (response.data === null || typeof response.data !== 'object') {
-      throw new GatewayTimeoutException('BCP QR generation returned invalid data');
+      throw new GatewayTimeoutException(
+        'BCP QR generation returned invalid data',
+      );
     }
 
     const providerPaymentId = this.normalizeGeneratedId(response.data.id);
@@ -480,7 +478,9 @@ export class BcpQrProvider implements PaymentProvider {
               parsedResponse = JSON.parse(responseBody);
             } catch {
               fail(
-                new GatewayTimeoutException('BCP QR service returned invalid JSON'),
+                new GatewayTimeoutException(
+                  'BCP QR service returned invalid JSON',
+                ),
               );
 
               return;

@@ -1,4 +1,7 @@
-import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import {
+  OperationsAccess,
+  OperationPermission,
+} from '../operations/operations-access';
 import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
@@ -15,9 +18,7 @@ import { DeliveryService } from './delivery.service';
 @Controller('ops')
 @OperationsAccess()
 export class OpsDeliveryController {
-  constructor(
-    private readonly deliveryService: DeliveryService,
-  ) {}
+  constructor(private readonly deliveryService: DeliveryService) {}
 
   @Get('deliveries')
   @OperationPermission('delivery.read')
@@ -36,9 +37,7 @@ export class OpsDeliveryController {
 
   @Get('delivery-drivers')
   @OperationPermission('delivery.read')
-  getOperationalDrivers(
-    @Req() request: StaffAuthenticatedRequest,
-  ) {
+  getOperationalDrivers(@Req() request: StaffAuthenticatedRequest) {
     return this.deliveryService.getOperationalDrivers(
       request.staff.tenantCode,
       request.staff.branchCode,

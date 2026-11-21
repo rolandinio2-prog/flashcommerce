@@ -29,9 +29,7 @@ export class OpsAccessGuard implements CanActivate {
     const headerValue = request.headers['x-ops-key'];
 
     const receivedKey = (
-      Array.isArray(headerValue)
-        ? headerValue[0]
-        : headerValue || ''
+      Array.isArray(headerValue) ? headerValue[0] : headerValue || ''
     ).trim();
 
     const configuredBuffer = Buffer.from(configuredKey, 'utf8');
@@ -42,9 +40,7 @@ export class OpsAccessGuard implements CanActivate {
       timingSafeEqual(configuredBuffer, receivedBuffer);
 
     if (!validKey) {
-      throw new UnauthorizedException(
-        'Invalid operations credentials',
-      );
+      throw new UnauthorizedException('Invalid operations credentials');
     }
 
     return true;

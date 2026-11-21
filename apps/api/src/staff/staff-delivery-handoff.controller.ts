@@ -1,10 +1,4 @@
-import {
-  Controller,
-  Param,
-  Patch,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Param, Patch, Req, UseGuards } from '@nestjs/common';
 
 import { StaffDeliveryHandoffService } from './staff-delivery-handoff.service';
 import { StaffRoleGuard } from './staff-role.guard';
@@ -16,18 +10,13 @@ import type { StaffAuthenticatedRequest } from './staff.types';
 @UseGuards(StaffSessionGuard, StaffRoleGuard)
 @StaffRoles('ADMIN', 'MANAGER', 'CASHIER', 'KITCHEN')
 export class StaffDeliveryHandoffController {
-  constructor(
-    private readonly handoffService: StaffDeliveryHandoffService,
-  ) {}
+  constructor(private readonly handoffService: StaffDeliveryHandoffService) {}
 
   @Patch(':deliveryId/handoff')
   handoffToDriver(
     @Param('deliveryId') deliveryId: string,
     @Req() request: StaffAuthenticatedRequest,
   ) {
-    return this.handoffService.handoffToDriver(
-      request.staff,
-      deliveryId,
-    );
+    return this.handoffService.handoffToDriver(request.staff, deliveryId);
   }
 }

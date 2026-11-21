@@ -8,10 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 
 import { DatabaseService } from '../database/database.service';
-import {
-  GEO_PROVIDER,
-  type GeoProvider,
-} from './geo-provider';
+import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
 import { GeoUsageMeterService } from './geo-usage-meter.service';
 import type { GeoPoint } from './geo.types';
 import type {
@@ -58,69 +55,50 @@ export class DeliveryAddressService {
   async autocomplete(
     input: DeliveryAddressAutocompleteInput,
   ): Promise<DeliveryAddressAutocompleteResponse> {
-    const tenantCode =
-      this.requireCode(
-        input.tenantCode,
-        'tenantCode',
-      );
+    const tenantCode = this.requireCode(input.tenantCode, 'tenantCode');
 
-    const branchCode =
-      this.requireCode(
-        input.branchCode,
-        'branchCode',
-      );
+    const branchCode = this.requireCode(input.branchCode, 'branchCode');
 
-    const searchText =
-      this.requireText(
-        input.input,
-        'input',
-        3,
-        256,
-      );
+    const searchText = this.requireText(input.input, 'input', 3, 256);
 
-    const branch =
-      await this.requireDeliveryBranch(
+    const branch = await this.requireDeliveryBranch(tenantCode, branchCode);
+
+    const locale = this.readLocale();
+
+    const radiusMeters = this.readBiasRadiusMeters();
+
+    const suggestions = await this.geoUsageMeter.measure(
+      {
         tenantCode,
-        branchCode,
-      );
+        provider: 'GOOGLE',
+        operation: 'GEOCODE_SEARCH',
+        cacheHit: false,
+      },
+      () =>
+        this.geoProvider.autocomplete({
+          input: searchText,
 
-    const locale =
-      this.readLocale();
+          languageCode: locale.languageCode,
 
-    const radiusMeters =
-      this.readBiasRadiusMeters();
+          regionCode: locale.countryCode,
 
-    const suggestions =
-      await this.geoUsageMeter.measure({ tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_SEARCH', cacheHit: false }, () => this.geoProvider.autocomplete({
-        input: searchText,
+          countryCode: locale.countryCode,
 
-        languageCode:
-          locale.languageCode,
+          locationBias:
+            branch.origin && radiusMeters > 0
+              ? {
+                  center: branch.origin,
 
-        regionCode:
-          locale.countryCode,
-
-        countryCode:
-          locale.countryCode,
-
-        locationBias:
-          branch.origin &&
-          radiusMeters > 0
-            ? {
-                center:
-                  branch.origin,
-
-                radiusMeters,
-              }
-            : undefined,
-      }));
+                  radiusMeters,
+                }
+              : undefined,
+        }),
+    );
 
     return {
-      tenant:
-        branch.tenantCode,
+      tenant: branch.tenantCode,
 
-      branch:
-        branch.branchCode,
+      branch: branch.branchCode,
 
       suggestions,
     };
@@ -129,49 +107,37 @@ export class DeliveryAddressService {
   async resolve(
     input: DeliveryAddressResolveInput,
   ): Promise<DeliveryAddressResolveResponse> {
-    const tenantCode =
-      this.requireCode(
-        input.tenantCode,
-        'tenantCode',
-      );
+    const tenantCode = this.requireCode(input.tenantCode, 'tenantCode');
 
-    const branchCode =
-      this.requireCode(
-        input.branchCode,
-        'branchCode',
-      );
+    const branchCode = this.requireCode(input.branchCode, 'branchCode');
 
-    const placeId =
-      this.requirePlaceId(
-        input.placeId,
-      );
+    const placeId = this.requirePlaceId(input.placeId);
 
-    const branch =
-      await this.requireDeliveryBranch(
+    const branch = await this.requireDeliveryBranch(tenantCode, branchCode);
+
+    const locale = this.readLocale();
+
+    const location = await this.geoUsageMeter.measure(
+      {
         tenantCode,
-        branchCode,
-      );
+        provider: 'GOOGLE',
+        operation: 'GEOCODE_RESOLVE',
+        cacheHit: false,
+      },
+      () =>
+        this.geoProvider.resolvePlace({
+          placeId,
 
-    const locale =
-      this.readLocale();
+          languageCode: locale.languageCode,
 
-    const location =
-      await this.geoUsageMeter.measure({ tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_RESOLVE', cacheHit: false }, () => this.geoProvider.resolvePlace({
-        placeId,
-
-        languageCode:
-          locale.languageCode,
-
-        regionCode:
-          locale.countryCode,
-      }));
+          regionCode: locale.countryCode,
+        }),
+    );
 
     return {
-      tenant:
-        branch.tenantCode,
+      tenant: branch.tenantCode,
 
-      branch:
-        branch.branchCode,
+      branch: branch.branchCode,
 
       location,
     };
@@ -180,85 +146,107 @@ export class DeliveryAddressService {
   async geocode(
     input: DeliveryAddressGeocodeInput,
   ): Promise<DeliveryAddressGeocodeResponse> {
-    const tenantCode =
-      this.requireCode(
-        input.tenantCode,
-        'tenantCode',
-      );
+    const tenantCode = this.requireCode(input.tenantCode, 'tenantCode');
 
-    const branchCode =
-      this.requireCode(
-        input.branchCode,
-        'branchCode',
-      );
+    const branchCode = this.requireCode(input.branchCode, 'branchCode');
 
-    const address =
-      this.requireText(
-        input.address,
-        'address',
-        3,
-        512,
-      );
+    const address = this.requireText(input.address, 'address', 3, 512);
 
-    const branch =
-      await this.requireDeliveryBranch(
+    const branch = await this.requireDeliveryBranch(tenantCode, branchCode);
+
+    const locale = this.readLocale();
+
+    const location = await this.geoUsageMeter.measure(
+      {
         tenantCode,
-        branchCode,
-      );
+        provider: 'GOOGLE',
+        operation: 'GEOCODE_FORWARD',
+        cacheHit: false,
+      },
+      () =>
+        this.geoProvider.geocodeAddress({
+          address,
 
-    const locale =
-      this.readLocale();
+          languageCode: locale.languageCode,
 
-    const location =
-      await this.geoUsageMeter.measure({ tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_FORWARD', cacheHit: false }, () => this.geoProvider.geocodeAddress({
-        address,
-
-        languageCode:
-          locale.languageCode,
-
-        regionCode:
-          locale.countryCode,
-      }));
+          regionCode: locale.countryCode,
+        }),
+    );
 
     return {
-      tenant:
-        branch.tenantCode,
+      tenant: branch.tenantCode,
 
-      branch:
-        branch.branchCode,
+      branch: branch.branchCode,
 
       location,
     };
   }
 
   async mapContext(input: { tenantCode?: string; branchCode?: string }) {
-    const branch = await this.requireDeliveryBranch(this.requireCode(input.tenantCode, 'tenantCode'), this.requireCode(input.branchCode, 'branchCode'));
-    return { tenant: branch.tenantCode, branch: branch.branchCode, center: branch.origin };
+    const branch = await this.requireDeliveryBranch(
+      this.requireCode(input.tenantCode, 'tenantCode'),
+      this.requireCode(input.branchCode, 'branchCode'),
+    );
+    return {
+      tenant: branch.tenantCode,
+      branch: branch.branchCode,
+      center: branch.origin,
+    };
   }
 
-  async reverse(input: { tenantCode?: string; branchCode?: string; latitude?: unknown; longitude?: unknown }) {
+  async reverse(input: {
+    tenantCode?: string;
+    branchCode?: string;
+    latitude?: unknown;
+    longitude?: unknown;
+  }) {
     const { latitude, longitude } = input;
-    if (typeof latitude !== 'number' || !Number.isFinite(latitude) || latitude < -90 || latitude > 90 ||
-        typeof longitude !== 'number' || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    if (
+      typeof latitude !== 'number' ||
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      typeof longitude !== 'number' ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
       throw new BadRequestException('Selecciona un punto válido en el mapa.');
     }
-    const branch = await this.requireDeliveryBranch(this.requireCode(input.tenantCode, 'tenantCode'), this.requireCode(input.branchCode, 'branchCode'));
+    const branch = await this.requireDeliveryBranch(
+      this.requireCode(input.tenantCode, 'tenantCode'),
+      this.requireCode(input.branchCode, 'branchCode'),
+    );
     const locale = this.readLocale();
     const point = { latitude, longitude };
-    const address = await this.geoUsageMeter.measure({ tenantCode: branch.tenantCode, provider: 'GOOGLE', operation: 'GEOCODE_REVERSE', cacheHit: false },
-      () => this.geoProvider.reverseGeocode({ location: point, languageCode: locale.languageCode, regionCode: locale.countryCode }));
+    const address = await this.geoUsageMeter.measure(
+      {
+        tenantCode: branch.tenantCode,
+        provider: 'GOOGLE',
+        operation: 'GEOCODE_REVERSE',
+        cacheHit: false,
+      },
+      () =>
+        this.geoProvider.reverseGeocode({
+          location: point,
+          languageCode: locale.languageCode,
+          regionCode: locale.countryCode,
+        }),
+    );
     // The provider supplies a nearby address; the customer's pin stays exact.
-    return { tenant: branch.tenantCode, branch: branch.branchCode,
-      location: address ? { ...address, location: point } : null };
+    return {
+      tenant: branch.tenantCode,
+      branch: branch.branchCode,
+      location: address ? { ...address, location: point } : null,
+    };
   }
 
   private async requireDeliveryBranch(
     tenantCode: string,
     branchCode: string,
   ): Promise<DeliveryAddressBranchContext> {
-    const result =
-      await this.databaseService.query<DeliveryAddressBranchRow>(
-        `
+    const result = await this.databaseService.query<DeliveryAddressBranchRow>(
+      `
           select
             t.code as tenant_code,
             b.code as branch_code,
@@ -278,20 +266,14 @@ export class DeliveryAddressService {
 
           limit 1
         `,
-        [
-          tenantCode,
-          branchCode,
-        ],
-      );
+      [tenantCode, branchCode],
+    );
 
     if (result.rows.length === 0) {
-      throw new NotFoundException(
-        'Delivery branch was not found',
-      );
+      throw new NotFoundException('Delivery branch was not found');
     }
 
-    const row =
-      result.rows[0];
+    const row = result.rows[0];
 
     if (!row.delivery_enabled) {
       throw new ServiceUnavailableException(
@@ -300,17 +282,14 @@ export class DeliveryAddressService {
     }
 
     return {
-      tenantCode:
-        row.tenant_code,
+      tenantCode: row.tenant_code,
 
-      branchCode:
-        row.branch_code,
+      branchCode: row.branch_code,
 
-      origin:
-        this.parseBranchOrigin(
-          row.delivery_origin_latitude,
-          row.delivery_origin_longitude,
-        ),
+      origin: this.parseBranchOrigin(
+        row.delivery_origin_latitude,
+        row.delivery_origin_longitude,
+      ),
     };
   }
 
@@ -318,27 +297,19 @@ export class DeliveryAddressService {
     latitudeValue: string | null,
     longitudeValue: string | null,
   ): GeoPoint | null {
-    if (
-      latitudeValue === null &&
-      longitudeValue === null
-    ) {
+    if (latitudeValue === null && longitudeValue === null) {
       return null;
     }
 
-    if (
-      latitudeValue === null ||
-      longitudeValue === null
-    ) {
+    if (latitudeValue === null || longitudeValue === null) {
       throw new ServiceUnavailableException(
         'Delivery branch origin coordinates are incomplete',
       );
     }
 
-    const latitude =
-      Number(latitudeValue);
+    const latitude = Number(latitudeValue);
 
-    const longitude =
-      Number(longitudeValue);
+    const longitude = Number(longitudeValue);
 
     if (
       !Number.isFinite(latitude) ||
@@ -359,13 +330,10 @@ export class DeliveryAddressService {
     };
   }
 
-  private readLocale():
-    DeliveryAddressLocale {
-    const languageCode =
-      this.readLanguageCode();
+  private readLocale(): DeliveryAddressLocale {
+    const languageCode = this.readLanguageCode();
 
-    const countryCode =
-      this.readCountryCode();
+    const countryCode = this.readCountryCode();
 
     return {
       languageCode,
@@ -376,17 +344,10 @@ export class DeliveryAddressService {
   private readLanguageCode(): string {
     const value =
       this.configService
-        .get<string>(
-          'FLASH_GEO_DEFAULT_LANGUAGE_CODE',
-        )
-        ?.trim() ||
-      'es-BO';
+        .get<string>('FLASH_GEO_DEFAULT_LANGUAGE_CODE')
+        ?.trim() || 'es-BO';
 
-    if (
-      !/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(
-        value,
-      )
-    ) {
+    if (!/^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(value)) {
       throw new ServiceUnavailableException(
         'FLASH_GEO_DEFAULT_LANGUAGE_CODE is invalid',
       );
@@ -398,12 +359,9 @@ export class DeliveryAddressService {
   private readCountryCode(): string {
     const value =
       this.configService
-        .get<string>(
-          'FLASH_GEO_DEFAULT_COUNTRY_CODE',
-        )
+        .get<string>('FLASH_GEO_DEFAULT_COUNTRY_CODE')
         ?.trim()
-        .toUpperCase() ||
-      'BO';
+        .toUpperCase() || 'BO';
 
     if (!/^[A-Z]{2}$/.test(value)) {
       throw new ServiceUnavailableException(
@@ -415,29 +373,18 @@ export class DeliveryAddressService {
   }
 
   private readBiasRadiusMeters(): number {
-    const configuredValue =
-      this.configService.get<
-        string | number
-      >(
-        'FLASH_GEO_AUTOCOMPLETE_BIAS_RADIUS_METERS',
-      );
+    const configuredValue = this.configService.get<string | number>(
+      'FLASH_GEO_AUTOCOMPLETE_BIAS_RADIUS_METERS',
+    );
 
     const text =
-      configuredValue === undefined ||
-      configuredValue === null
+      configuredValue === undefined || configuredValue === null
         ? '25000'
-        : String(
-            configuredValue,
-          ).trim();
+        : String(configuredValue).trim();
 
-    const radius =
-      Number(text);
+    const radius = Number(text);
 
-    if (
-      !Number.isFinite(radius) ||
-      radius < 0 ||
-      radius > 50_000
-    ) {
+    if (!Number.isFinite(radius) || radius < 0 || radius > 50_000) {
       throw new ServiceUnavailableException(
         'FLASH_GEO_AUTOCOMPLETE_BIAS_RADIUS_METERS must be between 0 and 50000',
       );
@@ -446,53 +393,29 @@ export class DeliveryAddressService {
     return radius;
   }
 
-  private requireCode(
-    value: unknown,
-    label: string,
-  ): string {
+  private requireCode(value: unknown, label: string): string {
     if (typeof value !== 'string') {
-      throw new BadRequestException(
-        `${label} must be a string`,
-      );
+      throw new BadRequestException(`${label} must be a string`);
     }
 
-    const normalized =
-      value.trim();
+    const normalized = value.trim();
 
     if (
       normalized.length === 0 ||
       normalized.length > 64 ||
-      !/^[A-Za-z0-9_-]+$/.test(
-        normalized,
-      )
+      !/^[A-Za-z0-9_-]+$/.test(normalized)
     ) {
-      throw new BadRequestException(
-        `${label} is invalid`,
-      );
+      throw new BadRequestException(`${label} is invalid`);
     }
 
     return normalized;
   }
 
-  private requirePlaceId(
-    value: unknown,
-  ): string {
-    const placeId =
-      this.requireText(
-        value,
-        'placeId',
-        1,
-        512,
-      );
+  private requirePlaceId(value: unknown): string {
+    const placeId = this.requireText(value, 'placeId', 1, 512);
 
-    if (
-      /[\u0000-\u0020\u007f]/.test(
-        placeId,
-      )
-    ) {
-      throw new BadRequestException(
-        'placeId is invalid',
-      );
+    if (/[\u0000-\u0020\u007f]/.test(placeId)) {
+      throw new BadRequestException('placeId is invalid');
     }
 
     return placeId;
@@ -505,31 +428,17 @@ export class DeliveryAddressService {
     maxLength: number,
   ): string {
     if (typeof value !== 'string') {
-      throw new BadRequestException(
-        `${label} must be a string`,
-      );
+      throw new BadRequestException(`${label} must be a string`);
     }
 
-    const normalized =
-      value.trim();
+    const normalized = value.trim();
 
-    if (
-      normalized.length < minLength ||
-      normalized.length > maxLength
-    ) {
-      throw new BadRequestException(
-        `${label} length is invalid`,
-      );
+    if (normalized.length < minLength || normalized.length > maxLength) {
+      throw new BadRequestException(`${label} length is invalid`);
     }
 
-    if (
-      /[\u0000-\u001f\u007f]/.test(
-        normalized,
-      )
-    ) {
-      throw new BadRequestException(
-        `${label} contains invalid characters`,
-      );
+    if (/[\u0000-\u001f\u007f]/.test(normalized)) {
+      throw new BadRequestException(`${label} contains invalid characters`);
     }
 
     return normalized;

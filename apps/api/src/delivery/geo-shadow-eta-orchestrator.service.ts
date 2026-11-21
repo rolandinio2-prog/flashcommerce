@@ -13,120 +13,76 @@ import { GeoUsageMeterService } from './geo-usage-meter.service';
 import { GoogleRoutingProvider } from './google-routing.provider';
 import { ValhallaRoutingProvider } from './valhalla-routing.provider';
 
-const SHADOW_ROUTE_ERROR_CODE =
-  'GEO_SHADOW_ROUTE_FAILED';
+const SHADOW_ROUTE_ERROR_CODE = 'GEO_SHADOW_ROUTE_FAILED';
 
 @Injectable()
 export class GeoShadowEtaOrchestratorService {
   constructor(
-    private readonly googleRoutingProvider:
-      GoogleRoutingProvider,
-    private readonly valhallaRoutingProvider:
-      ValhallaRoutingProvider,
-    private readonly geoUsageMeter:
-      GeoUsageMeterService,
-    private readonly calibrationService:
-      GeoShadowEtaCalibrationService,
+    private readonly googleRoutingProvider: GoogleRoutingProvider,
+    private readonly valhallaRoutingProvider: ValhallaRoutingProvider,
+    private readonly geoUsageMeter: GeoUsageMeterService,
+    private readonly calibrationService: GeoShadowEtaCalibrationService,
   ) {}
 
   async compareRoute(
     input: GeoShadowEtaOrchestratorInput,
   ): Promise<GeoShadowEtaOrchestratorResult> {
-    let referenceLatencyMs:
-      number | null =
-        null;
+    let referenceLatencyMs: number | null = null;
 
-    const referenceRoute =
-      await this.geoUsageMeter.measure(
-        this.createUsageInput(
-          input,
-          'GOOGLE',
-        ),
+    const referenceRoute = await this.geoUsageMeter.measure(
+      this.createUsageInput(input, 'GOOGLE'),
+      async () => {
+        const startedAt = Date.now();
+
+        try {
+          return await this.googleRoutingProvider.computeRoute(input.route);
+        } finally {
+          referenceLatencyMs = this.elapsedMilliseconds(startedAt);
+        }
+      },
+    );
+
+    const referenceSample = this.successSample(
+      'GOOGLE',
+      referenceRoute,
+      referenceLatencyMs,
+    );
+
+    let shadowLatencyMs: number | null = null;
+
+    let shadowRoute: RouteResult;
+
+    try {
+      shadowRoute = await this.geoUsageMeter.measure(
+        this.createUsageInput(input, 'VALHALLA'),
         async () => {
-          const startedAt =
-            Date.now();
+          const startedAt = Date.now();
 
           try {
-            return await this.googleRoutingProvider.computeRoute(
-              input.route,
-            );
+            return await this.valhallaRoutingProvider.computeRoute(input.route);
           } finally {
-            referenceLatencyMs =
-              this.elapsedMilliseconds(
-                startedAt,
-              );
+            shadowLatencyMs = this.elapsedMilliseconds(startedAt);
           }
         },
       );
-
-    const referenceSample =
-      this.successSample(
-        'GOOGLE',
-        referenceRoute,
-        referenceLatencyMs,
-      );
-
-    let shadowLatencyMs:
-      number | null =
-        null;
-
-    let shadowRoute:
-      RouteResult;
-
-    try {
-      shadowRoute =
-        await this.geoUsageMeter.measure(
-          this.createUsageInput(
-            input,
-            'VALHALLA',
-          ),
-          async () => {
-            const startedAt =
-              Date.now();
-
-            try {
-              return await this.valhallaRoutingProvider.computeRoute(
-                input.route,
-              );
-            } finally {
-              shadowLatencyMs =
-                this.elapsedMilliseconds(
-                  startedAt,
-                );
-            }
-          },
-        );
     } catch {
-      const shadowFailure =
-        this.failedShadowSample(
-          shadowLatencyMs,
-        );
+      const shadowFailure = this.failedShadowSample(shadowLatencyMs);
 
       return {
         referenceRoute,
-        comparison:
-          this.calibrationService.compare({
-            reference:
-              referenceSample,
-            shadow:
-              shadowFailure,
-          }),
+        comparison: this.calibrationService.compare({
+          reference: referenceSample,
+          shadow: shadowFailure,
+        }),
       };
     }
 
     return {
       referenceRoute,
-      comparison:
-        this.calibrationService.compare({
-          reference:
-            referenceSample,
-          shadow:
-            this.successSample(
-              'VALHALLA',
-              shadowRoute,
-              shadowLatencyMs,
-            ),
-        }),
+      comparison: this.calibrationService.compare({
+        reference: referenceSample,
+        shadow: this.successSample('VALHALLA', shadowRoute, shadowLatencyMs),
+      }),
     };
   }
 
@@ -141,10 +97,8 @@ export class GeoShadowEtaOrchestratorService {
     cacheHit: false;
   } {
     return {
-      tenantId:
-        input.tenantId,
-      tenantCode:
-        input.tenantCode,
+      tenantId: input.tenantId,
+      tenantCode: input.tenantCode,
       provider,
       operation: 'ROUTE',
       cacheHit: false,
@@ -159,10 +113,8 @@ export class GeoShadowEtaOrchestratorService {
     return {
       provider,
       status: 'SUCCESS',
-      distanceMeters:
-        route.distanceMeters,
-      durationSeconds:
-        route.durationSeconds,
+      distanceMeters: route.distanceMeters,
+      durationSeconds: route.durationSeconds,
       latencyMs,
     };
   }
@@ -176,17 +128,11 @@ export class GeoShadowEtaOrchestratorService {
       distanceMeters: null,
       durationSeconds: null,
       latencyMs,
-      errorCode:
-        SHADOW_ROUTE_ERROR_CODE,
+      errorCode: SHADOW_ROUTE_ERROR_CODE,
     };
   }
 
-  private elapsedMilliseconds(
-    startedAt: number,
-  ): number {
-    return Math.max(
-      0,
-      Date.now() - startedAt,
-    );
+  private elapsedMilliseconds(startedAt: number): number {
+    return Math.max(0, Date.now() - startedAt);
   }
 }

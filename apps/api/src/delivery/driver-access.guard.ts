@@ -24,30 +24,21 @@ export interface AuthenticatedDriverContext {
 }
 
 export interface DriverAuthenticatedRequest {
-  headers: Record<
-    string,
-    string | string[] | undefined
-  >;
+  headers: Record<string, string | string[] | undefined>;
 
   driverAuth?: AuthenticatedDriverContext;
 }
 
 @Injectable()
 export class DriverAccessGuard implements CanActivate {
-  constructor(
-    private readonly databaseService: DatabaseService,
-  ) {}
+  constructor(private readonly databaseService: DatabaseService) {}
 
-  async canActivate(
-    context: ExecutionContext,
-  ): Promise<boolean> {
-    const request =
-      context
-        .switchToHttp()
-        .getRequest<DriverAuthenticatedRequest>();
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context
+      .switchToHttp()
+      .getRequest<DriverAuthenticatedRequest>();
 
-    const authorizationHeader =
-      request.headers.authorization;
+    const authorizationHeader = request.headers.authorization;
 
     const authorization = (
       Array.isArray(authorizationHeader)
@@ -55,47 +46,40 @@ export class DriverAccessGuard implements CanActivate {
         : authorizationHeader || ''
     ).trim();
 
-    const bearerMatch =
-      /^Bearer\s+(.+)$/i.exec(authorization);
+    const bearerMatch = /^Bearer\s+(.+)$/i.exec(authorization);
 
     if (!bearerMatch) {
       throw this.invalidCredentials();
     }
 
-    const rawToken =
-      bearerMatch[1]?.trim() || '';
+    const rawToken = bearerMatch[1]?.trim() || '';
 
     // The guard intentionally does not prescribe a token
     // alphabet. Production tokens may use base64url or hex.
     // It only enforces sane transport bounds.
-    if (
-      rawToken.length < 32 ||
-      rawToken.length > 512
-    ) {
+    if (rawToken.length < 32 || rawToken.length > 512) {
       throw this.invalidCredentials();
     }
 
-    const tokenHash =
-      createHash('sha256')
-        .update(rawToken, 'utf8')
-        .digest('hex');
+    const tokenHash = createHash('sha256')
+      .update(rawToken, 'utf8')
+      .digest('hex');
 
-    const credentialResult =
-      await this.databaseService.query<{
-        credential_id: string;
+    const credentialResult = await this.databaseService.query<{
+      credential_id: string;
 
-        tenant_id: string;
-        tenant_code: string;
+      tenant_id: string;
+      tenant_code: string;
 
-        driver_id: string;
-        driver_code: string;
-        display_name: string;
-        phone: string;
-        password_change_required: boolean;
+      driver_id: string;
+      driver_code: string;
+      display_name: string;
+      phone: string;
+      password_change_required: boolean;
 
-        expires_at: string | Date | null;
-      }>(
-        `
+      expires_at: string | Date | null;
+    }>(
+      `
           select
             c.id::text
               as credential_id,
@@ -142,13 +126,10 @@ export class DriverAccessGuard implements CanActivate {
 
           limit 1
         `,
-        [
-          tokenHash,
-        ],
-      );
+      [tokenHash],
+    );
 
-    const credential =
-      credentialResult.rows[0];
+    const credential = credentialResult.rows[0];
 
     // Deliberately use the same response for:
     //
@@ -164,40 +145,29 @@ export class DriverAccessGuard implements CanActivate {
     }
 
     request.driverAuth = {
-      credentialId:
-        credential.credential_id,
+      credentialId: credential.credential_id,
 
-      tenantId:
-        credential.tenant_id,
+      tenantId: credential.tenant_id,
 
-      tenantCode:
-        credential.tenant_code,
+      tenantCode: credential.tenant_code,
 
-      driverId:
-        credential.driver_id,
+      driverId: credential.driver_id,
 
-      driverCode:
-        credential.driver_code,
+      driverCode: credential.driver_code,
 
-      displayName:
-        credential.display_name,
+      displayName: credential.display_name,
 
-      phone:
-        credential.phone,
+      phone: credential.phone,
 
-      passwordChangeRequired:
-        credential.password_change_required,
+      passwordChangeRequired: credential.password_change_required,
 
-      expiresAt:
-        credential.expires_at,
+      expiresAt: credential.expires_at,
     };
 
     return true;
   }
 
   private invalidCredentials(): UnauthorizedException {
-    return new UnauthorizedException(
-      'Invalid driver credentials',
-    );
+    return new UnauthorizedException('Invalid driver credentials');
   }
 }

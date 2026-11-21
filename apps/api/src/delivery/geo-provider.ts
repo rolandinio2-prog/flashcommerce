@@ -18,17 +18,17 @@ export interface GeoProvider {
     input: GeoAutocompleteInput,
   ): Promise<GeoAutocompleteSuggestion[]>;
 
-  resolvePlace(
-    input: GeoResolvePlaceInput,
-  ): Promise<GeoResolvedLocation>;
+  resolvePlace(input: GeoResolvePlaceInput): Promise<GeoResolvedLocation>;
 
   geocodeAddress(
     input: GeoGeocodeAddressInput,
   ): Promise<GeoResolvedLocation | null>;
 
-  reverseGeocode(input: { location: GeoPoint; languageCode?: string; regionCode?: string }): Promise<GeoResolvedLocation | null>;
+  reverseGeocode(input: {
+    location: GeoPoint;
+    languageCode?: string;
+    regionCode?: string;
+  }): Promise<GeoResolvedLocation | null>;
 
-  calculateRoute(
-    input: GeoRouteInput,
-  ): Promise<GeoRouteResult>;
+  calculateRoute(input: GeoRouteInput): Promise<GeoRouteResult>;
 }

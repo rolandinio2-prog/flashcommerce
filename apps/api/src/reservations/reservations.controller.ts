@@ -1,4 +1,7 @@
-import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import {
+  OperationsAccess,
+  OperationPermission,
+} from '../operations/operations-access';
 import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
@@ -10,7 +13,7 @@ import {
   Patch,
   Post,
   Query,
-} from "@nestjs/common";
+} from '@nestjs/common';
 
 import {
   ReservationsService,
@@ -22,32 +25,32 @@ import {
   type ReservationTrackingResponse,
   type UpdateReservationStatusInput,
   type UpdateReservationStatusResponse,
-} from "./reservations.service";
+} from './reservations.service';
 
 // =========================================================
 // PUBLIC RESERVATIONS
 // =========================================================
 
-@Controller("reservations")
+@Controller('reservations')
 export class ReservationsController {
   constructor(private readonly reservationsService: ReservationsService) {}
 
   // GET /api/v1/reservations/availability
-  @Get("availability")
+  @Get('availability')
   getAvailability(
-    @Query("tenant")
+    @Query('tenant')
     tenantCode?: string,
 
-    @Query("branch")
+    @Query('branch')
     branchCode?: string,
 
-    @Query("reservedFor")
+    @Query('reservedFor')
     reservedFor?: string,
 
-    @Query("durationMinutes")
+    @Query('durationMinutes')
     durationMinutes?: string,
 
-    @Query("partySize")
+    @Query('partySize')
     partySize?: string,
   ): Promise<ReservationAvailabilityResponse> {
     return this.reservationsService.getAvailability(
@@ -69,9 +72,9 @@ export class ReservationsController {
   }
 
   // GET /api/v1/reservations/track/:trackingToken
-  @Get("track/:trackingToken")
+  @Get('track/:trackingToken')
   getReservationTracking(
-    @Param("trackingToken", new ParseUUIDPipe())
+    @Param('trackingToken', new ParseUUIDPipe())
     trackingToken: string,
   ): Promise<ReservationTrackingResponse> {
     return this.reservationsService.getReservationTracking(trackingToken);
@@ -82,7 +85,7 @@ export class ReservationsController {
 // OPERATIONAL RESERVATIONS
 // =========================================================
 
-@Controller("ops/reservations")
+@Controller('ops/reservations')
 @OperationsAccess()
 export class OpsReservationsController {
   constructor(private readonly reservationsService: ReservationsService) {}
@@ -93,13 +96,13 @@ export class OpsReservationsController {
   getOperationalReservations(
     @Req() request: StaffAuthenticatedRequest,
 
-    @Query("from")
+    @Query('from')
     from?: string,
 
-    @Query("to")
+    @Query('to')
     to?: string,
 
-    @Query("status")
+    @Query('status')
     status?: string,
   ): Promise<OperationalReservationsResponse> {
     return this.reservationsService.getOperationalReservations(
@@ -112,11 +115,11 @@ export class OpsReservationsController {
   }
 
   // PATCH /api/v1/ops/reservations/:id/status
-  @Patch(":reservationId/status")
+  @Patch(':reservationId/status')
   @OperationPermission('reservations.manage')
   updateReservationStatus(
     @Req() request: StaffAuthenticatedRequest,
-    @Param("reservationId", new ParseUUIDPipe())
+    @Param('reservationId', new ParseUUIDPipe())
     reservationId: string,
 
     @Body()
@@ -131,11 +134,11 @@ export class OpsReservationsController {
   }
 
   // POST /api/v1/ops/reservations/:id/check-in
-  @Post(":reservationId/check-in")
+  @Post(':reservationId/check-in')
   @OperationPermission('reservations.manage')
   checkInReservation(
     @Req() request: StaffAuthenticatedRequest,
-    @Param("reservationId", new ParseUUIDPipe())
+    @Param('reservationId', new ParseUUIDPipe())
     reservationId: string,
   ): Promise<CheckInReservationResponse> {
     return this.reservationsService.checkInReservation(

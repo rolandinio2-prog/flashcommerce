@@ -22,12 +22,8 @@ import { TablesService } from './tables.service';
     OpsOrderTableAssignmentsController,
   ],
 
-  providers: [
-    TablesService,
-  ],
+  providers: [TablesService],
 
-  exports: [
-    TablesService,
-  ],
+  exports: [TablesService],
 })
 export class TablesModule {}

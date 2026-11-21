@@ -5,30 +5,17 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  Pool,
-  PoolClient,
-  QueryResult,
-  QueryResultRow,
-} from 'pg';
+import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 @Injectable()
-export class DatabaseService
-  implements OnModuleInit, OnModuleDestroy
-{
-  private readonly logger =
-    new Logger(DatabaseService.name);
+export class DatabaseService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(DatabaseService.name);
 
   private readonly pool: Pool;
 
-  constructor(
-    private readonly configService: ConfigService,
-  ) {
+  constructor(private readonly configService: ConfigService) {
     this.pool = new Pool({
-      connectionString:
-        this.configService.getOrThrow<string>(
-          'DATABASE_URL',
-        ),
+      connectionString: this.configService.getOrThrow<string>('DATABASE_URL'),
     });
   }
 
@@ -56,25 +43,18 @@ export class DatabaseService
     text: string,
     values: unknown[] = [],
   ): Promise<QueryResult<T>> {
-    return this.pool.query<T>(
-      text,
-      values,
-    );
+    return this.pool.query<T>(text, values);
   }
 
   async withTransaction<T>(
-    work: (
-      client: PoolClient,
-    ) => Promise<T>,
+    work: (client: PoolClient) => Promise<T>,
   ): Promise<T> {
-    const client =
-      await this.pool.connect();
+    const client = await this.pool.connect();
 
     try {
       await client.query('BEGIN');
 
-      const result =
-        await work(client);
+      const result = await work(client);
 
       await client.query('COMMIT');
 

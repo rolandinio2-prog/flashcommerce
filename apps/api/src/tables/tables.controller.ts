@@ -1,4 +1,7 @@
-import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import {
+  OperationsAccess,
+  OperationPermission,
+} from '../operations/operations-access';
 import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import {
   Body,
@@ -32,9 +35,7 @@ import {
 
 @Controller('tables')
 export class TablesController {
-  constructor(
-    private readonly tablesService: TablesService,
-  ) {}
+  constructor(private readonly tablesService: TablesService) {}
 
   // =======================================================
   // GET /api/v1/tables/public-qr/:publicQrToken
@@ -51,9 +52,7 @@ export class TablesController {
     publicQrToken: string,
   ): Promise<{ url: string; statusCode: number }> {
     const resolution =
-      await this.tablesService.resolvePermanentTableQr(
-        publicQrToken,
-      );
+      await this.tablesService.resolvePermanentTableQr(publicQrToken);
 
     return {
       url: resolution.menuUrl,
@@ -71,9 +70,7 @@ export class TablesController {
     @Query('token')
     token?: string,
   ): Promise<PublicTableContextResponse> {
-    return this.tablesService.resolveTableContext(
-      token,
-    );
+    return this.tablesService.resolveTableContext(token);
   }
 
   // =======================================================
@@ -92,10 +89,7 @@ export class TablesController {
     @Query('branch')
     branchCode?: string,
   ) {
-    return this.tablesService.getTables(
-      tenantCode,
-      branchCode,
-    );
+    return this.tablesService.getTables(tenantCode, branchCode);
   }
 }
 
@@ -109,9 +103,7 @@ export class TablesController {
 @Controller('ops/tables')
 @OperationsAccess()
 export class OpsTablesController {
-  constructor(
-    private readonly tablesService: TablesService,
-  ) {}
+  constructor(private readonly tablesService: TablesService) {}
 
   // =======================================================
   // GET /api/v1/ops/tables
@@ -177,9 +169,7 @@ export class OpsTablesController {
 @Controller('ops/table-sessions')
 @OperationsAccess()
 export class OpsTableSessionsController {
-  constructor(
-    private readonly tablesService: TablesService,
-  ) {}
+  constructor(private readonly tablesService: TablesService) {}
 
   // =======================================================
   // PATCH /api/v1/ops/table-sessions/:sessionId/close
@@ -207,9 +197,7 @@ export class OpsTableSessionsController {
 @Controller('ops/orders')
 @OperationsAccess()
 export class OpsOrderTableAssignmentsController {
-  constructor(
-    private readonly tablesService: TablesService,
-  ) {}
+  constructor(private readonly tablesService: TablesService) {}
 
   // =======================================================
   // PATCH /api/v1/ops/orders/:orderId/table-session

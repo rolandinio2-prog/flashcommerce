@@ -7,28 +7,17 @@ import type {
   RouteResult,
 } from './geo.types';
 
-import type {
-  RoutingProvider,
-} from './routing-provider';
+import type { RoutingProvider } from './routing-provider';
 
-import {
-  GoogleGeoProvider,
-} from './google-geo.provider';
+import { GoogleGeoProvider } from './google-geo.provider';
 
 @Injectable()
-export class GoogleRoutingProvider
-  implements RoutingProvider {
-  readonly name:
-    GeoProviderId =
-      'GOOGLE';
+export class GoogleRoutingProvider implements RoutingProvider {
+  readonly name: GeoProviderId = 'GOOGLE';
 
-  constructor(
-    private readonly googleGeoProvider:
-      GoogleGeoProvider,
-  ) {}
+  constructor(private readonly googleGeoProvider: GoogleGeoProvider) {}
 
-  getCapabilities():
-    GeoCapabilities {
+  getCapabilities(): GeoCapabilities {
     return {
       routing: {
         route: true,
@@ -46,49 +35,32 @@ export class GoogleRoutingProvider
     };
   }
 
-  async computeRoute(
-    input: GeoRouteInput,
-  ): Promise<RouteResult> {
-    const route =
-      await this.googleGeoProvider
-        .calculateRoute(
-          input,
-        );
+  async computeRoute(input: GeoRouteInput): Promise<RouteResult> {
+    const route = await this.googleGeoProvider.calculateRoute(input);
 
     return {
-      provider:
-        this.name,
+      provider: this.name,
 
-      distanceMeters:
-        route.distanceMeters,
+      distanceMeters: route.distanceMeters,
 
-      durationSeconds:
-        route.durationSeconds,
+      durationSeconds: route.durationSeconds,
 
-      trafficDurationSeconds:
-        null,
+      trafficDurationSeconds: null,
 
-      geometry:
-        route.encodedPolyline,
+      geometry: route.encodedPolyline,
 
-      geometryFormat:
-        'GOOGLE_ENCODED_POLYLINE',
+      geometryFormat: 'GOOGLE_ENCODED_POLYLINE',
 
-      mapCompatibility:
-        'GOOGLE_MAPS_ONLY',
+      mapCompatibility: 'GOOGLE_MAPS_ONLY',
 
-      calculatedAt:
-        new Date().toISOString(),
+      calculatedAt: new Date().toISOString(),
 
-      expiresAt:
-        null,
+      expiresAt: null,
 
       metadata: {
-        source:
-          'GOOGLE_ROUTES',
+        source: 'GOOGLE_ROUTES',
 
-        trafficAware:
-          true,
+        trafficAware: true,
       },
     };
   }

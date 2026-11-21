@@ -139,11 +139,7 @@ export class GeoShadowEtaCalibrationService {
   }
 
   private isFiniteNonNegative(value: unknown): value is number {
-    return (
-      typeof value === 'number' &&
-      Number.isFinite(value) &&
-      value >= 0
-    );
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0;
   }
 
   private isValidLatency(value: unknown): value is number | null {

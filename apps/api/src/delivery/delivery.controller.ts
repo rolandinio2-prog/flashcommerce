@@ -1,10 +1,4 @@
-import {
-  Body,
-  Controller,
-  HttpCode,
-  HttpStatus,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
 import { DeliveryAddressService } from './delivery-address.service';
@@ -26,22 +20,30 @@ export class DeliveryController {
   @Post('address/map-context')
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
-  addressMapContext(@Body() body: { tenantCode?: string; branchCode?: string }) {
+  addressMapContext(
+    @Body() body: { tenantCode?: string; branchCode?: string },
+  ) {
     return this.deliveryAddressService.mapContext(body);
   }
 
   @Post('address/reverse')
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
-  reverseAddress(@Body() body: { tenantCode?: string; branchCode?: string; latitude?: unknown; longitude?: unknown }) {
+  reverseAddress(
+    @Body()
+    body: {
+      tenantCode?: string;
+      branchCode?: string;
+      latitude?: unknown;
+      longitude?: unknown;
+    },
+  ) {
     return this.deliveryAddressService.reverse(body);
   }
 
   @Post('quote')
   @HttpCode(HttpStatus.OK)
-  quoteDelivery(
-    @Body() body: DeliveryQuoteInput,
-  ) {
+  quoteDelivery(@Body() body: DeliveryQuoteInput) {
     return this.deliveryService.quoteDelivery(body);
   }
 
@@ -54,9 +56,7 @@ export class DeliveryController {
     },
   })
   @HttpCode(HttpStatus.OK)
-  autocompleteAddress(
-    @Body() body: DeliveryAddressAutocompleteInput,
-  ) {
+  autocompleteAddress(@Body() body: DeliveryAddressAutocompleteInput) {
     return this.deliveryAddressService.autocomplete(body);
   }
 
@@ -69,9 +69,7 @@ export class DeliveryController {
     },
   })
   @HttpCode(HttpStatus.OK)
-  resolveAddress(
-    @Body() body: DeliveryAddressResolveInput,
-  ) {
+  resolveAddress(@Body() body: DeliveryAddressResolveInput) {
     return this.deliveryAddressService.resolve(body);
   }
 
@@ -84,9 +82,7 @@ export class DeliveryController {
     },
   })
   @HttpCode(HttpStatus.OK)
-  geocodeAddress(
-    @Body() body: DeliveryAddressGeocodeInput,
-  ) {
+  geocodeAddress(@Body() body: DeliveryAddressGeocodeInput) {
     return this.deliveryAddressService.geocode(body);
   }
 }

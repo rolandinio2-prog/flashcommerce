@@ -15,10 +15,7 @@ import {
 } from 'node:crypto';
 
 import { DatabaseService } from '../database/database.service';
-import {
-  StaffRole,
-  StaffSessionPrincipal,
-} from './staff.types';
+import { StaffRole, StaffSessionPrincipal } from './staff.types';
 
 const SESSION_COOKIE_NAME = 'flash_staff_session';
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000;
@@ -382,10 +379,7 @@ export class StaffService {
     return SESSION_DURATION_MS;
   }
 
-  async changePassword(
-    principal: StaffSessionPrincipal,
-    rawPassword?: string,
-  ) {
+  async changePassword(principal: StaffSessionPrincipal, rawPassword?: string) {
     const password = this.requirePersonalPassword(rawPassword);
     const passwordHash = this.hashPassword(password);
 
@@ -599,20 +593,18 @@ export class StaffService {
     });
   }
 
-  async resetCredentials(
-    principal: StaffSessionPrincipal,
-    userId: string,
-  ) {
+  async resetCredentials(principal: StaffSessionPrincipal, userId: string) {
     const temporaryPassword = this.generateTemporaryPassword();
     const passwordHash = this.hashPassword(temporaryPassword);
 
-    const result = await this.databaseService.withTransaction(async (client) => {
-      const updated = await client.query<{
-        user_code: string;
-        first_name: string;
-        last_name: string;
-      }>(
-        `
+    const result = await this.databaseService.withTransaction(
+      async (client) => {
+        const updated = await client.query<{
+          user_code: string;
+          first_name: string;
+          last_name: string;
+        }>(
+          `
           update public.staff_users u
           set
             password_hash = $4,
@@ -633,17 +625,17 @@ export class StaffService {
             u.first_name,
             u.last_name
         `,
-        [principal.tenantId, userId, principal.branchId, passwordHash],
-      );
+          [principal.tenantId, userId, principal.branchId, passwordHash],
+        );
 
-      const user = updated.rows[0];
+        const user = updated.rows[0];
 
-      if (!user) {
-        throw new NotFoundException('Staff user not found in this branch');
-      }
+        if (!user) {
+          throw new NotFoundException('Staff user not found in this branch');
+        }
 
-      await client.query(
-        `
+        await client.query(
+          `
           update public.staff_sessions
           set revoked_at = coalesce(revoked_at, now())
           where tenant_id = $1::uuid
@@ -651,11 +643,12 @@ export class StaffService {
             and user_id = $3::uuid
             and revoked_at is null
         `,
-        [principal.tenantId, principal.branchId, userId],
-      );
+          [principal.tenantId, principal.branchId, userId],
+        );
 
-      return user;
-    });
+        return user;
+      },
+    );
 
     return {
       user: {
@@ -911,7 +904,9 @@ export class StaffService {
       }
     }
 
-    throw new ServiceUnavailableException('Could not allocate a staff user code');
+    throw new ServiceUnavailableException(
+      'Could not allocate a staff user code',
+    );
   }
 
   private mapPrincipal(
@@ -976,7 +971,9 @@ export class StaffService {
       timingSafeEqual(configuredBuffer, receivedBuffer);
 
     if (!valid) {
-      throw new UnauthorizedException('Invalid operations bootstrap credentials');
+      throw new UnauthorizedException(
+        'Invalid operations bootstrap credentials',
+      );
     }
   }
 
@@ -1017,7 +1014,8 @@ export class StaffService {
   }
 
   private requireRole(value: unknown): StaffRole {
-    const normalized = typeof value === 'string' ? value.trim().toUpperCase() : '';
+    const normalized =
+      typeof value === 'string' ? value.trim().toUpperCase() : '';
 
     if (
       normalized !== 'ADMIN' &&
@@ -1048,7 +1046,11 @@ export class StaffService {
     return value;
   }
 
-  private requireText(value: unknown, field: string, maxLength: number): string {
+  private requireText(
+    value: unknown,
+    field: string,
+    maxLength: number,
+  ): string {
     if (typeof value !== 'string') {
       throw new BadRequestException(`${field} is required`);
     }
@@ -1143,8 +1145,7 @@ export class StaffService {
       const actual = scryptSync(password, salt, expected.length);
 
       return (
-        expected.length === actual.length &&
-        timingSafeEqual(expected, actual)
+        expected.length === actual.length && timingSafeEqual(expected, actual)
       );
     } catch {
       return false;
@@ -1158,9 +1159,9 @@ export class StaffService {
   private isUniqueViolation(error: unknown): boolean {
     return Boolean(
       error &&
-        typeof error === 'object' &&
-        'code' in error &&
-        (error as { code?: string }).code === '23505',
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: string }).code === '23505',
     );
   }
 }

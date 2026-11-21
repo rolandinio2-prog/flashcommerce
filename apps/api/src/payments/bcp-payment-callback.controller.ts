@@ -7,16 +7,11 @@ import {
   Post,
 } from '@nestjs/common';
 
-import {
-  PaymentsService,
-  type BcpQrCallbackInput,
-} from './payments.service';
+import { PaymentsService, type BcpQrCallbackInput } from './payments.service';
 
 @Controller('payments/bcp')
 export class BcpPaymentCallbackController {
-  constructor(
-    private readonly paymentsService: PaymentsService,
-  ) {}
+  constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post('callback')
   @HttpCode(HttpStatus.OK)
@@ -27,9 +22,6 @@ export class BcpPaymentCallbackController {
     @Body()
     body: BcpQrCallbackInput,
   ) {
-    return this.paymentsService.handleBcpQrCallback(
-      authorization,
-      body,
-    );
+    return this.paymentsService.handleBcpQrCallback(authorization, body);
   }
 }

@@ -12,14 +12,12 @@ export interface DeliveryMonitorPoint {
   longitude: number;
 }
 
-export interface DeliveryMonitorLatestLocation
-  extends DeliveryMonitorPoint {
+export interface DeliveryMonitorLatestLocation extends DeliveryMonitorPoint {
   accuracyM: number | null;
   capturedAt: string;
 }
 
-export interface DeliveryMonitorTrailPoint
-  extends DeliveryMonitorLatestLocation {}
+export interface DeliveryMonitorTrailPoint extends DeliveryMonitorLatestLocation {}
 
 export interface DeliveryMonitorRouteFeature {
   type: 'Feature';

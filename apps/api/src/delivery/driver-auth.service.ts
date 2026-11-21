@@ -38,18 +38,19 @@ export class DriverAuthService {
     const tokenHash = this.hashToken(accessToken);
     const expiresAt = new Date(Date.now() + DRIVER_SESSION_DURATION_MS);
 
-    const driver = await this.databaseService.withTransaction(async (client) => {
-      const result = await client.query<{
-        tenant_id: string;
-        tenant_code: string;
-        driver_id: string;
-        driver_code: string;
-        display_name: string;
-        phone: string;
-        password_hash: string | null;
-        password_change_required: boolean;
-      }>(
-        `
+    const driver = await this.databaseService.withTransaction(
+      async (client) => {
+        const result = await client.query<{
+          tenant_id: string;
+          tenant_code: string;
+          driver_id: string;
+          driver_code: string;
+          display_name: string;
+          phone: string;
+          password_hash: string | null;
+          password_change_required: boolean;
+        }>(
+          `
           select
             t.id::text as tenant_id,
             t.code as tenant_code,
@@ -76,21 +77,21 @@ export class DriverAuthService {
           limit 1
           for update of drv
         `,
-        [tenantCode, driverCode],
-      );
+          [tenantCode, driverCode],
+        );
 
-      const row = result.rows[0];
+        const row = result.rows[0];
 
-      if (
-        !row ||
-        !row.password_hash ||
-        !this.verifyPassword(password, row.password_hash)
-      ) {
-        throw this.invalidCredentials();
-      }
+        if (
+          !row ||
+          !row.password_hash ||
+          !this.verifyPassword(password, row.password_hash)
+        ) {
+          throw this.invalidCredentials();
+        }
 
-      await client.query(
-        `
+        await client.query(
+          `
           update public.delivery_driver_credentials
           set
             status = 'REVOKED',
@@ -100,11 +101,11 @@ export class DriverAuthService {
             and driver_id = $2::uuid
             and status = 'ACTIVE'
         `,
-        [row.tenant_id, row.driver_id],
-      );
+          [row.tenant_id, row.driver_id],
+        );
 
-      await client.query(
-        `
+        await client.query(
+          `
           insert into public.delivery_driver_credentials (
             tenant_id,
             driver_id,
@@ -118,11 +119,11 @@ export class DriverAuthService {
             $4::timestamptz
           )
         `,
-        [row.tenant_id, row.driver_id, tokenHash, expiresAt.toISOString()],
-      );
+          [row.tenant_id, row.driver_id, tokenHash, expiresAt.toISOString()],
+        );
 
-      await client.query(
-        `
+        await client.query(
+          `
           update public.delivery_drivers
           set
             last_login_at = now(),
@@ -130,11 +131,12 @@ export class DriverAuthService {
           where tenant_id = $1::uuid
             and id = $2::uuid
         `,
-        [row.tenant_id, row.driver_id],
-      );
+          [row.tenant_id, row.driver_id],
+        );
 
-      return row;
-    });
+        return row;
+      },
+    );
 
     return {
       authenticated: true,
@@ -261,7 +263,9 @@ export class DriverAuthService {
       const expected = Buffer.from(hashEncoded, 'base64url');
       const actual = scryptSync(password, salt, expected.length);
 
-      return expected.length === actual.length && timingSafeEqual(expected, actual);
+      return (
+        expected.length === actual.length && timingSafeEqual(expected, actual)
+      );
     } catch {
       return false;
     }

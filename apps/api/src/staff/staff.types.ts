@@ -1,9 +1,4 @@
-export type StaffRole =
-  | 'ADMIN'
-  | 'MANAGER'
-  | 'CASHIER'
-  | 'KITCHEN'
-  | 'WAITER';
+export type StaffRole = 'ADMIN' | 'MANAGER' | 'CASHIER' | 'KITCHEN' | 'WAITER';
 
 export interface StaffSessionPrincipal {
   sessionId: string;

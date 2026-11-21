@@ -1,36 +1,17 @@
-import {
-  Controller,
-  Get,
-  Param,
-  Post,
-  Req,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
-import {
-  StaffRoleGuard,
-} from '../staff/staff-role.guard';
-import {
-  StaffRoles,
-} from '../staff/staff-roles.decorator';
-import {
-  StaffSessionGuard,
-} from '../staff/staff-session.guard';
-import type {
-  StaffAuthenticatedRequest,
-} from '../staff/staff.types';
-import {
-  AdminDevQrPaymentService,
-} from './admin-dev-qr-payment.service';
+import { StaffRoleGuard } from '../staff/staff-role.guard';
+import { StaffRoles } from '../staff/staff-roles.decorator';
+import { StaffSessionGuard } from '../staff/staff-session.guard';
+import type { StaffAuthenticatedRequest } from '../staff/staff.types';
+import { AdminDevQrPaymentService } from './admin-dev-qr-payment.service';
 
 @Controller('staff/admin/dev-payments')
 @UseGuards(StaffSessionGuard, StaffRoleGuard)
 @StaffRoles('ADMIN')
 export class AdminDevQrPaymentController {
-  constructor(
-    private readonly service: AdminDevQrPaymentService,
-  ) {}
+  constructor(private readonly service: AdminDevQrPaymentService) {}
 
   @Get('status')
   getStatus() {
@@ -46,9 +27,6 @@ export class AdminDevQrPaymentController {
     @Req()
     request: StaffAuthenticatedRequest,
   ) {
-    return this.service.simulateQrPaid(
-      request.staff,
-      orderNumber,
-    );
+    return this.service.simulateQrPaid(request.staff, orderNumber);
   }
 }

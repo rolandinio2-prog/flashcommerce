@@ -17,13 +17,14 @@ import { PaymentsService } from '../payments/payments.service';
 import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
 import { GeoUsageMeterService } from './geo-usage-meter.service';
 import type { GeoPoint, GeoRouteResult } from './geo.types';
-import {DeliveryBaseRouteCache} from './delivery-base-route';
-import { buildJourney, DriverJourneyNavigation, JOURNEY_SAMPLE_LIMIT } from './driver-journey';
-import type { JourneySample } from './driver-journey';
+import { DeliveryBaseRouteCache } from './delivery-base-route';
 import {
-  deriveDeliveryPod,
-  verifyDeliveryPod,
-} from './delivery-pod';
+  buildJourney,
+  DriverJourneyNavigation,
+  JOURNEY_SAMPLE_LIMIT,
+} from './driver-journey';
+import type { JourneySample } from './driver-journey';
+import { deriveDeliveryPod, verifyDeliveryPod } from './delivery-pod';
 import type {
   CreatedDelivery,
   DeliveryCheckoutQuote,
@@ -65,8 +66,10 @@ const DELIVERY_MAP_ROUTE_CACHE_MAX_ENTRIES = 250;
 export class DeliveryService {
   private readonly deliveryBaseRoutes = new DeliveryBaseRouteCache();
   private readonly driverJourneyNavigation = new DriverJourneyNavigation();
-  private readonly deliveryMapRouteCache =
-    new Map<string, DeliveryMapRouteCacheEntry>();
+  private readonly deliveryMapRouteCache = new Map<
+    string,
+    DeliveryMapRouteCacheEntry
+  >();
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -223,13 +226,10 @@ export class DeliveryService {
       };
     }
 
-    const route = await this.calculatePublicDeliveryRoute(
-      branch,
-      {
-        latitude,
-        longitude,
-      },
-    );
+    const route = await this.calculatePublicDeliveryRoute(branch, {
+      latitude,
+      longitude,
+    });
 
     const routeAwareEta = this.buildRouteAwareEta(
       branch,
@@ -254,51 +254,35 @@ export class DeliveryService {
     };
   }
 
-  async prepareDeliveryCheckoutRoute(
-    input: {
-      tenantId: string;
-      branchId: string;
-      latitude: unknown;
-      longitude: unknown;
-      subtotal: number;
-    },
-  ): Promise<DeliveryCheckoutRouteSnapshot> {
-    const tenantId =
-      this.requireUuid(
-        input.tenantId,
-        'tenantId',
-      );
+  async prepareDeliveryCheckoutRoute(input: {
+    tenantId: string;
+    branchId: string;
+    latitude: unknown;
+    longitude: unknown;
+    subtotal: number;
+  }): Promise<DeliveryCheckoutRouteSnapshot> {
+    const tenantId = this.requireUuid(input.tenantId, 'tenantId');
 
-    const branchId =
-      this.requireUuid(
-        input.branchId,
-        'branchId',
-      );
+    const branchId = this.requireUuid(input.branchId, 'branchId');
 
-    const latitude =
-      this.requireCoordinate(
-        input.latitude,
-        'deliveryLatitude',
-        -90,
-        90,
-      );
+    const latitude = this.requireCoordinate(
+      input.latitude,
+      'deliveryLatitude',
+      -90,
+      90,
+    );
 
-    const longitude =
-      this.requireCoordinate(
-        input.longitude,
-        'deliveryLongitude',
-        -180,
-        180,
-      );
+    const longitude = this.requireCoordinate(
+      input.longitude,
+      'deliveryLongitude',
+      -180,
+      180,
+    );
 
-    const subtotal =
-      this.requireSubtotal(
-        input.subtotal,
-      );
+    const subtotal = this.requireSubtotal(input.subtotal);
 
-    const branchResult =
-      await this.databaseService.query<DeliveryBranchRow>(
-        `
+    const branchResult = await this.databaseService.query<DeliveryBranchRow>(
+      `
           select
             b.tenant_id::text as tenant_id,
             b.id::text as branch_id,
@@ -314,30 +298,21 @@ export class DeliveryService {
             and b.status = 'ACTIVE'
           limit 1
         `,
-        [
-          tenantId,
-          branchId,
-        ],
-      );
+      [tenantId, branchId],
+    );
 
-    const branch =
-      branchResult.rows[0];
+    const branch = branchResult.rows[0];
 
     if (!branch) {
-      throw new NotFoundException(
-        'Branch not found for delivery checkout',
-      );
+      throw new NotFoundException('Branch not found for delivery checkout');
     }
 
     if (!branch.delivery_enabled) {
-      throw new ConflictException(
-        'Delivery is disabled for this branch',
-      );
+      throw new ConflictException('Delivery is disabled for this branch');
     }
 
-    const zoneResult =
-      await this.databaseService.query<DeliveryZoneRow>(
-        `
+    const zoneResult = await this.databaseService.query<DeliveryZoneRow>(
+      `
           select
             z.id::text,
             z.code,
@@ -366,16 +341,10 @@ export class DeliveryService {
             z.id asc
           limit 1
         `,
-        [
-          tenantId,
-          branchId,
-          longitude,
-          latitude,
-        ],
-      );
+      [tenantId, branchId, longitude, latitude],
+    );
 
-    const zone =
-      zoneResult.rows[0];
+    const zone = zoneResult.rows[0];
 
     if (!zone) {
       throw new ConflictException(
@@ -383,17 +352,12 @@ export class DeliveryService {
       );
     }
 
-    const minimumOrder =
-      this.databaseMoneyToNumber(
-        zone.minimum_order,
-        'minimum_order',
-      );
+    const minimumOrder = this.databaseMoneyToNumber(
+      zone.minimum_order,
+      'minimum_order',
+    );
 
-    const minimumOrderMissing =
-      this.roundMoney(
-        minimumOrder -
-        subtotal,
-      );
+    const minimumOrderMissing = this.roundMoney(minimumOrder - subtotal);
 
     if (minimumOrderMissing > 0) {
       throw new ConflictException(
@@ -401,32 +365,28 @@ export class DeliveryService {
       );
     }
 
-    const origin =
-      this.requireDeliveryBranchOrigin(
-        branch,
-      );
+    const origin = this.requireDeliveryBranchOrigin(branch);
 
     const destination = {
       latitude,
       longitude,
     };
 
-    const route =
-      await this.geoUsageMeter.measure({ tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false }, () => this.geoProvider.calculateRoute({
-        origin,
-        destination,
-      }));
+    const route = await this.geoUsageMeter.measure(
+      { tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false },
+      () =>
+        this.geoProvider.calculateRoute({
+          origin,
+          destination,
+        }),
+    );
 
     this.validateDeliveryRouteMetrics(
       route.distanceMeters,
       route.durationSeconds,
     );
 
-    this.buildRouteAwareEta(
-      branch,
-      zone,
-      route.durationSeconds,
-    );
+    this.buildRouteAwareEta(branch, zone, route.durationSeconds);
 
     return {
       tenantId,
@@ -435,11 +395,9 @@ export class DeliveryService {
       origin,
       destination,
 
-      distanceMeters:
-        route.distanceMeters,
+      distanceMeters: route.distanceMeters,
 
-      durationSeconds:
-        route.durationSeconds,
+      durationSeconds: route.durationSeconds,
     };
   }
   async quoteDeliveryForCheckout(
@@ -499,13 +457,12 @@ export class DeliveryService {
       throw new ConflictException('Delivery is disabled for this branch');
     }
 
-    const routeSnapshot =
-      this.requireCurrentDeliveryRouteSnapshot(
-        input.routeSnapshot,
-        branch,
-        latitude,
-        longitude,
-      );
+    const routeSnapshot = this.requireCurrentDeliveryRouteSnapshot(
+      input.routeSnapshot,
+      branch,
+      latitude,
+      longitude,
+    );
 
     const zoneResult = await client.query<DeliveryZoneRow>(
       `
@@ -567,12 +524,11 @@ export class DeliveryService {
       );
     }
 
-    const routeAwareEta =
-      this.buildRouteAwareEta(
-        branch,
-        zone,
-        routeSnapshot.durationSeconds,
-      );
+    const routeAwareEta = this.buildRouteAwareEta(
+      branch,
+      zone,
+      routeSnapshot.durationSeconds,
+    );
 
     return {
       zoneId: zone.id,
@@ -586,11 +542,9 @@ export class DeliveryService {
       minimumOrder,
 
       route: {
-        distanceMeters:
-          routeSnapshot.distanceMeters,
+        distanceMeters: routeSnapshot.distanceMeters,
 
-        durationSeconds:
-          routeSnapshot.durationSeconds,
+        durationSeconds: routeSnapshot.durationSeconds,
       },
 
       eta: routeAwareEta,
@@ -777,41 +731,26 @@ export class DeliveryService {
     driverIdInput?: unknown,
     expectedAssignmentIdInput?: unknown,
   ) {
-    const deliveryId = this.requireUuid(
-      deliveryIdInput,
-      'deliveryId',
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
+
+    const tenantCode = this.requireCode(tenantCodeInput, 'tenant');
+
+    const branchCode = this.requireCode(branchCodeInput, 'branch');
+
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
+
+    const expectedAssignmentId = this.optionalUuid(
+      expectedAssignmentIdInput,
+      'expectedAssignmentId',
     );
 
-    const tenantCode = this.requireCode(
-      tenantCodeInput,
-      'tenant',
-    );
-
-    const branchCode = this.requireCode(
-      branchCodeInput,
-      'branch',
-    );
-
-    const driverId = this.requireUuid(
-      driverIdInput,
-      'driverId',
-    );
-
-    const expectedAssignmentId =
-      this.optionalUuid(
-        expectedAssignmentIdInput,
-        'expectedAssignmentId',
-      );
-
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const branchResult =
-          await client.query<{
-            tenant_id: string;
-            branch_id: string;
-            branch_name: string;
-          }>(
-            `
+    return this.databaseService.withTransaction(async (client) => {
+      const branchResult = await client.query<{
+        tenant_id: string;
+        branch_id: string;
+        branch_name: string;
+      }>(
+        `
               select
                 t.id::text as tenant_id,
                 b.id::text as branch_id,
@@ -831,31 +770,25 @@ export class DeliveryService {
 
               for share of t, b
             `,
-            [
-              tenantCode,
-              branchCode,
-            ],
-          );
+        [tenantCode, branchCode],
+      );
 
-        const branch = branchResult.rows[0];
+      const branch = branchResult.rows[0];
 
-        if (!branch) {
-          throw new NotFoundException(
-            'Tenant or branch not found',
-          );
-        }
+      if (!branch) {
+        throw new NotFoundException('Tenant or branch not found');
+      }
 
-        const deliveryResult =
-          await client.query<{
-            id: string;
-            status: string;
+      const deliveryResult = await client.query<{
+        id: string;
+        status: string;
 
-            order_id: string;
-            order_number: string;
-            order_status: string;
-            payment_status: string;
-          }>(
-            `
+        order_id: string;
+        order_number: string;
+        order_status: string;
+        payment_status: string;
+      }>(
+        `
               select
                 d.id::text,
                 d.status,
@@ -884,50 +817,46 @@ export class DeliveryService {
 
               for update of d
             `,
-            [
-              branch.tenant_id,
-              branch.branch_id,
-              deliveryId,
-            ],
-          );
+        [branch.tenant_id, branch.branch_id, deliveryId],
+      );
 
-        const delivery =
-          deliveryResult.rows[0];
+      const delivery = deliveryResult.rows[0];
 
-        if (!delivery) {
-          throw new NotFoundException(
-            'Delivery not found',
-          );
-        }
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
 
-        if (delivery.order_status !== 'READY') {
-          throw new ConflictException(
-            `Order ${delivery.order_number} is not dispatchable until READY`,
-          );
-        }
+      if (delivery.order_status !== 'READY') {
+        throw new ConflictException(
+          `Order ${delivery.order_number} is not dispatchable until READY`,
+        );
+      }
 
-        await assertDeliveryQrPaid(client, {tenant_id: branch.tenant_id, branch_id: branch.branch_id, order_id: delivery.order_id});
+      await assertDeliveryQrPaid(client, {
+        tenant_id: branch.tenant_id,
+        branch_id: branch.branch_id,
+        order_id: delivery.order_id,
+      });
 
-        if (
-          delivery.status !== 'WAITING_ASSIGNMENT' &&
-          delivery.status !== 'ASSIGNED'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot be assigned from ${delivery.status}`,
-          );
-        }
+      if (
+        delivery.status !== 'WAITING_ASSIGNMENT' &&
+        delivery.status !== 'ASSIGNED'
+      ) {
+        throw new ConflictException(
+          `Delivery cannot be assigned from ${delivery.status}`,
+        );
+      }
 
-        const activeResult =
-          await client.query<{
-            id: string;
-            driver_id: string;
-            assignment_number: number;
-            status: string;
+      const activeResult = await client.query<{
+        id: string;
+        driver_id: string;
+        assignment_number: number;
+        status: string;
 
-            driver_code: string;
-            driver_name: string;
-          }>(
-            `
+        driver_code: string;
+        driver_name: string;
+      }>(
+        `
               select
                 a.id::text,
                 a.driver_id::text,
@@ -961,138 +890,104 @@ export class DeliveryService {
 
               for update of a
             `,
-            [
-              branch.tenant_id,
-              branch.branch_id,
-              delivery.id,
-            ],
-          );
+        [branch.tenant_id, branch.branch_id, delivery.id],
+      );
 
-        const activeAssignment =
-          activeResult.rows[0] ?? null;
+      const activeAssignment = activeResult.rows[0] ?? null;
 
-        if (
-          delivery.status ===
-            'WAITING_ASSIGNMENT' &&
-          activeAssignment
-        ) {
-          throw new ConflictException(
-            'Delivery assignment state is inconsistent',
-          );
-        }
+      if (delivery.status === 'WAITING_ASSIGNMENT' && activeAssignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
 
-        if (
-          delivery.status === 'ASSIGNED' &&
-          !activeAssignment
-        ) {
-          throw new ConflictException(
-            'Delivery assignment state is inconsistent',
-          );
-        }
+      if (delivery.status === 'ASSIGNED' && !activeAssignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
 
-        if (
-          activeAssignment &&
-          activeAssignment.status !== 'ASSIGNED'
-        ) {
-          throw new ConflictException(
-            'Accepted assignment cannot be replaced by operations',
-          );
-        }
+      if (activeAssignment && activeAssignment.status !== 'ASSIGNED') {
+        throw new ConflictException(
+          'Accepted assignment cannot be replaced by operations',
+        );
+      }
 
-        // ----------------------------------------------------
-        // Idempotency.
-        //
-        // A retry of the same assignment does not create
-        // another assignment or another event.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Idempotency.
+      //
+      // A retry of the same assignment does not create
+      // another assignment or another event.
+      // ----------------------------------------------------
 
-        if (
-          activeAssignment &&
-          activeAssignment.driver_id === driverId
-        ) {
-          return {
-            tenant: tenantCode,
+      if (activeAssignment && activeAssignment.driver_id === driverId) {
+        return {
+          tenant: tenantCode,
 
-            branch: {
-              code: branchCode,
-              name: branch.branch_name,
+          branch: {
+            code: branchCode,
+            name: branch.branch_name,
+          },
+
+          changed: false,
+          action: 'UNCHANGED',
+
+          delivery: {
+            id: delivery.id,
+            status: delivery.status,
+          },
+
+          assignment: {
+            id: activeAssignment.id,
+
+            number: activeAssignment.assignment_number,
+
+            status: activeAssignment.status,
+
+            driver: {
+              id: activeAssignment.driver_id,
+              code: activeAssignment.driver_code,
+              name: activeAssignment.driver_name,
             },
+          },
+        };
+      }
 
-            changed: false,
-            action: 'UNCHANGED',
+      // ----------------------------------------------------
+      // Reassignment stale-write protection.
+      //
+      // First assignment has no expectedAssignmentId.
+      // Reassignment requires the exact active assignment
+      // observed by the operator.
+      // ----------------------------------------------------
 
-            delivery: {
-              id: delivery.id,
-              status: delivery.status,
-            },
+      if (delivery.status === 'WAITING_ASSIGNMENT' && expectedAssignmentId) {
+        throw new BadRequestException(
+          'expectedAssignmentId must be omitted for initial assignment',
+        );
+      }
 
-            assignment: {
-              id: activeAssignment.id,
+      if (delivery.status === 'ASSIGNED' && !expectedAssignmentId) {
+        throw new ConflictException(
+          'expectedAssignmentId is required for reassignment',
+        );
+      }
 
-              number:
-                activeAssignment.assignment_number,
+      if (activeAssignment && expectedAssignmentId !== activeAssignment.id) {
+        throw new ConflictException('Delivery assignment changed concurrently');
+      }
 
-              status:
-                activeAssignment.status,
+      // ----------------------------------------------------
+      // Target driver must be ACTIVE and explicitly ENABLED
+      // for this tenant + branch.
+      // ----------------------------------------------------
 
-              driver: {
-                id: activeAssignment.driver_id,
-                code: activeAssignment.driver_code,
-                name: activeAssignment.driver_name,
-              },
-            },
-          };
-        }
-
-        // ----------------------------------------------------
-        // Reassignment stale-write protection.
-        //
-        // First assignment has no expectedAssignmentId.
-        // Reassignment requires the exact active assignment
-        // observed by the operator.
-        // ----------------------------------------------------
-
-        if (
-          delivery.status ===
-            'WAITING_ASSIGNMENT' &&
-          expectedAssignmentId
-        ) {
-          throw new BadRequestException(
-            'expectedAssignmentId must be omitted for initial assignment',
-          );
-        }
-
-        if (
-          delivery.status === 'ASSIGNED' &&
-          !expectedAssignmentId
-        ) {
-          throw new ConflictException(
-            'expectedAssignmentId is required for reassignment',
-          );
-        }
-
-        if (
-          activeAssignment &&
-          expectedAssignmentId !==
-            activeAssignment.id
-        ) {
-          throw new ConflictException(
-            'Delivery assignment changed concurrently',
-          );
-        }
-
-        // ----------------------------------------------------
-        // Target driver must be ACTIVE and explicitly ENABLED
-        // for this tenant + branch.
-        // ----------------------------------------------------
-
-        const driverResult =
-          await client.query<{
-            id: string;
-            code: string;
-            display_name: string;
-          }>(
-            `
+      const driverResult = await client.query<{
+        id: string;
+        code: string;
+        display_name: string;
+      }>(
+        `
               select
                 drv.id::text,
                 drv.code,
@@ -1130,33 +1025,26 @@ export class DeliveryService {
 
               for update of db
             `,
-            [
-              branch.tenant_id,
-              branch.branch_id,
-              driverId,
-              delivery.id,
-            ],
-          );
+        [branch.tenant_id, branch.branch_id, driverId, delivery.id],
+      );
 
-        const driver =
-          driverResult.rows[0];
+      const driver = driverResult.rows[0];
 
-        if (!driver) {
-          throw new ConflictException(
-            'Driver is not active and enabled for this branch',
-          );
-        }
+      if (!driver) {
+        throw new ConflictException(
+          'Driver is not active and enabled for this branch',
+        );
+      }
 
-        // ----------------------------------------------------
-        // Calculate next immutable history number while the
-        // delivery row remains locked.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Calculate next immutable history number while the
+      // delivery row remains locked.
+      // ----------------------------------------------------
 
-        const numberResult =
-          await client.query<{
-            next_number: number;
-          }>(
-            `
+      const numberResult = await client.query<{
+        next_number: number;
+      }>(
+        `
               select
                 (
                   coalesce(
@@ -1171,38 +1059,26 @@ export class DeliveryService {
                 and a.branch_id = $2::uuid
                 and a.delivery_id = $3::uuid
             `,
-            [
-              branch.tenant_id,
-              branch.branch_id,
-              delivery.id,
-            ],
-          );
+        [branch.tenant_id, branch.branch_id, delivery.id],
+      );
 
-        const nextAssignmentNumber =
-          numberResult.rows[0]?.next_number;
+      const nextAssignmentNumber = numberResult.rows[0]?.next_number;
 
-        if (
-          !nextAssignmentNumber ||
-          nextAssignmentNumber < 1
-        ) {
-          throw new Error(
-            'Could not calculate assignment number',
-          );
-        }
+      if (!nextAssignmentNumber || nextAssignmentNumber < 1) {
+        throw new Error('Could not calculate assignment number');
+      }
 
-        const isReassignment =
-          activeAssignment !== null;
+      const isReassignment = activeAssignment !== null;
 
-        // ----------------------------------------------------
-        // Release old assignment first.
-        // The partial unique index then permits the new active
-        // assignment inside this same transaction.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Release old assignment first.
+      // The partial unique index then permits the new active
+      // assignment inside this same transaction.
+      // ----------------------------------------------------
 
-        if (activeAssignment) {
-          const releasedResult =
-            await client.query(
-              `
+      if (activeAssignment) {
+        const releasedResult = await client.query(
+          `
                 update public.delivery_assignments
 
                 set
@@ -1219,36 +1095,31 @@ export class DeliveryService {
 
                 returning id
               `,
-              [
-                branch.tenant_id,
-                branch.branch_id,
-                activeAssignment.id,
-              ],
-            );
+          [branch.tenant_id, branch.branch_id, activeAssignment.id],
+        );
 
-          if (releasedResult.rowCount !== 1) {
-            throw new ConflictException(
-              'Delivery assignment changed concurrently',
-            );
-          }
+        if (releasedResult.rowCount !== 1) {
+          throw new ConflictException(
+            'Delivery assignment changed concurrently',
+          );
         }
+      }
 
-        let newAssignment: {
+      let newAssignment: {
+        id: string;
+        assignment_number: number;
+        status: string;
+        assigned_at: string | Date;
+      };
+
+      try {
+        const insertResult = await client.query<{
           id: string;
           assignment_number: number;
           status: string;
           assigned_at: string | Date;
-        };
-
-        try {
-          const insertResult =
-            await client.query<{
-              id: string;
-              assignment_number: number;
-              status: string;
-              assigned_at: string | Date;
-            }>(
-              `
+        }>(
+          `
                 insert into public.delivery_assignments (
                   tenant_id,
                   branch_id,
@@ -1273,53 +1144,49 @@ export class DeliveryService {
                   status,
                   assigned_at
               `,
-              [
-                branch.tenant_id,
-                branch.branch_id,
-                delivery.id,
-                driver.id,
-                nextAssignmentNumber,
-              ],
-            );
+          [
+            branch.tenant_id,
+            branch.branch_id,
+            delivery.id,
+            driver.id,
+            nextAssignmentNumber,
+          ],
+        );
 
-          const inserted =
-            insertResult.rows[0];
+        const inserted = insertResult.rows[0];
 
-          if (!inserted) {
-            throw new Error(
-              'Assignment creation returned no row',
-            );
-          }
-
-          newAssignment = inserted;
-        } catch (error) {
-          if (
-            typeof error === 'object' &&
-            error !== null &&
-            'code' in error &&
-            (
-              error as {
-                code?: string;
-              }
-            ).code === '23505'
-          ) {
-            throw new ConflictException(
-              'Delivery assignment changed concurrently',
-            );
-          }
-
-          throw error;
+        if (!inserted) {
+          throw new Error('Assignment creation returned no row');
         }
 
-        // ----------------------------------------------------
-        // First assignment changes delivery status.
-        // Reassignment keeps ASSIGNED but refreshes updated_at.
-        // ----------------------------------------------------
+        newAssignment = inserted;
+      } catch (error) {
+        if (
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          (
+            error as {
+              code?: string;
+            }
+          ).code === '23505'
+        ) {
+          throw new ConflictException(
+            'Delivery assignment changed concurrently',
+          );
+        }
 
-        if (!isReassignment) {
-          const deliveryUpdate =
-            await client.query(
-              `
+        throw error;
+      }
+
+      // ----------------------------------------------------
+      // First assignment changes delivery status.
+      // Reassignment keeps ASSIGNED but refreshes updated_at.
+      // ----------------------------------------------------
+
+      if (!isReassignment) {
+        const deliveryUpdate = await client.query(
+          `
                 update public.deliveries
 
                 set
@@ -1334,22 +1201,15 @@ export class DeliveryService {
 
                 returning id
               `,
-              [
-                branch.tenant_id,
-                branch.branch_id,
-                delivery.id,
-              ],
-            );
+          [branch.tenant_id, branch.branch_id, delivery.id],
+        );
 
-          if (deliveryUpdate.rowCount !== 1) {
-            throw new ConflictException(
-              'Delivery changed concurrently',
-            );
-          }
-        } else {
-          const deliveryUpdate =
-            await client.query(
-              `
+        if (deliveryUpdate.rowCount !== 1) {
+          throw new ConflictException('Delivery changed concurrently');
+        }
+      } else {
+        const deliveryUpdate = await client.query(
+          `
                 update public.deliveries
 
                 set updated_at = now()
@@ -1361,26 +1221,20 @@ export class DeliveryService {
 
                 returning id
               `,
-              [
-                branch.tenant_id,
-                branch.branch_id,
-                delivery.id,
-              ],
-            );
+          [branch.tenant_id, branch.branch_id, delivery.id],
+        );
 
-          if (deliveryUpdate.rowCount !== 1) {
-            throw new ConflictException(
-              'Delivery changed concurrently',
-            );
-          }
+        if (deliveryUpdate.rowCount !== 1) {
+          throw new ConflictException('Delivery changed concurrently');
         }
+      }
 
-        // ----------------------------------------------------
-        // Immutable delivery event.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Immutable delivery event.
+      // ----------------------------------------------------
 
-        await client.query(
-          `
+      await client.query(
+        `
             insert into public.delivery_events (
               tenant_id,
               branch_id,
@@ -1431,162 +1285,133 @@ export class DeliveryService {
               )
             )
           `,
-          [
-            branch.tenant_id,
-            branch.branch_id,
-            delivery.id,
+        [
+          branch.tenant_id,
+          branch.branch_id,
+          delivery.id,
 
-            isReassignment
-              ? 'DRIVER_REASSIGNED'
-              : 'DRIVER_ASSIGNED',
+          isReassignment ? 'DRIVER_REASSIGNED' : 'DRIVER_ASSIGNED',
 
-            isReassignment
-              ? 'ASSIGNED'
-              : 'WAITING_ASSIGNMENT',
+          isReassignment ? 'ASSIGNED' : 'WAITING_ASSIGNMENT',
 
-            newAssignment.id,
-            newAssignment.assignment_number,
+          newAssignment.id,
+          newAssignment.assignment_number,
 
-            driver.id,
-            driver.code,
+          driver.id,
+          driver.code,
 
-            activeAssignment?.id ?? null,
-            activeAssignment?.driver_id ?? null,
-            activeAssignment?.driver_code ?? null,
-          ],
-        );
+          activeAssignment?.id ?? null,
+          activeAssignment?.driver_id ?? null,
+          activeAssignment?.driver_code ?? null,
+        ],
+      );
 
-        return {
-          tenant: tenantCode,
+      return {
+        tenant: tenantCode,
 
-          branch: {
-            code: branchCode,
-            name: branch.branch_name,
+        branch: {
+          code: branchCode,
+          name: branch.branch_name,
+        },
+
+        changed: true,
+
+        action: isReassignment ? 'REASSIGNED' : 'ASSIGNED',
+
+        delivery: {
+          id: delivery.id,
+          status: 'ASSIGNED',
+        },
+
+        previousAssignment: activeAssignment
+          ? {
+              id: activeAssignment.id,
+
+              number: activeAssignment.assignment_number,
+
+              status: 'RELEASED',
+
+              driver: {
+                id: activeAssignment.driver_id,
+
+                code: activeAssignment.driver_code,
+
+                name: activeAssignment.driver_name,
+              },
+            }
+          : null,
+
+        assignment: {
+          id: newAssignment.id,
+
+          number: newAssignment.assignment_number,
+
+          status: newAssignment.status,
+
+          assignedAt: newAssignment.assigned_at,
+
+          driver: {
+            id: driver.id,
+            code: driver.code,
+            name: driver.display_name,
           },
-
-          changed: true,
-
-          action:
-            isReassignment
-              ? 'REASSIGNED'
-              : 'ASSIGNED',
-
-          delivery: {
-            id: delivery.id,
-            status: 'ASSIGNED',
-          },
-
-          previousAssignment:
-            activeAssignment
-              ? {
-                  id: activeAssignment.id,
-
-                  number:
-                    activeAssignment.assignment_number,
-
-                  status: 'RELEASED',
-
-                  driver: {
-                    id:
-                      activeAssignment.driver_id,
-
-                    code:
-                      activeAssignment.driver_code,
-
-                    name:
-                      activeAssignment.driver_name,
-                  },
-                }
-              : null,
-
-          assignment: {
-            id: newAssignment.id,
-
-            number:
-              newAssignment.assignment_number,
-
-            status:
-              newAssignment.status,
-
-            assignedAt:
-              newAssignment.assigned_at,
-
-            driver: {
-              id: driver.id,
-              code: driver.code,
-              name: driver.display_name,
-            },
-          },
-        };
-      },
-    );
+        },
+      };
+    });
   }
   async getDriverActiveDeliveries(
     tenantIdInput: unknown,
     driverIdInput: unknown,
   ) {
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
-    const result =
-      await this.databaseService.query<{
-        delivery_id: string;
-        delivery_status: string;
+    const result = await this.databaseService.query<{
+      delivery_id: string;
+      delivery_status: string;
 
-        order_number: string;
-        order_status: string;
-        order_payment_status: string;
+      order_number: string;
+      order_status: string;
+      order_payment_status: string;
 
-        relationship_role:
-          | 'PRIMARY'
-          | 'ADDITIONAL';
+      relationship_role: 'PRIMARY' | 'ADDITIONAL';
 
-        member_count: number;
+      member_count: number;
 
-        member_orders: Array<{
-          number: string;
-          status: string;
-          paymentStatus: string;
-          relationshipRole:
-            | 'PRIMARY'
-            | 'ADDITIONAL';
-        }>;
+      member_orders: Array<{
+        number: string;
+        status: string;
+        paymentStatus: string;
+        relationshipRole: 'PRIMARY' | 'ADDITIONAL';
+      }>;
 
-        payment_method: string | null;
-        payment_provider: string | null;
-        payment_attempt_status: string | null;
-        payment_amount: string | null;
-        payment_currency: string | null;
+      payment_method: string | null;
+      payment_provider: string | null;
+      payment_attempt_status: string | null;
+      payment_amount: string | null;
+      payment_currency: string | null;
 
-        assignment_id: string;
-        assignment_number: number;
-        assignment_status: string;
+      assignment_id: string;
+      assignment_number: number;
+      assignment_status: string;
 
-        recipient_name: string;
-        recipient_phone: string;
+      recipient_name: string;
+      recipient_phone: string;
 
-        address_text: string;
-        address_reference: string | null;
+      address_text: string;
+      address_reference: string | null;
 
-        branch_name: string;
-        branch_latitude: string | null;
-        branch_longitude: string | null;
-        destination_latitude: number;
-        destination_longitude: number;
+      branch_name: string;
+      branch_latitude: string | null;
+      branch_longitude: string | null;
+      destination_latitude: number;
+      destination_longitude: number;
 
-        eta_min_minutes: number | null;
-        eta_max_minutes: number | null;
-      }>(
-        `
+      eta_min_minutes: number | null;
+      eta_max_minutes: number | null;
+    }>(
+      `
           select
             d.id::text
               as delivery_id,
@@ -1776,27 +1601,17 @@ export class DeliveryService {
             a.assignment_number asc,
             d.id asc
         `,
-        [
-          tenantId,
-          driverId,
-        ],
-      );
+      [tenantId, driverId],
+    );
 
     for (const row of result.rows) {
       const assignmentMatchesDelivery =
-        (
-          row.delivery_status === 'ASSIGNED' &&
-          row.assignment_status === 'ASSIGNED'
-        ) ||
-        (
-          [
-            'ACCEPTED',
-            'PICKED_UP',
-            'EN_ROUTE',
-            'ARRIVED',
-          ].includes(row.delivery_status) &&
-          row.assignment_status === 'ACCEPTED'
-        );
+        (row.delivery_status === 'ASSIGNED' &&
+          row.assignment_status === 'ASSIGNED') ||
+        (['ACCEPTED', 'PICKED_UP', 'EN_ROUTE', 'ARRIVED'].includes(
+          row.delivery_status,
+        ) &&
+          row.assignment_status === 'ACCEPTED');
 
       if (!assignmentMatchesDelivery) {
         throw new ConflictException(
@@ -1813,25 +1628,20 @@ export class DeliveryService {
           id: row.delivery_id,
           status: row.delivery_status,
 
-          relationshipRole:
-            row.relationship_role,
+          relationshipRole: row.relationship_role,
 
-          memberCount:
-            row.member_count,
+          memberCount: row.member_count,
 
-          isShared:
-            row.member_count > 1,
+          isShared: row.member_count > 1,
 
-          memberOrders:
-            row.member_orders,
+          memberOrders: row.member_orders,
         },
 
         order: {
           number: row.order_number,
           status: row.order_status,
 
-          paymentStatus:
-            row.order_payment_status,
+          paymentStatus: row.order_payment_status,
         },
 
         payment:
@@ -1841,29 +1651,20 @@ export class DeliveryService {
           row.payment_amount !== null &&
           row.payment_currency !== null
             ? {
-                method:
-                  'CASH' as const,
+                method: 'CASH' as const,
 
-                provider:
-                  'DRIVER_COD' as const,
+                provider: 'DRIVER_COD' as const,
 
-                status:
-                  row.payment_attempt_status,
+                status: row.payment_attempt_status,
 
-                amount:
-                  Number(
-                    row.payment_amount,
-                  ),
+                amount: Number(row.payment_amount),
 
-                currency:
-                  row.payment_currency,
+                currency: row.payment_currency,
 
-                cashOnDelivery:
-                  true as const,
+                cashOnDelivery: true as const,
 
                 cashCollectionRequired:
-                  row.payment_attempt_status ===
-                  'AWAITING_CONFIRMATION',
+                  row.payment_attempt_status === 'AWAITING_CONFIRMATION',
               }
             : null,
 
@@ -1885,11 +1686,9 @@ export class DeliveryService {
           reference: row.address_reference,
 
           location: {
-            latitude:
-              row.destination_latitude,
+            latitude: row.destination_latitude,
 
-            longitude:
-              row.destination_longitude,
+            longitude: row.destination_longitude,
           },
         },
 
@@ -1905,40 +1704,27 @@ export class DeliveryService {
     tenantIdInput: unknown,
     driverIdInput: unknown,
   ) {
-    const deliveryId =
-      this.requireUuid(
-        deliveryIdInput,
-        'deliveryId',
-      );
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
 
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
-    const result =
-      await this.databaseService.query<{
-        delivery_id: string;
-        delivery_status: string;
-        branch_name: string;
-        branch_latitude: string | null;
-        branch_longitude: string | null;
+    const result = await this.databaseService.query<{
+      delivery_id: string;
+      delivery_status: string;
+      branch_name: string;
+      branch_latitude: string | null;
+      branch_longitude: string | null;
 
-        destination_latitude: number;
-        destination_longitude: number;
+      destination_latitude: number;
+      destination_longitude: number;
 
-        latitude: number | null;
-        longitude: number | null;
-        captured_at: string | Date | null;
-      }>(
-        `
+      latitude: number | null;
+      longitude: number | null;
+      captured_at: string | Date | null;
+    }>(
+      `
           select
             b.name as branch_name,
             b.delivery_origin_latitude::text as branch_latitude,
@@ -2024,36 +1810,35 @@ export class DeliveryService {
 
           limit 1
         `,
-        [
-          tenantId,
-          deliveryId,
-          driverId,
-        ],
-      );
+      [tenantId, deliveryId, driverId],
+    );
 
-    const row =
-      result.rows[0];
+    const row = result.rows[0];
 
     if (!row) {
-      throw new NotFoundException(
-        'Active delivery route not found',
-      );
+      throw new NotFoundException('Active delivery route not found');
     }
 
-    const location = row.latitude !== null && row.longitude !== null && row.captured_at !== null
-      ? {latitude:row.latitude,longitude:row.longitude,capturedAt:row.captured_at}
-      : null;
+    const location =
+      row.latitude !== null &&
+      row.longitude !== null &&
+      row.captured_at !== null
+        ? {
+            latitude: row.latitude,
+            longitude: row.longitude,
+            capturedAt: row.captured_at,
+          }
+        : null;
 
     const destination = {
-      latitude:
-        row.destination_latitude,
+      latitude: row.destination_latitude,
 
-      longitude:
-        row.destination_longitude,
+      longitude: row.destination_longitude,
     };
 
     // Authorization above is unchanged; history is restricted to this tenant, delivery and driver.
-    const history = await this.databaseService.query<JourneySample>(`
+    const history = await this.databaseService.query<JourneySample>(
+      `
       select gis.ST_Y(l.position::gis.geometry)::double precision as latitude,
              gis.ST_X(l.position::gis.geometry)::double precision as longitude,
              l.accuracy_meters::double precision as "accuracyMeters",
@@ -2062,16 +1847,27 @@ export class DeliveryService {
       where l.tenant_id = $1::uuid and l.delivery_id = $2::uuid and l.driver_id = $3::uuid
       order by l.received_at asc, l.id asc
       limit $4
-    `, [tenantId, deliveryId, driverId, JOURNEY_SAMPLE_LIMIT + 1]);
+    `,
+      [tenantId, deliveryId, driverId, JOURNEY_SAMPLE_LIMIT + 1],
+    );
     const journey = buildJourney(history.rows);
     const navigation = await this.driverJourneyNavigation.get(
-      JSON.stringify([tenantId, deliveryId, driverId]), journey.latest, destination,
-      (origin, target) => this.geoUsageMeter.measure(
-        {tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false},
-        () => this.geoProvider.calculateRoute({origin, destination: target}),
-      ),
+      JSON.stringify([tenantId, deliveryId, driverId]),
+      journey.latest,
+      destination,
+      (origin, target) =>
+        this.geoUsageMeter.measure(
+          { tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false },
+          () =>
+            this.geoProvider.calculateRoute({ origin, destination: target }),
+        ),
     );
-    const baseRoute = await this.getDeliveryBaseRoute(tenantId, row.delivery_id, this.trackingBranchOrigin(row), destination);
+    const baseRoute = await this.getDeliveryBaseRoute(
+      tenantId,
+      row.delivery_id,
+      this.trackingBranchOrigin(row),
+      destination,
+    );
     const route = navigation.route;
 
     return {
@@ -2095,45 +1891,30 @@ export class DeliveryService {
     driverIdInput: unknown,
     driverCode: string,
   ) {
-    const deliveryId =
-      this.requireUuid(
-        deliveryIdInput,
-        'deliveryId',
-      );
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
 
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
-    const safeDriverCode =
-      driverCode?.trim() || 'DRIVER';
+    const safeDriverCode = driverCode?.trim() || 'DRIVER';
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const deliveryResult =
-          await client.query<{
-            id: string;
+    return this.databaseService.withTransaction(async (client) => {
+      const deliveryResult = await client.query<{
+        id: string;
 
-            tenant_id: string;
-            branch_id: string;
+        tenant_id: string;
+        branch_id: string;
 
-            order_id: string;
-            order_number: string;
+        order_id: string;
+        order_number: string;
 
-            delivery_status: string;
+        delivery_status: string;
 
-            order_status: string;
-            payment_status: string;
-          }>(
-            `
+        order_status: string;
+        payment_status: string;
+      }>(
+        `
               select
                 d.id::text,
 
@@ -2164,39 +1945,32 @@ export class DeliveryService {
 
               for update of d
             `,
-            [
-              tenantId,
-              deliveryId,
-            ],
-          );
+        [tenantId, deliveryId],
+      );
 
-        const delivery =
-          deliveryResult.rows[0];
+      const delivery = deliveryResult.rows[0];
 
-        if (!delivery) {
-          throw new NotFoundException(
-            'Delivery not found',
-          );
-        }
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
 
-        // ----------------------------------------------------
-        // Branch authorization is evaluated inside the same
-        // transaction as the driver action.
-        //
-        // A valid bearer identifies the driver globally, but
-        // the driver must still be ENABLED for the specific
-        // branch that owns this delivery.
-        //
-        // FOR SHARE prevents the branch authorization row from
-        // being concurrently changed while this transaction
-        // advances the delivery state.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Branch authorization is evaluated inside the same
+      // transaction as the driver action.
+      //
+      // A valid bearer identifies the driver globally, but
+      // the driver must still be ENABLED for the specific
+      // branch that owns this delivery.
+      //
+      // FOR SHARE prevents the branch authorization row from
+      // being concurrently changed while this transaction
+      // advances the delivery state.
+      // ----------------------------------------------------
 
-        const branchAuthorizationResult =
-          await client.query<{
-            id: string;
-          }>(
-            `
+      const branchAuthorizationResult = await client.query<{
+        id: string;
+      }>(
+        `
               select
                 db.id::text
 
@@ -2211,49 +1985,44 @@ export class DeliveryService {
 
               for share of db
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              driverId,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, driverId],
+      );
 
-        if (!branchAuthorizationResult.rows[0]) {
-          throw new ConflictException(
-            'Driver is not enabled for delivery branch',
-          );
-        }
+      if (!branchAuthorizationResult.rows[0]) {
+        throw new ConflictException(
+          'Driver is not enabled for delivery branch',
+        );
+      }
 
-        if (delivery.order_status !== 'READY') {
-          throw new ConflictException(
-            `Delivery cannot be accepted while order is ${delivery.order_status}; READY is required`,
-          );
-        }
+      if (delivery.order_status !== 'READY') {
+        throw new ConflictException(
+          `Delivery cannot be accepted while order is ${delivery.order_status}; READY is required`,
+        );
+      }
 
-        await assertDeliveryQrPaid(client, delivery);
+      await assertDeliveryQrPaid(client, delivery);
 
-        if (
-          delivery.delivery_status !== 'ASSIGNED' &&
-          delivery.delivery_status !== 'ACCEPTED'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot be accepted from ${delivery.delivery_status}`,
-          );
-        }
+      if (
+        delivery.delivery_status !== 'ASSIGNED' &&
+        delivery.delivery_status !== 'ACCEPTED'
+      ) {
+        throw new ConflictException(
+          `Delivery cannot be accepted from ${delivery.delivery_status}`,
+        );
+      }
 
-        const assignmentResult =
-          await client.query<{
-            id: string;
-            assignment_number: number;
+      const assignmentResult = await client.query<{
+        id: string;
+        assignment_number: number;
 
-            driver_id: string;
+        driver_id: string;
 
-            status: string;
+        status: string;
 
-            assigned_at: string | Date;
-            accepted_at: string | Date | null;
-          }>(
-            `
+        assigned_at: string | Date;
+        accepted_at: string | Date | null;
+      }>(
+        `
               select
                 a.id::text,
 
@@ -2284,97 +2053,84 @@ export class DeliveryService {
 
               for update of a
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const assignment =
-          assignmentResult.rows[0];
+      const assignment = assignmentResult.rows[0];
 
-        if (!assignment) {
-          throw new ConflictException(
-            'Delivery assignment state is inconsistent',
-          );
-        }
+      if (!assignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
 
-        if (
-          assignment.driver_id !== driverId
-        ) {
-          throw new ConflictException(
-            'Delivery is assigned to another driver',
-          );
-        }
+      if (assignment.driver_id !== driverId) {
+        throw new ConflictException('Delivery is assigned to another driver');
+      }
 
-        // ----------------------------------------------------
-        // Idempotent retry:
-        //
-        // The authenticated driver already accepted this exact
-        // active assignment. No duplicate event is produced.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Idempotent retry:
+      //
+      // The authenticated driver already accepted this exact
+      // active assignment. No duplicate event is produced.
+      // ----------------------------------------------------
 
-        if (
-          delivery.delivery_status === 'ACCEPTED' &&
-          assignment.status === 'ACCEPTED'
-        ) {
-          return {
-            changed: false,
-            action: 'UNCHANGED',
+      if (
+        delivery.delivery_status === 'ACCEPTED' &&
+        assignment.status === 'ACCEPTED'
+      ) {
+        return {
+          changed: false,
+          action: 'UNCHANGED',
 
-            delivery: {
-              id: delivery.id,
-              status: 'ACCEPTED',
+          delivery: {
+            id: delivery.id,
+            status: 'ACCEPTED',
+          },
+
+          order: {
+            id: delivery.order_id,
+            number: delivery.order_number,
+            status: delivery.order_status,
+          },
+
+          assignment: {
+            id: assignment.id,
+            number: assignment.assignment_number,
+
+            status: 'ACCEPTED',
+
+            assignedAt: assignment.assigned_at,
+
+            acceptedAt: assignment.accepted_at,
+
+            driver: {
+              id: driverId,
+              code: safeDriverCode,
             },
+          },
+        };
+      }
 
-            order: {
-              id: delivery.order_id,
-              number: delivery.order_number,
-              status: delivery.order_status,
-            },
+      // Any mixed ASSIGNED/ACCEPTED state is inconsistent.
+      if (
+        delivery.delivery_status !== 'ASSIGNED' ||
+        assignment.status !== 'ASSIGNED'
+      ) {
+        throw new ConflictException(
+          'Delivery acceptance state is inconsistent',
+        );
+      }
 
-            assignment: {
-              id: assignment.id,
-              number:
-                assignment.assignment_number,
+      const assignmentUpdate = await client.query<{
+        id: string;
 
-              status: 'ACCEPTED',
+        assignment_number: number;
 
-              assignedAt:
-                assignment.assigned_at,
-
-              acceptedAt:
-                assignment.accepted_at,
-
-              driver: {
-                id: driverId,
-                code: safeDriverCode,
-              },
-            },
-          };
-        }
-
-        // Any mixed ASSIGNED/ACCEPTED state is inconsistent.
-        if (
-          delivery.delivery_status !== 'ASSIGNED' ||
-          assignment.status !== 'ASSIGNED'
-        ) {
-          throw new ConflictException(
-            'Delivery acceptance state is inconsistent',
-          );
-        }
-
-        const assignmentUpdate =
-          await client.query<{
-            id: string;
-
-            assignment_number: number;
-
-            assigned_at: string | Date;
-            accepted_at: string | Date;
-          }>(
-            `
+        assigned_at: string | Date;
+        accepted_at: string | Date;
+      }>(
+        `
               update public.delivery_assignments
 
               set
@@ -2396,29 +2152,25 @@ export class DeliveryService {
                 assigned_at,
                 accepted_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-              assignment.id,
-              driverId,
-            ],
-          );
+        [
+          delivery.tenant_id,
+          delivery.branch_id,
+          delivery.id,
+          assignment.id,
+          driverId,
+        ],
+      );
 
-        const acceptedAssignment =
-          assignmentUpdate.rows[0];
+      const acceptedAssignment = assignmentUpdate.rows[0];
 
-        if (!acceptedAssignment) {
-          throw new ConflictException(
-            'Delivery assignment changed concurrently',
-          );
-        }
+      if (!acceptedAssignment) {
+        throw new ConflictException('Delivery assignment changed concurrently');
+      }
 
-        const deliveryUpdate =
-          await client.query<{
-            id: string;
-          }>(
-            `
+      const deliveryUpdate = await client.query<{
+        id: string;
+      }>(
+        `
               update public.deliveries
 
               set
@@ -2434,21 +2186,15 @@ export class DeliveryService {
               returning
                 id::text
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        if (deliveryUpdate.rowCount !== 1) {
-          throw new ConflictException(
-            'Delivery status changed concurrently',
-          );
-        }
+      if (deliveryUpdate.rowCount !== 1) {
+        throw new ConflictException('Delivery status changed concurrently');
+      }
 
-        await client.query(
-          `
+      await client.query(
+        `
             insert into public.delivery_events (
               tenant_id,
               branch_id,
@@ -2498,59 +2244,55 @@ export class DeliveryService {
               )
             )
           `,
-          [
-            delivery.tenant_id,
-            delivery.branch_id,
-            delivery.id,
+        [
+          delivery.tenant_id,
+          delivery.branch_id,
+          delivery.id,
 
-            safeDriverCode,
-            driverId,
+          safeDriverCode,
+          driverId,
 
-            acceptedAssignment.id,
-            acceptedAssignment.assignment_number,
+          acceptedAssignment.id,
+          acceptedAssignment.assignment_number,
 
-            delivery.order_id,
-            delivery.order_number,
-          ],
-        );
+          delivery.order_id,
+          delivery.order_number,
+        ],
+      );
 
-        return {
-          changed: true,
-          action: 'ACCEPTED',
+      return {
+        changed: true,
+        action: 'ACCEPTED',
 
-          delivery: {
-            id: delivery.id,
-            status: 'ACCEPTED',
+        delivery: {
+          id: delivery.id,
+          status: 'ACCEPTED',
+        },
+
+        order: {
+          id: delivery.order_id,
+          number: delivery.order_number,
+          status: delivery.order_status,
+        },
+
+        assignment: {
+          id: acceptedAssignment.id,
+
+          number: acceptedAssignment.assignment_number,
+
+          status: 'ACCEPTED',
+
+          assignedAt: acceptedAssignment.assigned_at,
+
+          acceptedAt: acceptedAssignment.accepted_at,
+
+          driver: {
+            id: driverId,
+            code: safeDriverCode,
           },
-
-          order: {
-            id: delivery.order_id,
-            number: delivery.order_number,
-            status: delivery.order_status,
-          },
-
-          assignment: {
-            id: acceptedAssignment.id,
-
-            number:
-              acceptedAssignment.assignment_number,
-
-            status: 'ACCEPTED',
-
-            assignedAt:
-              acceptedAssignment.assigned_at,
-
-            acceptedAt:
-              acceptedAssignment.accepted_at,
-
-            driver: {
-              id: driverId,
-              code: safeDriverCode,
-            },
-          },
-        };
-      },
-    );
+        },
+      };
+    });
   }
   async pickupDriverDelivery(
     deliveryIdInput: unknown,
@@ -2558,45 +2300,30 @@ export class DeliveryService {
     driverIdInput: unknown,
     driverCode: string,
   ) {
-    const deliveryId =
-      this.requireUuid(
-        deliveryIdInput,
-        'deliveryId',
-      );
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
 
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
-    const safeDriverCode =
-      driverCode?.trim() || 'DRIVER';
+    const safeDriverCode = driverCode?.trim() || 'DRIVER';
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const deliveryResult =
-          await client.query<{
-            id: string;
+    return this.databaseService.withTransaction(async (client) => {
+      const deliveryResult = await client.query<{
+        id: string;
 
-            tenant_id: string;
-            branch_id: string;
+        tenant_id: string;
+        branch_id: string;
 
-            order_id: string;
-            order_number: string;
+        order_id: string;
+        order_number: string;
 
-            delivery_status: string;
+        delivery_status: string;
 
-            order_status: string;
-            payment_status: string;
-          }>(
-            `
+        order_status: string;
+        payment_status: string;
+      }>(
+        `
               select
                 d.id::text,
 
@@ -2627,39 +2354,32 @@ export class DeliveryService {
 
               for update of d, o
             `,
-            [
-              tenantId,
-              deliveryId,
-            ],
-          );
+        [tenantId, deliveryId],
+      );
 
-        const delivery =
-          deliveryResult.rows[0];
+      const delivery = deliveryResult.rows[0];
 
-        if (!delivery) {
-          throw new NotFoundException(
-            'Delivery not found',
-          );
-        }
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
 
-        // ----------------------------------------------------
-        // Branch authorization is evaluated inside the same
-        // transaction as the driver action.
-        //
-        // A valid bearer identifies the driver globally, but
-        // the driver must still be ENABLED for the specific
-        // branch that owns this delivery.
-        //
-        // FOR SHARE prevents the branch authorization row from
-        // being concurrently changed while this transaction
-        // advances the delivery state.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Branch authorization is evaluated inside the same
+      // transaction as the driver action.
+      //
+      // A valid bearer identifies the driver globally, but
+      // the driver must still be ENABLED for the specific
+      // branch that owns this delivery.
+      //
+      // FOR SHARE prevents the branch authorization row from
+      // being concurrently changed while this transaction
+      // advances the delivery state.
+      // ----------------------------------------------------
 
-        const branchAuthorizationResult =
-          await client.query<{
-            id: string;
-          }>(
-            `
+      const branchAuthorizationResult = await client.query<{
+        id: string;
+      }>(
+        `
               select
                 db.id::text
 
@@ -2674,42 +2394,37 @@ export class DeliveryService {
 
               for share of db
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              driverId,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, driverId],
+      );
 
-        if (!branchAuthorizationResult.rows[0]) {
-          throw new ConflictException(
-            'Driver is not enabled for delivery branch',
-          );
-        }
+      if (!branchAuthorizationResult.rows[0]) {
+        throw new ConflictException(
+          'Driver is not enabled for delivery branch',
+        );
+      }
 
-        if (
-          delivery.delivery_status !== 'ACCEPTED' &&
-          delivery.delivery_status !== 'PICKED_UP'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot be picked up from ${delivery.delivery_status}`,
-          );
-        }
+      if (
+        delivery.delivery_status !== 'ACCEPTED' &&
+        delivery.delivery_status !== 'PICKED_UP'
+      ) {
+        throw new ConflictException(
+          `Delivery cannot be picked up from ${delivery.delivery_status}`,
+        );
+      }
 
-        const assignmentResult =
-          await client.query<{
-            id: string;
+      const assignmentResult = await client.query<{
+        id: string;
 
-            assignment_number: number;
+        assignment_number: number;
 
-            driver_id: string;
+        driver_id: string;
 
-            status: string;
+        status: string;
 
-            assigned_at: string | Date;
-            accepted_at: string | Date | null;
-          }>(
-            `
+        assigned_at: string | Date;
+        accepted_at: string | Date | null;
+      }>(
+        `
               select
                 a.id::text,
 
@@ -2740,110 +2455,93 @@ export class DeliveryService {
 
               for update of a
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const assignment =
-          assignmentResult.rows[0];
+      const assignment = assignmentResult.rows[0];
 
-        if (!assignment) {
-          throw new ConflictException(
-            'Delivery assignment state is inconsistent',
-          );
-        }
+      if (!assignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
 
-        if (
-          assignment.driver_id !== driverId
-        ) {
-          throw new ConflictException(
-            'Delivery is assigned to another driver',
-          );
-        }
+      if (assignment.driver_id !== driverId) {
+        throw new ConflictException('Delivery is assigned to another driver');
+      }
 
-        // ----------------------------------------------------
-        // Idempotent retry.
-        //
-        // A previously completed pickup remains successful for
-        // the same authenticated driver. The assignment stays
-        // ACCEPTED and no duplicate event is produced.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Idempotent retry.
+      //
+      // A previously completed pickup remains successful for
+      // the same authenticated driver. The assignment stays
+      // ACCEPTED and no duplicate event is produced.
+      // ----------------------------------------------------
 
-        if (
-          delivery.delivery_status === 'PICKED_UP' &&
-          assignment.status === 'ACCEPTED'
-        ) {
-          return {
-            changed: false,
-            action: 'UNCHANGED',
+      if (
+        delivery.delivery_status === 'PICKED_UP' &&
+        assignment.status === 'ACCEPTED'
+      ) {
+        return {
+          changed: false,
+          action: 'UNCHANGED',
 
-            delivery: {
-              id: delivery.id,
-              status: 'PICKED_UP',
+          delivery: {
+            id: delivery.id,
+            status: 'PICKED_UP',
+          },
+
+          order: {
+            id: delivery.order_id,
+            number: delivery.order_number,
+            status: delivery.order_status,
+          },
+
+          assignment: {
+            id: assignment.id,
+
+            number: assignment.assignment_number,
+
+            status: 'ACCEPTED',
+
+            assignedAt: assignment.assigned_at,
+
+            acceptedAt: assignment.accepted_at,
+
+            driver: {
+              id: driverId,
+              code: safeDriverCode,
             },
+          },
+        };
+      }
 
-            order: {
-              id: delivery.order_id,
-              number: delivery.order_number,
-              status: delivery.order_status,
-            },
+      if (
+        delivery.delivery_status !== 'ACCEPTED' ||
+        assignment.status !== 'ACCEPTED' ||
+        !assignment.accepted_at
+      ) {
+        throw new ConflictException('Delivery pickup state is inconsistent');
+      }
 
-            assignment: {
-              id: assignment.id,
+      // ----------------------------------------------------
+      // Initial pickup requires the kitchen / operations
+      // order state to be READY.
+      // ----------------------------------------------------
 
-              number:
-                assignment.assignment_number,
+      if (delivery.order_status !== 'READY') {
+        throw new ConflictException(
+          `Delivery cannot be picked up while order is ${delivery.order_status}`,
+        );
+      }
 
-              status: 'ACCEPTED',
+      await assertDeliveryQrPaid(client, delivery);
 
-              assignedAt:
-                assignment.assigned_at,
-
-              acceptedAt:
-                assignment.accepted_at,
-
-              driver: {
-                id: driverId,
-                code: safeDriverCode,
-              },
-            },
-          };
-        }
-
-        if (
-          delivery.delivery_status !== 'ACCEPTED' ||
-          assignment.status !== 'ACCEPTED' ||
-          !assignment.accepted_at
-        ) {
-          throw new ConflictException(
-            'Delivery pickup state is inconsistent',
-          );
-        }
-
-        // ----------------------------------------------------
-        // Initial pickup requires the kitchen / operations
-        // order state to be READY.
-        // ----------------------------------------------------
-
-        if (
-          delivery.order_status !== 'READY'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot be picked up while order is ${delivery.order_status}`,
-          );
-        }
-
-        await assertDeliveryQrPaid(client, delivery);
-
-        const deliveryUpdate =
-          await client.query<{
-            id: string;
-            updated_at: string | Date;
-          }>(
-            `
+      const deliveryUpdate = await client.query<{
+        id: string;
+        updated_at: string | Date;
+      }>(
+        `
               update public.deliveries
 
               set
@@ -2860,27 +2558,19 @@ export class DeliveryService {
                 id::text,
                 updated_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const pickedUpDelivery =
-          deliveryUpdate.rows[0];
+      const pickedUpDelivery = deliveryUpdate.rows[0];
 
-        if (!pickedUpDelivery) {
-          throw new ConflictException(
-            'Delivery status changed concurrently',
-          );
-        }
+      if (!pickedUpDelivery) {
+        throw new ConflictException('Delivery status changed concurrently');
+      }
 
-        const eventResult =
-          await client.query<{
-            created_at: string | Date;
-          }>(
-            `
+      const eventResult = await client.query<{
+        created_at: string | Date;
+      }>(
+        `
               insert into public.delivery_events (
                 tenant_id,
                 branch_id,
@@ -2933,73 +2623,65 @@ export class DeliveryService {
               returning
                 created_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
+        [
+          delivery.tenant_id,
+          delivery.branch_id,
+          delivery.id,
 
-              safeDriverCode,
-              driverId,
+          safeDriverCode,
+          driverId,
 
-              assignment.id,
-              assignment.assignment_number,
+          assignment.id,
+          assignment.assignment_number,
 
-              delivery.order_id,
-              delivery.order_number,
-            ],
-          );
+          delivery.order_id,
+          delivery.order_number,
+        ],
+      );
 
-        const pickupEvent =
-          eventResult.rows[0];
+      const pickupEvent = eventResult.rows[0];
 
-        if (!pickupEvent) {
-          throw new ConflictException(
-            'Delivery pickup event was not created',
-          );
-        }
+      if (!pickupEvent) {
+        throw new ConflictException('Delivery pickup event was not created');
+      }
 
-        return {
-          changed: true,
-          action: 'PICKED_UP',
+      return {
+        changed: true,
+        action: 'PICKED_UP',
 
-          delivery: {
-            id: delivery.id,
-            status: 'PICKED_UP',
+        delivery: {
+          id: delivery.id,
+          status: 'PICKED_UP',
 
-            pickedUpAt:
-              pickupEvent.created_at,
+          pickedUpAt: pickupEvent.created_at,
+        },
+
+        order: {
+          id: delivery.order_id,
+          number: delivery.order_number,
+          status: delivery.order_status,
+        },
+
+        assignment: {
+          id: assignment.id,
+
+          number: assignment.assignment_number,
+
+          // Intentionally remains ACCEPTED during
+          // PICKED_UP / EN_ROUTE / ARRIVED.
+          status: 'ACCEPTED',
+
+          assignedAt: assignment.assigned_at,
+
+          acceptedAt: assignment.accepted_at,
+
+          driver: {
+            id: driverId,
+            code: safeDriverCode,
           },
-
-          order: {
-            id: delivery.order_id,
-            number: delivery.order_number,
-            status: delivery.order_status,
-          },
-
-          assignment: {
-            id: assignment.id,
-
-            number:
-              assignment.assignment_number,
-
-            // Intentionally remains ACCEPTED during
-            // PICKED_UP / EN_ROUTE / ARRIVED.
-            status: 'ACCEPTED',
-
-            assignedAt:
-              assignment.assigned_at,
-
-            acceptedAt:
-              assignment.accepted_at,
-
-            driver: {
-              id: driverId,
-              code: safeDriverCode,
-            },
-          },
-        };
-      },
-    );
+        },
+      };
+    });
   }
   async startDriverDelivery(
     deliveryIdInput: unknown,
@@ -3007,45 +2689,30 @@ export class DeliveryService {
     driverIdInput: unknown,
     driverCode: string,
   ) {
-    const deliveryId =
-      this.requireUuid(
-        deliveryIdInput,
-        'deliveryId',
-      );
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
 
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
-    const safeDriverCode =
-      driverCode?.trim() || 'DRIVER';
+    const safeDriverCode = driverCode?.trim() || 'DRIVER';
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const deliveryResult =
-          await client.query<{
-            id: string;
+    return this.databaseService.withTransaction(async (client) => {
+      const deliveryResult = await client.query<{
+        id: string;
 
-            tenant_id: string;
-            branch_id: string;
+        tenant_id: string;
+        branch_id: string;
 
-            order_id: string;
-            order_number: string;
+        order_id: string;
+        order_number: string;
 
-            delivery_status: string;
+        delivery_status: string;
 
-            order_status: string;
-            payment_status: string;
-          }>(
-            `
+        order_status: string;
+        payment_status: string;
+      }>(
+        `
               select
                 d.id::text,
 
@@ -3076,39 +2743,32 @@ export class DeliveryService {
 
               for update of d, o
             `,
-            [
-              tenantId,
-              deliveryId,
-            ],
-          );
+        [tenantId, deliveryId],
+      );
 
-        const delivery =
-          deliveryResult.rows[0];
+      const delivery = deliveryResult.rows[0];
 
-        if (!delivery) {
-          throw new NotFoundException(
-            'Delivery not found',
-          );
-        }
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
 
-        // ----------------------------------------------------
-        // Branch authorization is evaluated inside the same
-        // transaction as the driver action.
-        //
-        // A valid bearer identifies the driver globally, but
-        // the driver must still be ENABLED for the specific
-        // branch that owns this delivery.
-        //
-        // FOR SHARE prevents the branch authorization row from
-        // being concurrently changed while this transaction
-        // advances the delivery state.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Branch authorization is evaluated inside the same
+      // transaction as the driver action.
+      //
+      // A valid bearer identifies the driver globally, but
+      // the driver must still be ENABLED for the specific
+      // branch that owns this delivery.
+      //
+      // FOR SHARE prevents the branch authorization row from
+      // being concurrently changed while this transaction
+      // advances the delivery state.
+      // ----------------------------------------------------
 
-        const branchAuthorizationResult =
-          await client.query<{
-            id: string;
-          }>(
-            `
+      const branchAuthorizationResult = await client.query<{
+        id: string;
+      }>(
+        `
               select
                 db.id::text
 
@@ -3123,42 +2783,37 @@ export class DeliveryService {
 
               for share of db
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              driverId,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, driverId],
+      );
 
-        if (!branchAuthorizationResult.rows[0]) {
-          throw new ConflictException(
-            'Driver is not enabled for delivery branch',
-          );
-        }
+      if (!branchAuthorizationResult.rows[0]) {
+        throw new ConflictException(
+          'Driver is not enabled for delivery branch',
+        );
+      }
 
-        if (
-          delivery.delivery_status !== 'PICKED_UP' &&
-          delivery.delivery_status !== 'EN_ROUTE'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot start route from ${delivery.delivery_status}`,
-          );
-        }
+      if (
+        delivery.delivery_status !== 'PICKED_UP' &&
+        delivery.delivery_status !== 'EN_ROUTE'
+      ) {
+        throw new ConflictException(
+          `Delivery cannot start route from ${delivery.delivery_status}`,
+        );
+      }
 
-        const assignmentResult =
-          await client.query<{
-            id: string;
+      const assignmentResult = await client.query<{
+        id: string;
 
-            assignment_number: number;
+        assignment_number: number;
 
-            driver_id: string;
+        driver_id: string;
 
-            status: string;
+        status: string;
 
-            assigned_at: string | Date;
-            accepted_at: string | Date | null;
-          }>(
-            `
+        assigned_at: string | Date;
+        accepted_at: string | Date | null;
+      }>(
+        `
               select
                 a.id::text,
 
@@ -3189,111 +2844,94 @@ export class DeliveryService {
 
               for update of a
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const assignment =
-          assignmentResult.rows[0];
+      const assignment = assignmentResult.rows[0];
 
-        if (!assignment) {
-          throw new ConflictException(
-            'Delivery assignment state is inconsistent',
-          );
-        }
+      if (!assignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
 
-        if (
-          assignment.driver_id !== driverId
-        ) {
-          throw new ConflictException(
-            'Delivery is assigned to another driver',
-          );
-        }
+      if (assignment.driver_id !== driverId) {
+        throw new ConflictException('Delivery is assigned to another driver');
+      }
 
-        // ----------------------------------------------------
-        // Idempotent retry.
-        //
-        // If this same authenticated driver already started
-        // the route, return the current state without creating
-        // another DRIVER_EN_ROUTE event.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Idempotent retry.
+      //
+      // If this same authenticated driver already started
+      // the route, return the current state without creating
+      // another DRIVER_EN_ROUTE event.
+      // ----------------------------------------------------
 
-        if (
-          delivery.delivery_status === 'EN_ROUTE' &&
-          assignment.status === 'ACCEPTED'
-        ) {
-          return {
-            changed: false,
-            action: 'UNCHANGED',
+      if (
+        delivery.delivery_status === 'EN_ROUTE' &&
+        assignment.status === 'ACCEPTED'
+      ) {
+        return {
+          changed: false,
+          action: 'UNCHANGED',
 
-            delivery: {
-              id: delivery.id,
-              status: 'EN_ROUTE',
+          delivery: {
+            id: delivery.id,
+            status: 'EN_ROUTE',
+          },
+
+          order: {
+            id: delivery.order_id,
+            number: delivery.order_number,
+            status: delivery.order_status,
+          },
+
+          assignment: {
+            id: assignment.id,
+
+            number: assignment.assignment_number,
+
+            status: 'ACCEPTED',
+
+            assignedAt: assignment.assigned_at,
+
+            acceptedAt: assignment.accepted_at,
+
+            driver: {
+              id: driverId,
+              code: safeDriverCode,
             },
+          },
+        };
+      }
 
-            order: {
-              id: delivery.order_id,
-              number: delivery.order_number,
-              status: delivery.order_status,
-            },
+      if (
+        delivery.delivery_status !== 'PICKED_UP' ||
+        assignment.status !== 'ACCEPTED' ||
+        !assignment.accepted_at
+      ) {
+        throw new ConflictException('Delivery route state is inconsistent');
+      }
 
-            assignment: {
-              id: assignment.id,
+      // ----------------------------------------------------
+      // PICKED_UP already proves that the kitchen handed the
+      // order to the driver. We still verify READY and payment
+      // to protect against inconsistent external DB changes.
+      // ----------------------------------------------------
 
-              number:
-                assignment.assignment_number,
+      if (delivery.order_status !== 'READY') {
+        throw new ConflictException(
+          `Delivery cannot start route while order is ${delivery.order_status}`,
+        );
+      }
 
-              status: 'ACCEPTED',
+      await assertDeliveryQrPaid(client, delivery);
 
-              assignedAt:
-                assignment.assigned_at,
-
-              acceptedAt:
-                assignment.accepted_at,
-
-              driver: {
-                id: driverId,
-                code: safeDriverCode,
-              },
-            },
-          };
-        }
-
-        if (
-          delivery.delivery_status !== 'PICKED_UP' ||
-          assignment.status !== 'ACCEPTED' ||
-          !assignment.accepted_at
-        ) {
-          throw new ConflictException(
-            'Delivery route state is inconsistent',
-          );
-        }
-
-        // ----------------------------------------------------
-        // PICKED_UP already proves that the kitchen handed the
-        // order to the driver. We still verify READY and payment
-        // to protect against inconsistent external DB changes.
-        // ----------------------------------------------------
-
-        if (
-          delivery.order_status !== 'READY'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot start route while order is ${delivery.order_status}`,
-          );
-        }
-
-        await assertDeliveryQrPaid(client, delivery);
-
-        const deliveryUpdate =
-          await client.query<{
-            id: string;
-            updated_at: string | Date;
-          }>(
-            `
+      const deliveryUpdate = await client.query<{
+        id: string;
+        updated_at: string | Date;
+      }>(
+        `
               update public.deliveries
 
               set
@@ -3310,27 +2948,19 @@ export class DeliveryService {
                 id::text,
                 updated_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const enRouteDelivery =
-          deliveryUpdate.rows[0];
+      const enRouteDelivery = deliveryUpdate.rows[0];
 
-        if (!enRouteDelivery) {
-          throw new ConflictException(
-            'Delivery status changed concurrently',
-          );
-        }
+      if (!enRouteDelivery) {
+        throw new ConflictException('Delivery status changed concurrently');
+      }
 
-        const eventResult =
-          await client.query<{
-            created_at: string | Date;
-          }>(
-            `
+      const eventResult = await client.query<{
+        created_at: string | Date;
+      }>(
+        `
               insert into public.delivery_events (
                 tenant_id,
                 branch_id,
@@ -3383,73 +3013,65 @@ export class DeliveryService {
               returning
                 created_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
+        [
+          delivery.tenant_id,
+          delivery.branch_id,
+          delivery.id,
 
-              safeDriverCode,
-              driverId,
+          safeDriverCode,
+          driverId,
 
-              assignment.id,
-              assignment.assignment_number,
+          assignment.id,
+          assignment.assignment_number,
 
-              delivery.order_id,
-              delivery.order_number,
-            ],
-          );
+          delivery.order_id,
+          delivery.order_number,
+        ],
+      );
 
-        const enRouteEvent =
-          eventResult.rows[0];
+      const enRouteEvent = eventResult.rows[0];
 
-        if (!enRouteEvent) {
-          throw new ConflictException(
-            'Delivery route event was not created',
-          );
-        }
+      if (!enRouteEvent) {
+        throw new ConflictException('Delivery route event was not created');
+      }
 
-        return {
-          changed: true,
-          action: 'EN_ROUTE',
+      return {
+        changed: true,
+        action: 'EN_ROUTE',
 
-          delivery: {
-            id: delivery.id,
-            status: 'EN_ROUTE',
+        delivery: {
+          id: delivery.id,
+          status: 'EN_ROUTE',
 
-            enRouteAt:
-              enRouteEvent.created_at,
+          enRouteAt: enRouteEvent.created_at,
+        },
+
+        order: {
+          id: delivery.order_id,
+          number: delivery.order_number,
+          status: delivery.order_status,
+        },
+
+        assignment: {
+          id: assignment.id,
+
+          number: assignment.assignment_number,
+
+          // Assignment intentionally remains ACCEPTED during
+          // PICKED_UP / EN_ROUTE / ARRIVED.
+          status: 'ACCEPTED',
+
+          assignedAt: assignment.assigned_at,
+
+          acceptedAt: assignment.accepted_at,
+
+          driver: {
+            id: driverId,
+            code: safeDriverCode,
           },
-
-          order: {
-            id: delivery.order_id,
-            number: delivery.order_number,
-            status: delivery.order_status,
-          },
-
-          assignment: {
-            id: assignment.id,
-
-            number:
-              assignment.assignment_number,
-
-            // Assignment intentionally remains ACCEPTED during
-            // PICKED_UP / EN_ROUTE / ARRIVED.
-            status: 'ACCEPTED',
-
-            assignedAt:
-              assignment.assigned_at,
-
-            acceptedAt:
-              assignment.accepted_at,
-
-            driver: {
-              id: driverId,
-              code: safeDriverCode,
-            },
-          },
-        };
-      },
-    );
+        },
+      };
+    });
   }
   async arriveDriverDelivery(
     deliveryIdInput: unknown,
@@ -3457,45 +3079,30 @@ export class DeliveryService {
     driverIdInput: unknown,
     driverCode: string,
   ) {
-    const deliveryId =
-      this.requireUuid(
-        deliveryIdInput,
-        'deliveryId',
-      );
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
 
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
-    const safeDriverCode =
-      driverCode?.trim() || 'DRIVER';
+    const safeDriverCode = driverCode?.trim() || 'DRIVER';
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const deliveryResult =
-          await client.query<{
-            id: string;
+    return this.databaseService.withTransaction(async (client) => {
+      const deliveryResult = await client.query<{
+        id: string;
 
-            tenant_id: string;
-            branch_id: string;
+        tenant_id: string;
+        branch_id: string;
 
-            order_id: string;
-            order_number: string;
+        order_id: string;
+        order_number: string;
 
-            delivery_status: string;
+        delivery_status: string;
 
-            order_status: string;
-            payment_status: string;
-          }>(
-            `
+        order_status: string;
+        payment_status: string;
+      }>(
+        `
               select
                 d.id::text,
 
@@ -3526,36 +3133,29 @@ export class DeliveryService {
 
               for update of d, o
             `,
-            [
-              tenantId,
-              deliveryId,
-            ],
-          );
+        [tenantId, deliveryId],
+      );
 
-        const delivery =
-          deliveryResult.rows[0];
+      const delivery = deliveryResult.rows[0];
 
-        if (!delivery) {
-          throw new NotFoundException(
-            'Delivery not found',
-          );
-        }
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
 
-        // ----------------------------------------------------
-        // The bearer authenticates the driver globally.
-        //
-        // The driver must also still be ENABLED for the branch
-        // that owns this delivery.
-        //
-        // The branch mapping remains locked FOR SHARE until the
-        // transaction completes.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // The bearer authenticates the driver globally.
+      //
+      // The driver must also still be ENABLED for the branch
+      // that owns this delivery.
+      //
+      // The branch mapping remains locked FOR SHARE until the
+      // transaction completes.
+      // ----------------------------------------------------
 
-        const branchAuthorizationResult =
-          await client.query<{
-            id: string;
-          }>(
-            `
+      const branchAuthorizationResult = await client.query<{
+        id: string;
+      }>(
+        `
               select
                 db.id::text
 
@@ -3570,42 +3170,37 @@ export class DeliveryService {
 
               for share of db
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              driverId,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, driverId],
+      );
 
-        if (!branchAuthorizationResult.rows[0]) {
-          throw new ConflictException(
-            'Driver is not enabled for delivery branch',
-          );
-        }
+      if (!branchAuthorizationResult.rows[0]) {
+        throw new ConflictException(
+          'Driver is not enabled for delivery branch',
+        );
+      }
 
-        if (
-          delivery.delivery_status !== 'EN_ROUTE' &&
-          delivery.delivery_status !== 'ARRIVED'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot arrive from ${delivery.delivery_status}`,
-          );
-        }
+      if (
+        delivery.delivery_status !== 'EN_ROUTE' &&
+        delivery.delivery_status !== 'ARRIVED'
+      ) {
+        throw new ConflictException(
+          `Delivery cannot arrive from ${delivery.delivery_status}`,
+        );
+      }
 
-        const assignmentResult =
-          await client.query<{
-            id: string;
+      const assignmentResult = await client.query<{
+        id: string;
 
-            assignment_number: number;
+        assignment_number: number;
 
-            driver_id: string;
+        driver_id: string;
 
-            status: string;
+        status: string;
 
-            assigned_at: string | Date;
-            accepted_at: string | Date | null;
-          }>(
-            `
+        assigned_at: string | Date;
+        accepted_at: string | Date | null;
+      }>(
+        `
               select
                 a.id::text,
 
@@ -3636,108 +3231,91 @@ export class DeliveryService {
 
               for update of a
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const assignment =
-          assignmentResult.rows[0];
+      const assignment = assignmentResult.rows[0];
 
-        if (!assignment) {
-          throw new ConflictException(
-            'Delivery assignment state is inconsistent',
-          );
-        }
+      if (!assignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
 
-        if (
-          assignment.driver_id !== driverId
-        ) {
-          throw new ConflictException(
-            'Delivery is assigned to another driver',
-          );
-        }
+      if (assignment.driver_id !== driverId) {
+        throw new ConflictException('Delivery is assigned to another driver');
+      }
 
-        // ----------------------------------------------------
-        // Same-driver retry is idempotent.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // Same-driver retry is idempotent.
+      // ----------------------------------------------------
 
-        if (
-          delivery.delivery_status === 'ARRIVED' &&
-          assignment.status === 'ACCEPTED'
-        ) {
-          return {
-            changed: false,
-            action: 'UNCHANGED',
+      if (
+        delivery.delivery_status === 'ARRIVED' &&
+        assignment.status === 'ACCEPTED'
+      ) {
+        return {
+          changed: false,
+          action: 'UNCHANGED',
 
-            delivery: {
-              id: delivery.id,
-              status: 'ARRIVED',
+          delivery: {
+            id: delivery.id,
+            status: 'ARRIVED',
+          },
+
+          order: {
+            id: delivery.order_id,
+            number: delivery.order_number,
+            status: delivery.order_status,
+          },
+
+          assignment: {
+            id: assignment.id,
+
+            number: assignment.assignment_number,
+
+            status: 'ACCEPTED',
+
+            assignedAt: assignment.assigned_at,
+
+            acceptedAt: assignment.accepted_at,
+
+            driver: {
+              id: driverId,
+              code: safeDriverCode,
             },
+          },
+        };
+      }
 
-            order: {
-              id: delivery.order_id,
-              number: delivery.order_number,
-              status: delivery.order_status,
-            },
+      if (
+        delivery.delivery_status !== 'EN_ROUTE' ||
+        assignment.status !== 'ACCEPTED' ||
+        !assignment.accepted_at
+      ) {
+        throw new ConflictException('Delivery arrival state is inconsistent');
+      }
 
-            assignment: {
-              id: assignment.id,
+      // ----------------------------------------------------
+      // ARRIVED does not complete the order.
+      //
+      // The order remains READY until proof-of-delivery /
+      // final DELIVERED confirmation is implemented.
+      // ----------------------------------------------------
 
-              number:
-                assignment.assignment_number,
+      if (delivery.order_status !== 'READY') {
+        throw new ConflictException(
+          `Delivery cannot arrive while order is ${delivery.order_status}`,
+        );
+      }
 
-              status: 'ACCEPTED',
+      await assertDeliveryQrPaid(client, delivery);
 
-              assignedAt:
-                assignment.assigned_at,
-
-              acceptedAt:
-                assignment.accepted_at,
-
-              driver: {
-                id: driverId,
-                code: safeDriverCode,
-              },
-            },
-          };
-        }
-
-        if (
-          delivery.delivery_status !== 'EN_ROUTE' ||
-          assignment.status !== 'ACCEPTED' ||
-          !assignment.accepted_at
-        ) {
-          throw new ConflictException(
-            'Delivery arrival state is inconsistent',
-          );
-        }
-
-        // ----------------------------------------------------
-        // ARRIVED does not complete the order.
-        //
-        // The order remains READY until proof-of-delivery /
-        // final DELIVERED confirmation is implemented.
-        // ----------------------------------------------------
-
-        if (
-          delivery.order_status !== 'READY'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot arrive while order is ${delivery.order_status}`,
-          );
-        }
-
-        await assertDeliveryQrPaid(client, delivery);
-
-        const deliveryUpdate =
-          await client.query<{
-            id: string;
-            updated_at: string | Date;
-          }>(
-            `
+      const deliveryUpdate = await client.query<{
+        id: string;
+        updated_at: string | Date;
+      }>(
+        `
               update public.deliveries
 
               set
@@ -3754,38 +3332,30 @@ export class DeliveryService {
                 id::text,
                 updated_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const arrivedDelivery =
-          deliveryUpdate.rows[0];
+      const arrivedDelivery = deliveryUpdate.rows[0];
 
-        if (!arrivedDelivery) {
-          throw new ConflictException(
-            'Delivery status changed concurrently',
-          );
-        }
+      if (!arrivedDelivery) {
+        throw new ConflictException('Delivery status changed concurrently');
+      }
 
-        // ----------------------------------------------------
-        // POD challenge becomes available only after ARRIVED.
-        //
-        // The raw four-digit POD is NOT stored here.
-        // PostgreSQL stores only challenge state / attempts.
-        //
-        // If a concurrent request already inserted the
-        // challenge, validate the existing row instead of
-        // creating a duplicate.
-        // ----------------------------------------------------
+      // ----------------------------------------------------
+      // POD challenge becomes available only after ARRIVED.
+      //
+      // The raw four-digit POD is NOT stored here.
+      // PostgreSQL stores only challenge state / attempts.
+      //
+      // If a concurrent request already inserted the
+      // challenge, validate the existing row instead of
+      // creating a duplicate.
+      // ----------------------------------------------------
 
-        const podChallengeInsert =
-          await client.query<{
-            status: string;
-          }>(
-            `
+      const podChallengeInsert = await client.query<{
+        status: string;
+      }>(
+        `
               insert into public.delivery_pod_challenges (
                 tenant_id,
                 branch_id,
@@ -3803,22 +3373,16 @@ export class DeliveryService {
               returning
                 status
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        let podChallengeStatus =
-          podChallengeInsert.rows[0]?.status;
+      let podChallengeStatus = podChallengeInsert.rows[0]?.status;
 
-        if (!podChallengeStatus) {
-          const existingPodChallenge =
-            await client.query<{
-              status: string;
-            }>(
-              `
+      if (!podChallengeStatus) {
+        const existingPodChallenge = await client.query<{
+          status: string;
+        }>(
+          `
                 select
                   p.status
 
@@ -3832,30 +3396,22 @@ export class DeliveryService {
 
                 for update of p
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.id,
-              ],
-            );
+          [delivery.tenant_id, delivery.branch_id, delivery.id],
+        );
 
-          podChallengeStatus =
-            existingPodChallenge.rows[0]?.status;
-        }
+        podChallengeStatus = existingPodChallenge.rows[0]?.status;
+      }
 
-        if (
-          podChallengeStatus !== 'ACTIVE'
-        ) {
-          throw new ConflictException(
-            'Delivery POD challenge state is inconsistent',
-          );
-        }
+      if (podChallengeStatus !== 'ACTIVE') {
+        throw new ConflictException(
+          'Delivery POD challenge state is inconsistent',
+        );
+      }
 
-        const eventResult =
-          await client.query<{
-            created_at: string | Date;
-          }>(
-            `
+      const eventResult = await client.query<{
+        created_at: string | Date;
+      }>(
+        `
               insert into public.delivery_events (
                 tenant_id,
                 branch_id,
@@ -3908,75 +3464,67 @@ export class DeliveryService {
               returning
                 created_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
+        [
+          delivery.tenant_id,
+          delivery.branch_id,
+          delivery.id,
 
-              safeDriverCode,
-              driverId,
+          safeDriverCode,
+          driverId,
 
-              assignment.id,
-              assignment.assignment_number,
+          assignment.id,
+          assignment.assignment_number,
 
-              delivery.order_id,
-              delivery.order_number,
-            ],
-          );
+          delivery.order_id,
+          delivery.order_number,
+        ],
+      );
 
-        const arrivedEvent =
-          eventResult.rows[0];
+      const arrivedEvent = eventResult.rows[0];
 
-        if (!arrivedEvent) {
-          throw new ConflictException(
-            'Delivery arrival event was not created',
-          );
-        }
+      if (!arrivedEvent) {
+        throw new ConflictException('Delivery arrival event was not created');
+      }
 
-        return {
-          changed: true,
-          action: 'ARRIVED',
+      return {
+        changed: true,
+        action: 'ARRIVED',
 
-          delivery: {
-            id: delivery.id,
-            status: 'ARRIVED',
+        delivery: {
+          id: delivery.id,
+          status: 'ARRIVED',
 
-            arrivedAt:
-              arrivedEvent.created_at,
+          arrivedAt: arrivedEvent.created_at,
+        },
+
+        order: {
+          id: delivery.order_id,
+          number: delivery.order_number,
+
+          // Order remains READY until DELIVERED.
+          status: delivery.order_status,
+        },
+
+        assignment: {
+          id: assignment.id,
+
+          number: assignment.assignment_number,
+
+          // Assignment intentionally remains ACCEPTED during
+          // PICKED_UP / EN_ROUTE / ARRIVED.
+          status: 'ACCEPTED',
+
+          assignedAt: assignment.assigned_at,
+
+          acceptedAt: assignment.accepted_at,
+
+          driver: {
+            id: driverId,
+            code: safeDriverCode,
           },
-
-          order: {
-            id: delivery.order_id,
-            number: delivery.order_number,
-
-            // Order remains READY until DELIVERED.
-            status: delivery.order_status,
-          },
-
-          assignment: {
-            id: assignment.id,
-
-            number:
-              assignment.assignment_number,
-
-            // Assignment intentionally remains ACCEPTED during
-            // PICKED_UP / EN_ROUTE / ARRIVED.
-            status: 'ACCEPTED',
-
-            assignedAt:
-              assignment.assigned_at,
-
-            acceptedAt:
-              assignment.accepted_at,
-
-            driver: {
-              id: driverId,
-              code: safeDriverCode,
-            },
-          },
-        };
-      },
-    );
+        },
+      };
+    });
   }
   async recordDriverLocation(
     deliveryIdInput: unknown,
@@ -3995,45 +3543,23 @@ export class DeliveryService {
         }
       | undefined,
   ) {
-    const deliveryId =
-      this.requireUuid(
-        deliveryIdInput,
-        'deliveryId',
-      );
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
 
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
     if (
       !locationInput ||
       typeof locationInput !== 'object' ||
       Array.isArray(locationInput)
     ) {
-      throw new BadRequestException(
-        'location body is required',
-      );
+      throw new BadRequestException('location body is required');
     }
 
-    const requireFiniteNumber = (
-      value: unknown,
-      field: string,
-    ): number => {
-      if (
-        typeof value !== 'number' ||
-        !Number.isFinite(value)
-      ) {
-        throw new BadRequestException(
-          `${field} must be a finite number`,
-        );
+    const requireFiniteNumber = (value: unknown, field: string): number => {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        throw new BadRequestException(`${field} must be a finite number`);
       }
 
       return value;
@@ -4043,110 +3569,62 @@ export class DeliveryService {
       value: unknown,
       field: string,
     ): number | null => {
-      if (
-        value === undefined ||
-        value === null
-      ) {
+      if (value === undefined || value === null) {
         return null;
       }
 
-      return requireFiniteNumber(
-        value,
-        field,
-      );
+      return requireFiniteNumber(value, field);
     };
 
-    const latitude =
-      requireFiniteNumber(
-        locationInput.latitude,
-        'latitude',
-      );
+    const latitude = requireFiniteNumber(locationInput.latitude, 'latitude');
 
-    const longitude =
-      requireFiniteNumber(
-        locationInput.longitude,
-        'longitude',
-      );
+    const longitude = requireFiniteNumber(locationInput.longitude, 'longitude');
 
-    if (
-      latitude < -90 ||
-      latitude > 90
-    ) {
-      throw new BadRequestException(
-        'latitude must be between -90 and 90',
-      );
+    if (latitude < -90 || latitude > 90) {
+      throw new BadRequestException('latitude must be between -90 and 90');
     }
 
-    if (
-      longitude < -180 ||
-      longitude > 180
-    ) {
-      throw new BadRequestException(
-        'longitude must be between -180 and 180',
-      );
+    if (longitude < -180 || longitude > 180) {
+      throw new BadRequestException('longitude must be between -180 and 180');
     }
 
-    const accuracyMeters =
-      optionalFiniteNumber(
-        locationInput.accuracyMeters,
-        'accuracyMeters',
-      );
+    const accuracyMeters = optionalFiniteNumber(
+      locationInput.accuracyMeters,
+      'accuracyMeters',
+    );
 
     if (
       accuracyMeters !== null &&
-      (
-        accuracyMeters < 0 ||
-        accuracyMeters > 999999.99
-      )
+      (accuracyMeters < 0 || accuracyMeters > 999999.99)
     ) {
       throw new BadRequestException(
         'accuracyMeters is outside the supported range',
       );
     }
 
-    const headingDegrees =
-      optionalFiniteNumber(
-        locationInput.headingDegrees,
-        'headingDegrees',
-      );
+    const headingDegrees = optionalFiniteNumber(
+      locationInput.headingDegrees,
+      'headingDegrees',
+    );
 
     if (
       headingDegrees !== null &&
-      (
-        headingDegrees < 0 ||
-        headingDegrees >= 360
-      )
+      (headingDegrees < 0 || headingDegrees >= 360)
     ) {
       throw new BadRequestException(
         'headingDegrees must be between 0 and less than 360',
       );
     }
 
-    const speedMps =
-      optionalFiniteNumber(
-        locationInput.speedMps,
-        'speedMps',
-      );
+    const speedMps = optionalFiniteNumber(locationInput.speedMps, 'speedMps');
 
-    if (
-      speedMps !== null &&
-      (
-        speedMps < 0 ||
-        speedMps > 99999.999
-      )
-    ) {
-      throw new BadRequestException(
-        'speedMps is outside the supported range',
-      );
+    if (speedMps !== null && (speedMps < 0 || speedMps > 99999.999)) {
+      throw new BadRequestException('speedMps is outside the supported range');
     }
 
-    const serverNowMs =
-      Date.now();
+    const serverNowMs = Date.now();
 
-    let capturedAt =
-      new Date(
-        serverNowMs,
-      ).toISOString();
+    let capturedAt = new Date(serverNowMs).toISOString();
 
     if (
       locationInput.capturedAt !== undefined &&
@@ -4156,82 +3634,57 @@ export class DeliveryService {
         typeof locationInput.capturedAt !== 'string' ||
         !locationInput.capturedAt.trim()
       ) {
-        throw new BadRequestException(
-          'capturedAt must be a valid timestamp',
-        );
+        throw new BadRequestException('capturedAt must be a valid timestamp');
       }
 
-      const parsedCapturedAt =
-        new Date(
-          locationInput.capturedAt,
-        );
+      const parsedCapturedAt = new Date(locationInput.capturedAt);
 
-      const parsedCapturedAtMs =
-        parsedCapturedAt.getTime();
+      const parsedCapturedAtMs = parsedCapturedAt.getTime();
 
-      if (
-        !Number.isFinite(
-          parsedCapturedAtMs,
-        )
-      ) {
-        throw new BadRequestException(
-          'capturedAt must be a valid timestamp',
-        );
+      if (!Number.isFinite(parsedCapturedAtMs)) {
+        throw new BadRequestException('capturedAt must be a valid timestamp');
       }
 
-      const maxFutureCapturedAtMs =
-        serverNowMs +
-        5 * 60 * 1000;
+      const maxFutureCapturedAtMs = serverNowMs + 5 * 60 * 1000;
 
-      if (
-        parsedCapturedAtMs >
-        maxFutureCapturedAtMs
-      ) {
+      if (parsedCapturedAtMs > maxFutureCapturedAtMs) {
         throw new BadRequestException(
           'capturedAt must not be more than 5 minutes in the future',
         );
       }
 
-      const minCapturedAtMs =
-        serverNowMs -
-        24 * 60 * 60 * 1000;
+      const minCapturedAtMs = serverNowMs - 24 * 60 * 60 * 1000;
 
-      if (
-        parsedCapturedAtMs <
-        minCapturedAtMs
-      ) {
+      if (parsedCapturedAtMs < minCapturedAtMs) {
         throw new BadRequestException(
           'capturedAt must not be older than 24 hours',
         );
       }
 
-      capturedAt =
-        parsedCapturedAt.toISOString();
+      capturedAt = parsedCapturedAt.toISOString();
     }
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        // ----------------------------------------------------
-        // Lock order intentionally follows existing driver
-        // mutations:
-        //
-        // 1. delivery
-        // 2. driver-branch authorization
-        // 3. active assignment
-        //
-        // GPS does not mutate delivery/assignment state, so
-        // SHARE locks are sufficient while authorization and
-        // the append-only insert occur atomically.
-        // ----------------------------------------------------
+    return this.databaseService.withTransaction(async (client) => {
+      // ----------------------------------------------------
+      // Lock order intentionally follows existing driver
+      // mutations:
+      //
+      // 1. delivery
+      // 2. driver-branch authorization
+      // 3. active assignment
+      //
+      // GPS does not mutate delivery/assignment state, so
+      // SHARE locks are sufficient while authorization and
+      // the append-only insert occur atomically.
+      // ----------------------------------------------------
 
-        const deliveryResult =
-          await client.query<{
-            id: string;
-            tenant_id: string;
-            branch_id: string;
-            status: string;
-          }>(
-            `
+      const deliveryResult = await client.query<{
+        id: string;
+        tenant_id: string;
+        branch_id: string;
+        status: string;
+      }>(
+        `
               select
                 d.id::text,
                 d.tenant_id::text,
@@ -4245,26 +3698,19 @@ export class DeliveryService {
 
               for share of d
             `,
-            [
-              tenantId,
-              deliveryId,
-            ],
-          );
+        [tenantId, deliveryId],
+      );
 
-        const delivery =
-          deliveryResult.rows[0];
+      const delivery = deliveryResult.rows[0];
 
-        if (!delivery) {
-          throw new NotFoundException(
-            'Delivery not found',
-          );
-        }
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
 
-        const branchAuthorizationResult =
-          await client.query<{
-            id: string;
-          }>(
-            `
+      const branchAuthorizationResult = await client.query<{
+        id: string;
+      }>(
+        `
               select
                 db.id::text
 
@@ -4279,41 +3725,28 @@ export class DeliveryService {
 
               for share of db
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              driverId,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, driverId],
+      );
 
-        if (
-          !branchAuthorizationResult.rows[0]
-        ) {
-          throw new ConflictException(
-            'Driver is not enabled for delivery branch',
-          );
-        }
+      if (!branchAuthorizationResult.rows[0]) {
+        throw new ConflictException(
+          'Driver is not enabled for delivery branch',
+        );
+      }
 
-        if (
-          ![
-            'ACCEPTED',
-            'PICKED_UP',
-            'EN_ROUTE',
-          ].includes(delivery.status)
-        ) {
-          throw new ConflictException(
-            `Delivery location cannot be recorded from ${delivery.status}`,
-          );
-        }
+      if (!['ACCEPTED', 'PICKED_UP', 'EN_ROUTE'].includes(delivery.status)) {
+        throw new ConflictException(
+          `Delivery location cannot be recorded from ${delivery.status}`,
+        );
+      }
 
-        const assignmentResult =
-          await client.query<{
-            id: string;
-            assignment_number: number;
-            driver_id: string;
-            status: string;
-          }>(
-            `
+      const assignmentResult = await client.query<{
+        id: string;
+        assignment_number: number;
+        driver_id: string;
+        status: string;
+      }>(
+        `
               select
                 a.id::text,
                 a.assignment_number,
@@ -4338,53 +3771,41 @@ export class DeliveryService {
 
               for share of a
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const assignment =
-          assignmentResult.rows[0];
+      const assignment = assignmentResult.rows[0];
 
-        if (!assignment) {
-          throw new ConflictException(
-            'Delivery assignment state is inconsistent',
-          );
-        }
+      if (!assignment) {
+        throw new ConflictException(
+          'Delivery assignment state is inconsistent',
+        );
+      }
 
-        if (
-          assignment.driver_id !== driverId
-        ) {
-          throw new ConflictException(
-            'Delivery is assigned to another driver',
-          );
-        }
+      if (assignment.driver_id !== driverId) {
+        throw new ConflictException('Delivery is assigned to another driver');
+      }
 
-        if (
-          assignment.status !== 'ACCEPTED'
-        ) {
-          throw new ConflictException(
-            'Delivery location requires accepted assignment',
-          );
-        }
+      if (assignment.status !== 'ACCEPTED') {
+        throw new ConflictException(
+          'Delivery location requires accepted assignment',
+        );
+      }
 
-        const locationResult =
-          await client.query<{
-            id: string;
+      const locationResult = await client.query<{
+        id: string;
 
-            latitude: number;
-            longitude: number;
+        latitude: number;
+        longitude: number;
 
-            accuracy_meters: string | null;
-            heading_degrees: string | null;
-            speed_mps: string | null;
+        accuracy_meters: string | null;
+        heading_degrees: string | null;
+        speed_mps: string | null;
 
-            captured_at: string | Date;
-            received_at: string | Date;
-          }>(
-            `
+        captured_at: string | Date;
+        received_at: string | Date;
+      }>(
+        `
               insert into public.delivery_driver_locations (
                 tenant_id,
                 branch_id,
@@ -4441,85 +3862,70 @@ export class DeliveryService {
                 captured_at,
                 received_at
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
+        [
+          delivery.tenant_id,
+          delivery.branch_id,
 
-              delivery.id,
-              driverId,
+          delivery.id,
+          driverId,
 
-              longitude,
-              latitude,
+          longitude,
+          latitude,
 
-              accuracyMeters,
-              headingDegrees,
-              speedMps,
+          accuracyMeters,
+          headingDegrees,
+          speedMps,
 
-              capturedAt,
-            ],
-          );
+          capturedAt,
+        ],
+      );
 
-        const location =
-          locationResult.rows[0];
+      const location = locationResult.rows[0];
 
-        return {
-          recorded: true,
+      return {
+        recorded: true,
 
-          delivery: {
-            id: delivery.id,
-            status: delivery.status,
+        delivery: {
+          id: delivery.id,
+          status: delivery.status,
+        },
+
+        assignment: {
+          id: assignment.id,
+          number: assignment.assignment_number,
+          status: assignment.status,
+
+          driver: {
+            id: driverId,
           },
+        },
 
-          assignment: {
-            id: assignment.id,
-            number:
-              assignment.assignment_number,
-            status: assignment.status,
+        location: {
+          id: location.id,
 
-            driver: {
-              id: driverId,
-            },
-          },
+          latitude: location.latitude,
 
-          location: {
-            id: location.id,
+          longitude: location.longitude,
 
-            latitude:
-              location.latitude,
+          accuracyMeters:
+            location.accuracy_meters === null
+              ? null
+              : Number(location.accuracy_meters),
 
-            longitude:
-              location.longitude,
+          headingDegrees:
+            location.heading_degrees === null
+              ? null
+              : Number(location.heading_degrees),
 
-            accuracyMeters:
-              location.accuracy_meters === null
-                ? null
-                : Number(
-                    location.accuracy_meters,
-                  ),
+          speedMps:
+            location.speed_mps === null ? null : Number(location.speed_mps),
 
-            headingDegrees:
-              location.heading_degrees === null
-                ? null
-                : Number(
-                    location.heading_degrees,
-                  ),
+          capturedAt: location.captured_at,
 
-            speedMps:
-              location.speed_mps === null
-                ? null
-                : Number(
-                    location.speed_mps,
-                  ),
-
-            capturedAt:
-              location.captured_at,
-
-            receivedAt:
-              location.received_at,
-          },
-        };
-      },
-    );
+          receivedAt: location.received_at,
+        },
+      };
+    });
   }
   async collectDriverCodCash(
     deliveryIdInput: unknown,
@@ -4780,23 +4186,11 @@ export class DeliveryService {
     driverCode: string,
     podInput: unknown,
   ) {
-    const deliveryId =
-      this.requireUuid(
-        deliveryIdInput,
-        'deliveryId',
-      );
+    const deliveryId = this.requireUuid(deliveryIdInput, 'deliveryId');
 
-    const tenantId =
-      this.requireUuid(
-        tenantIdInput,
-        'tenantId',
-      );
+    const tenantId = this.requireUuid(tenantIdInput, 'tenantId');
 
-    const driverId =
-      this.requireUuid(
-        driverIdInput,
-        'driverId',
-      );
+    const driverId = this.requireUuid(driverIdInput, 'driverId');
 
     // ------------------------------------------------------
     // Malformed POD input is rejected before the transaction.
@@ -4807,20 +4201,13 @@ export class DeliveryService {
     // Therefore malformed input never consumes an attempt.
     // ------------------------------------------------------
 
-    if (
-      typeof podInput !== 'string' ||
-      !/^[0-9]{4}$/.test(podInput)
-    ) {
-      throw new BadRequestException(
-        'pod must be exactly four digits',
-      );
+    if (typeof podInput !== 'string' || !/^[0-9]{4}$/.test(podInput)) {
+      throw new BadRequestException('pod must be exactly four digits');
     }
 
-    const submittedPod =
-      podInput;
+    const submittedPod = podInput;
 
-    const safeDriverCode =
-      driverCode?.trim() || 'DRIVER';
+    const safeDriverCode = driverCode?.trim() || 'DRIVER';
 
     // ------------------------------------------------------
     // IMPORTANT:
@@ -4833,27 +4220,25 @@ export class DeliveryService {
     // thrown only AFTER withTransaction has committed.
     // ------------------------------------------------------
 
-    const outcome =
-      await this.databaseService.withTransaction(
-        async (client) => {
-          const deliveryResult =
-            await client.query<{
-              id: string;
+    const outcome = await this.databaseService.withTransaction(
+      async (client) => {
+        const deliveryResult = await client.query<{
+          id: string;
 
-              tenant_id: string;
-              branch_id: string;
+          tenant_id: string;
+          branch_id: string;
 
-              order_id: string;
-              order_number: string;
+          order_id: string;
+          order_number: string;
 
-              delivery_tracking_token: string;
+          delivery_tracking_token: string;
 
-              delivery_status: string;
+          delivery_status: string;
 
-              order_status: string;
-              payment_status: string;
-            }>(
-              `
+          order_status: string;
+          payment_status: string;
+        }>(
+          `
                 select
                   d.id::text,
 
@@ -4887,32 +4272,25 @@ export class DeliveryService {
 
                 for update of d, o
               `,
-              [
-                tenantId,
-                deliveryId,
-              ],
-            );
+          [tenantId, deliveryId],
+        );
 
-          const delivery =
-            deliveryResult.rows[0];
+        const delivery = deliveryResult.rows[0];
 
-          if (!delivery) {
-            throw new NotFoundException(
-              'Delivery not found',
-            );
-          }
+        if (!delivery) {
+          throw new NotFoundException('Delivery not found');
+        }
 
-          // --------------------------------------------------
-          // Driver must still be ENABLED for the branch.
-          // This is intentionally checked on every mutation,
-          // including an idempotent delivered retry.
-          // --------------------------------------------------
+        // --------------------------------------------------
+        // Driver must still be ENABLED for the branch.
+        // This is intentionally checked on every mutation,
+        // including an idempotent delivered retry.
+        // --------------------------------------------------
 
-          const branchAuthorizationResult =
-            await client.query<{
-              id: string;
-            }>(
-              `
+        const branchAuthorizationResult = await client.query<{
+          id: string;
+        }>(
+          `
                 select
                   db.id::text
 
@@ -4927,44 +4305,38 @@ export class DeliveryService {
 
                 for share of db
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                driverId,
-              ],
-            );
+          [delivery.tenant_id, delivery.branch_id, driverId],
+        );
 
-          if (!branchAuthorizationResult.rows[0]) {
-            throw new ConflictException(
-              'Driver is not enabled for delivery branch',
-            );
-          }
+        if (!branchAuthorizationResult.rows[0]) {
+          throw new ConflictException(
+            'Driver is not enabled for delivery branch',
+          );
+        }
 
-          if (
-            delivery.delivery_status !== 'ARRIVED' &&
-            delivery.delivery_status !== 'DELIVERED'
-          ) {
-            throw new ConflictException(
-              'Delivery cannot be delivered from ' +
-                delivery.delivery_status,
-            );
-          }
+        if (
+          delivery.delivery_status !== 'ARRIVED' &&
+          delivery.delivery_status !== 'DELIVERED'
+        ) {
+          throw new ConflictException(
+            'Delivery cannot be delivered from ' + delivery.delivery_status,
+          );
+        }
 
-          const assignmentResult =
-            await client.query<{
-              id: string;
+        const assignmentResult = await client.query<{
+          id: string;
 
-              assignment_number: number;
+          assignment_number: number;
 
-              driver_id: string;
+          driver_id: string;
 
-              status: string;
+          status: string;
 
-              assigned_at: string | Date;
-              accepted_at: string | Date | null;
-              completed_at: string | Date | null;
-            }>(
-              `
+          assigned_at: string | Date;
+          accepted_at: string | Date | null;
+          completed_at: string | Date | null;
+        }>(
+          `
                 select
                   a.id::text,
 
@@ -4996,54 +4368,35 @@ export class DeliveryService {
 
                 for update of a
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.id,
-              ],
-            );
+          [delivery.tenant_id, delivery.branch_id, delivery.id],
+        );
 
-          const assignment =
-            assignmentResult.rows[0];
+        const assignment = assignmentResult.rows[0];
 
-          if (!assignment) {
-            throw new ConflictException(
-              'Delivery assignment state is inconsistent',
-            );
-          }
+        if (!assignment) {
+          throw new ConflictException(
+            'Delivery assignment state is inconsistent',
+          );
+        }
 
-          if (
-            assignment.driver_id !==
-            driverId
-          ) {
-            throw new ConflictException(
-              'Delivery is assigned to another driver',
-            );
-          }
+        if (assignment.driver_id !== driverId) {
+          throw new ConflictException('Delivery is assigned to another driver');
+        }
 
-          const challengeResult =
-            await client.query<{
-              id: string;
+        const challengeResult = await client.query<{
+          id: string;
 
-              status: string;
+          status: string;
 
-              failed_attempts: number;
+          failed_attempts: number;
 
-              locked_at:
-                | string
-                | Date
-                | null;
+          locked_at: string | Date | null;
 
-              verified_at:
-                | string
-                | Date
-                | null;
+          verified_at: string | Date | null;
 
-              verified_by_driver_id:
-                | string
-                | null;
-            }>(
-              `
+          verified_by_driver_id: string | null;
+        }>(
+          `
                 select
                   p.id::text,
 
@@ -5066,203 +4419,159 @@ export class DeliveryService {
 
                 for update of p
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.id,
-              ],
-            );
+          [delivery.tenant_id, delivery.branch_id, delivery.id],
+        );
 
-          const challenge =
-            challengeResult.rows[0];
+        const challenge = challengeResult.rows[0];
 
-          if (!challenge) {
-            throw new ConflictException(
-              'Delivery POD challenge is not available',
-            );
+        if (!challenge) {
+          throw new ConflictException(
+            'Delivery POD challenge is not available',
+          );
+        }
+
+        await assertDeliveryQrPaid(client, delivery);
+
+        // --------------------------------------------------
+        // Same authenticated owner may retry an already
+        // completed delivery idempotently.
+        //
+        // The POD is NOT revalidated because VERIFIED is
+        // terminal and the assignment owner is already known.
+        // --------------------------------------------------
+
+        if (delivery.delivery_status === 'DELIVERED') {
+          if (
+            delivery.order_status !== 'COMPLETED' ||
+            assignment.status !== 'COMPLETED' ||
+            !assignment.completed_at ||
+            challenge.status !== 'VERIFIED' ||
+            !challenge.verified_at ||
+            challenge.verified_by_driver_id !== driverId
+          ) {
+            throw new ConflictException('Delivered state is inconsistent');
           }
 
-          await assertDeliveryQrPaid(client, delivery);
+          return {
+            kind: 'SUCCESS' as const,
 
-          // --------------------------------------------------
-          // Same authenticated owner may retry an already
-          // completed delivery idempotently.
-          //
-          // The POD is NOT revalidated because VERIFIED is
-          // terminal and the assignment owner is already known.
-          // --------------------------------------------------
+            response: {
+              changed: false,
+              action: 'UNCHANGED',
 
-          if (
-            delivery.delivery_status ===
-            'DELIVERED'
-          ) {
-            if (
-              delivery.order_status !==
-                'COMPLETED' ||
-              assignment.status !==
-                'COMPLETED' ||
-              !assignment.completed_at ||
-              challenge.status !==
-                'VERIFIED' ||
-              !challenge.verified_at ||
-              challenge.verified_by_driver_id !==
-                driverId
-            ) {
-              throw new ConflictException(
-                'Delivered state is inconsistent',
-              );
-            }
+              delivery: {
+                id: delivery.id,
+                status: 'DELIVERED',
+              },
 
-            return {
-              kind: 'SUCCESS' as const,
+              order: {
+                id: delivery.order_id,
+                number: delivery.order_number,
 
-              response: {
-                changed: false,
-                action: 'UNCHANGED',
+                status: 'COMPLETED',
+              },
 
-                delivery: {
-                  id: delivery.id,
-                  status: 'DELIVERED',
-                },
+              assignment: {
+                id: assignment.id,
 
-                order: {
-                  id: delivery.order_id,
-                  number:
-                    delivery.order_number,
+                number: assignment.assignment_number,
 
-                  status: 'COMPLETED',
-                },
+                status: 'COMPLETED',
 
-                assignment: {
-                  id: assignment.id,
+                assignedAt: assignment.assigned_at,
 
-                  number:
-                    assignment.assignment_number,
+                acceptedAt: assignment.accepted_at,
 
-                  status: 'COMPLETED',
+                completedAt: assignment.completed_at,
 
-                  assignedAt:
-                    assignment.assigned_at,
-
-                  acceptedAt:
-                    assignment.accepted_at,
-
-                  completedAt:
-                    assignment.completed_at,
-
-                  driver: {
-                    id: driverId,
-                    code: safeDriverCode,
-                  },
-                },
-
-                pod: {
-                  status: 'VERIFIED',
-
-                  verifiedAt:
-                    challenge.verified_at,
+                driver: {
+                  id: driverId,
+                  code: safeDriverCode,
                 },
               },
-            };
-          }
 
-          if (
-            delivery.order_status !==
-            'READY'
-          ) {
-            throw new ConflictException(
-              'Delivery cannot be completed while order is ' +
-                delivery.order_status,
-            );
-          }
+              pod: {
+                status: 'VERIFIED',
 
-          if (
-            assignment.status !==
-              'ACCEPTED' ||
-            !assignment.accepted_at ||
-            assignment.completed_at
-          ) {
-            throw new ConflictException(
-              'Delivery assignment state is inconsistent',
-            );
-          }
-
-          // --------------------------------------------------
-          // LOCKED is terminal.
-          // Return rather than throw inside the transaction.
-          // --------------------------------------------------
-
-          if (
-            challenge.status ===
-            'LOCKED'
-          ) {
-            return {
-              kind: 'LOCKED' as const,
-
-              failedAttempts:
-                challenge.failed_attempts,
-            };
-          }
-
-          if (
-            challenge.status !==
-            'ACTIVE'
-          ) {
-            throw new ConflictException(
-              'Delivery POD challenge state is inconsistent',
-            );
-          }
-
-          const podMatches =
-            verifyDeliveryPod(
-              {
-                tenantId:
-                  delivery.tenant_id,
-
-                branchId:
-                  delivery.branch_id,
-
-                deliveryId:
-                  delivery.id,
-
-                deliveryTrackingToken:
-                  delivery.delivery_tracking_token,
+                verifiedAt: challenge.verified_at,
               },
-              submittedPod,
+            },
+          };
+        }
+
+        if (delivery.order_status !== 'READY') {
+          throw new ConflictException(
+            'Delivery cannot be completed while order is ' +
+              delivery.order_status,
+          );
+        }
+
+        if (
+          assignment.status !== 'ACCEPTED' ||
+          !assignment.accepted_at ||
+          assignment.completed_at
+        ) {
+          throw new ConflictException(
+            'Delivery assignment state is inconsistent',
+          );
+        }
+
+        // --------------------------------------------------
+        // LOCKED is terminal.
+        // Return rather than throw inside the transaction.
+        // --------------------------------------------------
+
+        if (challenge.status === 'LOCKED') {
+          return {
+            kind: 'LOCKED' as const,
+
+            failedAttempts: challenge.failed_attempts,
+          };
+        }
+
+        if (challenge.status !== 'ACTIVE') {
+          throw new ConflictException(
+            'Delivery POD challenge state is inconsistent',
+          );
+        }
+
+        const podMatches = verifyDeliveryPod(
+          {
+            tenantId: delivery.tenant_id,
+
+            branchId: delivery.branch_id,
+
+            deliveryId: delivery.id,
+
+            deliveryTrackingToken: delivery.delivery_tracking_token,
+          },
+          submittedPod,
+        );
+
+        // --------------------------------------------------
+        // WRONG POD
+        //
+        // Commit failed_attempts before returning HTTP error.
+        // The fifth failed attempt becomes terminal LOCKED.
+        // --------------------------------------------------
+
+        if (!podMatches) {
+          const nextFailedAttempts = challenge.failed_attempts + 1;
+
+          if (nextFailedAttempts < 1 || nextFailedAttempts > 5) {
+            throw new ConflictException(
+              'Delivery POD attempt state is inconsistent',
             );
+          }
 
-          // --------------------------------------------------
-          // WRONG POD
-          //
-          // Commit failed_attempts before returning HTTP error.
-          // The fifth failed attempt becomes terminal LOCKED.
-          // --------------------------------------------------
+          const attemptUpdate = await client.query<{
+            status: string;
 
-          if (!podMatches) {
-            const nextFailedAttempts =
-              challenge.failed_attempts + 1;
+            failed_attempts: number;
 
-            if (
-              nextFailedAttempts < 1 ||
-              nextFailedAttempts > 5
-            ) {
-              throw new ConflictException(
-                'Delivery POD attempt state is inconsistent',
-              );
-            }
-
-            const attemptUpdate =
-              await client.query<{
-                status: string;
-
-                failed_attempts: number;
-
-                locked_at:
-                  | string
-                  | Date
-                  | null;
-              }>(
-                `
+            locked_at: string | Date | null;
+          }>(
+            `
                   update public.delivery_pod_challenges
 
                   set
@@ -5296,57 +4605,50 @@ export class DeliveryService {
                     failed_attempts,
                     locked_at
                 `,
-                [
-                  delivery.tenant_id,
-                  delivery.branch_id,
-                  delivery.id,
+            [
+              delivery.tenant_id,
+              delivery.branch_id,
+              delivery.id,
 
-                  nextFailedAttempts,
-                ],
-              );
+              nextFailedAttempts,
+            ],
+          );
 
-            const updatedAttempt =
-              attemptUpdate.rows[0];
+          const updatedAttempt = attemptUpdate.rows[0];
 
-            if (!updatedAttempt) {
-              throw new ConflictException(
-                'Delivery POD challenge changed concurrently',
-              );
-            }
-
-            return {
-              kind: 'INVALID_POD' as const,
-
-              failedAttempts:
-                updatedAttempt.failed_attempts,
-
-              locked:
-                updatedAttempt.status ===
-                'LOCKED',
-            };
+          if (!updatedAttempt) {
+            throw new ConflictException(
+              'Delivery POD challenge changed concurrently',
+            );
           }
 
-          // --------------------------------------------------
-          // CORRECT POD
-          //
-          // Everything below must commit or roll back together:
-          //
-          // challenge -> VERIFIED
-          // delivery  -> DELIVERED
-          // assignment -> COMPLETED
-          // order -> COMPLETED
-          // DRIVER_DELIVERED event
-          //
-          // order_status_history is generated by DB trigger.
-          // --------------------------------------------------
+          return {
+            kind: 'INVALID_POD' as const,
 
-          const challengeUpdate =
-            await client.query<{
-              verified_at:
-                | string
-                | Date;
-            }>(
-              `
+            failedAttempts: updatedAttempt.failed_attempts,
+
+            locked: updatedAttempt.status === 'LOCKED',
+          };
+        }
+
+        // --------------------------------------------------
+        // CORRECT POD
+        //
+        // Everything below must commit or roll back together:
+        //
+        // challenge -> VERIFIED
+        // delivery  -> DELIVERED
+        // assignment -> COMPLETED
+        // order -> COMPLETED
+        // DRIVER_DELIVERED event
+        //
+        // order_status_history is generated by DB trigger.
+        // --------------------------------------------------
+
+        const challengeUpdate = await client.query<{
+          verified_at: string | Date;
+        }>(
+          `
                 update public.delivery_pod_challenges
 
                 set
@@ -5368,29 +4670,21 @@ export class DeliveryService {
                 returning
                   verified_at
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.id,
+          [delivery.tenant_id, delivery.branch_id, delivery.id, driverId],
+        );
 
-                driverId,
-              ],
-            );
+        const verifiedChallenge = challengeUpdate.rows[0];
 
-          const verifiedChallenge =
-            challengeUpdate.rows[0];
+        if (!verifiedChallenge) {
+          throw new ConflictException(
+            'Delivery POD challenge changed concurrently',
+          );
+        }
 
-          if (!verifiedChallenge) {
-            throw new ConflictException(
-              'Delivery POD challenge changed concurrently',
-            );
-          }
-
-          const deliveryUpdate =
-            await client.query<{
-              id: string;
-            }>(
-              `
+        const deliveryUpdate = await client.query<{
+          id: string;
+        }>(
+          `
                 update public.deliveries
 
                 set
@@ -5406,26 +4700,17 @@ export class DeliveryService {
                 returning
                   id::text
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.id,
-              ],
-            );
+          [delivery.tenant_id, delivery.branch_id, delivery.id],
+        );
 
-          if (!deliveryUpdate.rows[0]) {
-            throw new ConflictException(
-              'Delivery status changed concurrently',
-            );
-          }
+        if (!deliveryUpdate.rows[0]) {
+          throw new ConflictException('Delivery status changed concurrently');
+        }
 
-          const assignmentUpdate =
-            await client.query<{
-              completed_at:
-                | string
-                | Date;
-            }>(
-              `
+        const assignmentUpdate = await client.query<{
+          completed_at: string | Date;
+        }>(
+          `
                 update public.delivery_assignments
 
                 set
@@ -5445,29 +4730,21 @@ export class DeliveryService {
                 returning
                   completed_at
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                assignment.id,
+          [delivery.tenant_id, delivery.branch_id, assignment.id, driverId],
+        );
 
-                driverId,
-              ],
-            );
+        const completedAssignment = assignmentUpdate.rows[0];
 
-          const completedAssignment =
-            assignmentUpdate.rows[0];
+        if (!completedAssignment) {
+          throw new ConflictException(
+            'Delivery assignment changed concurrently',
+          );
+        }
 
-          if (!completedAssignment) {
-            throw new ConflictException(
-              'Delivery assignment changed concurrently',
-            );
-          }
-
-          const orderUpdate =
-            await client.query<{
-              status: string;
-            }>(
-              `
+        const orderUpdate = await client.query<{
+          status: string;
+        }>(
+          `
                 update public.orders
 
                 set
@@ -5483,26 +4760,17 @@ export class DeliveryService {
                 returning
                   status
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.order_id,
-              ],
-            );
+          [delivery.tenant_id, delivery.branch_id, delivery.order_id],
+        );
 
-          if (!orderUpdate.rows[0]) {
-            throw new ConflictException(
-              'Order status changed concurrently',
-            );
-          }
+        if (!orderUpdate.rows[0]) {
+          throw new ConflictException('Order status changed concurrently');
+        }
 
-          const eventResult =
-            await client.query<{
-              created_at:
-                | string
-                | Date;
-            }>(
-              `
+        const eventResult = await client.query<{
+          created_at: string | Date;
+        }>(
+          `
                 insert into public.delivery_events (
                   tenant_id,
                   branch_id,
@@ -5555,107 +4823,93 @@ export class DeliveryService {
                 returning
                   created_at
               `,
-              [
-                delivery.tenant_id,
-                delivery.branch_id,
-                delivery.id,
+          [
+            delivery.tenant_id,
+            delivery.branch_id,
+            delivery.id,
 
-                safeDriverCode,
-                driverId,
+            safeDriverCode,
+            driverId,
 
-                assignment.id,
-                assignment.assignment_number,
+            assignment.id,
+            assignment.assignment_number,
 
-                delivery.order_id,
-                delivery.order_number,
-              ],
-            );
+            delivery.order_id,
+            delivery.order_number,
+          ],
+        );
 
-          const deliveredEvent =
-            eventResult.rows[0];
+        const deliveredEvent = eventResult.rows[0];
 
-          if (!deliveredEvent) {
-            throw new ConflictException(
-              'Delivery completion event was not created',
-            );
-          }
+        if (!deliveredEvent) {
+          throw new ConflictException(
+            'Delivery completion event was not created',
+          );
+        }
 
-          return {
-            kind: 'SUCCESS' as const,
+        return {
+          kind: 'SUCCESS' as const,
 
-            response: {
-              changed: true,
-              action: 'DELIVERED',
+          response: {
+            changed: true,
+            action: 'DELIVERED',
 
-              delivery: {
-                id: delivery.id,
-                status: 'DELIVERED',
+            delivery: {
+              id: delivery.id,
+              status: 'DELIVERED',
 
-                deliveredAt:
-                  deliveredEvent.created_at,
-              },
+              deliveredAt: deliveredEvent.created_at,
+            },
 
-              order: {
-                id: delivery.order_id,
-                number:
-                  delivery.order_number,
+            order: {
+              id: delivery.order_id,
+              number: delivery.order_number,
 
-                status: 'COMPLETED',
-              },
+              status: 'COMPLETED',
+            },
 
-              assignment: {
-                id: assignment.id,
+            assignment: {
+              id: assignment.id,
 
-                number:
-                  assignment.assignment_number,
+              number: assignment.assignment_number,
 
-                status: 'COMPLETED',
+              status: 'COMPLETED',
 
-                assignedAt:
-                  assignment.assigned_at,
+              assignedAt: assignment.assigned_at,
 
-                acceptedAt:
-                  assignment.accepted_at,
+              acceptedAt: assignment.accepted_at,
 
-                completedAt:
-                  completedAssignment.completed_at,
+              completedAt: completedAssignment.completed_at,
 
-                driver: {
-                  id: driverId,
-                  code: safeDriverCode,
-                },
-              },
-
-              pod: {
-                status: 'VERIFIED',
-
-                verifiedAt:
-                  verifiedChallenge.verified_at,
+              driver: {
+                id: driverId,
+                code: safeDriverCode,
               },
             },
-          };
-        },
-      );
+
+            pod: {
+              status: 'VERIFIED',
+
+              verifiedAt: verifiedChallenge.verified_at,
+            },
+          },
+        };
+      },
+    );
 
     // ------------------------------------------------------
     // These exceptions are intentionally OUTSIDE the DB
     // transaction so failed attempt updates are committed.
     // ------------------------------------------------------
 
-    if (
-      outcome.kind ===
-      'LOCKED'
-    ) {
+    if (outcome.kind === 'LOCKED') {
       throw new HttpException(
         {
-          statusCode:
-            HttpStatus.TOO_MANY_REQUESTS,
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
 
-          message:
-            'Delivery POD challenge is locked',
+          message: 'Delivery POD challenge is locked',
 
-          failedAttempts:
-            outcome.failedAttempts,
+          failedAttempts: outcome.failedAttempts,
 
           attemptsRemaining: 0,
         },
@@ -5663,21 +4917,15 @@ export class DeliveryService {
       );
     }
 
-    if (
-      outcome.kind ===
-      'INVALID_POD'
-    ) {
+    if (outcome.kind === 'INVALID_POD') {
       if (outcome.locked) {
         throw new HttpException(
           {
-            statusCode:
-              HttpStatus.TOO_MANY_REQUESTS,
+            statusCode: HttpStatus.TOO_MANY_REQUESTS,
 
-            message:
-              'Delivery POD challenge is locked',
+            message: 'Delivery POD challenge is locked',
 
-            failedAttempts:
-              outcome.failedAttempts,
+            failedAttempts: outcome.failedAttempts,
 
             attemptsRemaining: 0,
           },
@@ -5686,71 +4934,91 @@ export class DeliveryService {
       }
 
       throw new ConflictException({
-        message:
-          'Invalid delivery POD',
+        message: 'Invalid delivery POD',
 
-        failedAttempts:
-          outcome.failedAttempts,
+        failedAttempts: outcome.failedAttempts,
 
-        attemptsRemaining:
-          5 - outcome.failedAttempts,
+        attemptsRemaining: 5 - outcome.failedAttempts,
       });
     }
 
     return outcome.response;
   }
-  private getDeliveryBaseRoute(tenantId:string,deliveryId:string,origin:GeoPoint|null,destination:GeoPoint) {
-    return this.deliveryBaseRoutes.get(JSON.stringify([tenantId,deliveryId]),origin,destination,
-      (from,to)=>this.geoUsageMeter.measure({tenantId,provider:'GOOGLE',operation:'ROUTE',cacheHit:false},
-        ()=>this.geoProvider.calculateRoute({origin:from,destination:to})));
+  private getDeliveryBaseRoute(
+    tenantId: string,
+    deliveryId: string,
+    origin: GeoPoint | null,
+    destination: GeoPoint,
+  ) {
+    return this.deliveryBaseRoutes.get(
+      JSON.stringify([tenantId, deliveryId]),
+      origin,
+      destination,
+      (from, to) =>
+        this.geoUsageMeter.measure(
+          { tenantId, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false },
+          () =>
+            this.geoProvider.calculateRoute({ origin: from, destination: to }),
+        ),
+    );
   }
 
-  private trackingBranchOrigin(row: {branch_name: string; branch_latitude: string | null; branch_longitude: string | null}) {
-    if (row.branch_latitude == null || row.branch_longitude == null ||
-        row.branch_latitude.trim() === '' || row.branch_longitude.trim() === '') return null;
-    const latitude = Number(row.branch_latitude), longitude = Number(row.branch_longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
-        Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
-    return {name: row.branch_name, latitude, longitude};
+  private trackingBranchOrigin(row: {
+    branch_name: string;
+    branch_latitude: string | null;
+    branch_longitude: string | null;
+  }) {
+    if (
+      row.branch_latitude == null ||
+      row.branch_longitude == null ||
+      row.branch_latitude.trim() === '' ||
+      row.branch_longitude.trim() === ''
+    )
+      return null;
+    const latitude = Number(row.branch_latitude),
+      longitude = Number(row.branch_longitude);
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      Math.abs(latitude) > 90 ||
+      Math.abs(longitude) > 180
+    )
+      return null;
+    return { name: row.branch_name, latitude, longitude };
   }
 
   async getPublicDeliveryLocationByOrderTrackingToken(
     trackingTokenInput: unknown,
   ) {
-    const trackingToken =
-      this.requireUuid(
-        trackingTokenInput,
-        'trackingToken',
-      );
+    const trackingToken = this.requireUuid(trackingTokenInput, 'trackingToken');
 
-    const result =
-      await this.databaseService.query<{
-        tenant_id: string;
+    const result = await this.databaseService.query<{
+      tenant_id: string;
 
-        order_number: string;
-        order_status: string;
-        order_payment_status: string;
+      order_number: string;
+      order_status: string;
+      order_payment_status: string;
 
-        delivery_status: string;
+      delivery_status: string;
 
-        branch_name: string;
-        branch_latitude: string | null;
-        branch_longitude: string | null;
-        destination_latitude: number;
-        destination_longitude: number;
+      branch_name: string;
+      branch_latitude: string | null;
+      branch_longitude: string | null;
+      destination_latitude: number;
+      destination_longitude: number;
 
-        latitude: number | null;
-        longitude: number | null;
+      latitude: number | null;
+      longitude: number | null;
 
-        accuracy_meters: string | null;
-        heading_degrees: string | null;
-        speed_mps: string | null;
+      accuracy_meters: string | null;
+      heading_degrees: string | null;
+      speed_mps: string | null;
 
-        captured_at: string | Date | null;
-      
-        delivery_id: string;
-      }>(
-        `
+      captured_at: string | Date | null;
+
+      delivery_id: string;
+    }>(
+      `
           select d.id::text as delivery_id,
             d.tenant_id::text
               as tenant_id,
@@ -5844,18 +5112,13 @@ export class DeliveryService {
 
           limit 1
         `,
-        [
-          trackingToken,
-        ],
-      );
+      [trackingToken],
+    );
 
-    const row =
-      result.rows[0];
+    const row = result.rows[0];
 
     if (!row) {
-      throw new NotFoundException(
-        'Delivery not found',
-      );
+      throw new NotFoundException('Delivery not found');
     }
 
     const hasLocation =
@@ -5863,82 +5126,62 @@ export class DeliveryService {
       row.longitude !== null &&
       row.captured_at !== null;
 
-    const destinationVisible =
-      [
-        'ASSIGNED',
-        'ACCEPTED',
-        'PICKED_UP',
-        'EN_ROUTE',
-        'ARRIVED',
-        'DELIVERED',
-      ].includes(row.delivery_status);
+    const destinationVisible = [
+      'ASSIGNED',
+      'ACCEPTED',
+      'PICKED_UP',
+      'EN_ROUTE',
+      'ARRIVED',
+      'DELIVERED',
+    ].includes(row.delivery_status);
 
-    const destination =
-      destinationVisible
-        ? {
-            latitude:
-              row.destination_latitude,
+    const destination = destinationVisible
+      ? {
+          latitude: row.destination_latitude,
 
-            longitude:
-              row.destination_longitude,
-          }
-        : null;
+          longitude: row.destination_longitude,
+        }
+      : null;
 
-    const location =
-      !hasLocation
-        ? null
-        : {
-            latitude:
-              row.latitude as number,
+    const location = !hasLocation
+      ? null
+      : {
+          latitude: row.latitude as number,
 
-            longitude:
-              row.longitude as number,
+          longitude: row.longitude as number,
 
-            accuracyMeters:
-              row.accuracy_meters === null
-                ? null
-                : Number(
-                    row.accuracy_meters,
-                  ),
+          accuracyMeters:
+            row.accuracy_meters === null ? null : Number(row.accuracy_meters),
 
-            headingDegrees:
-              row.heading_degrees === null
-                ? null
-                : Number(
-                    row.heading_degrees,
-                  ),
+          headingDegrees:
+            row.heading_degrees === null ? null : Number(row.heading_degrees),
 
-            speedMps:
-              row.speed_mps === null
-                ? null
-                : Number(
-                    row.speed_mps,
-                  ),
+          speedMps: row.speed_mps === null ? null : Number(row.speed_mps),
 
-            capturedAt:
-              row.captured_at,
-          };
+          capturedAt: row.captured_at,
+        };
 
     const branchOrigin = this.trackingBranchOrigin(row);
     const baseRoute = destination
-      ? await this.getDeliveryBaseRoute(row.tenant_id, row.delivery_id, branchOrigin, destination)
-      : {identity:null,status:'HIDDEN' as const,route:null,path:[]};
+      ? await this.getDeliveryBaseRoute(
+          row.tenant_id,
+          row.delivery_id,
+          branchOrigin,
+          destination,
+        )
+      : { identity: null, status: 'HIDDEN' as const, route: null, path: [] };
 
     return {
       order: {
-        number:
-          row.order_number,
+        number: row.order_number,
 
-        status:
-          row.order_status,
+        status: row.order_status,
 
-        paymentStatus:
-          row.order_payment_status,
+        paymentStatus: row.order_payment_status,
       },
 
       delivery: {
-        status:
-          row.delivery_status,
+        status: row.delivery_status,
       },
 
       branchOrigin,
@@ -5949,28 +5192,21 @@ export class DeliveryService {
       routeStatus: baseRoute.status,
     };
   }
-  async getPublicDeliveryPodByOrderTrackingToken(
-    trackingTokenInput: unknown,
-  ) {
-    const trackingToken =
-      this.requireUuid(
-        trackingTokenInput,
-        'trackingToken',
-      );
+  async getPublicDeliveryPodByOrderTrackingToken(trackingTokenInput: unknown) {
+    const trackingToken = this.requireUuid(trackingTokenInput, 'trackingToken');
 
-    const result =
-      await this.databaseService.query<{
-        tenant_id: string;
-        branch_id: string;
+    const result = await this.databaseService.query<{
+      tenant_id: string;
+      branch_id: string;
 
-        delivery_id: string;
-        delivery_tracking_token: string;
+      delivery_id: string;
+      delivery_tracking_token: string;
 
-        delivery_status: string;
+      delivery_status: string;
 
-        pod_status: string | null;
-      }>(
-        `
+      pod_status: string | null;
+    }>(
+      `
           select
             d.tenant_id::text,
             d.branch_id::text,
@@ -6004,87 +5240,58 @@ export class DeliveryService {
 
           limit 1
         `,
-        [
-          trackingToken,
-        ],
-      );
+      [trackingToken],
+    );
 
-    const delivery =
-      result.rows[0];
+    const delivery = result.rows[0];
 
     if (!delivery) {
-      throw new NotFoundException(
-        'Delivery not found',
-      );
+      throw new NotFoundException('Delivery not found');
     }
 
     // POD is intentionally unavailable while the delivery
     // is still in transit.
-    if (
-      delivery.delivery_status !== 'ARRIVED'
-    ) {
+    if (delivery.delivery_status !== 'ARRIVED') {
       throw new ConflictException(
         'Delivery POD is available only after arrival',
       );
     }
 
     if (!delivery.pod_status) {
-      throw new ConflictException(
-        'Delivery POD challenge is not available',
-      );
+      throw new ConflictException('Delivery POD challenge is not available');
     }
 
-    if (
-      delivery.pod_status === 'LOCKED'
-    ) {
-      throw new ConflictException(
-        'Delivery POD challenge is locked',
-      );
+    if (delivery.pod_status === 'LOCKED') {
+      throw new ConflictException('Delivery POD challenge is locked');
     }
 
-    if (
-      delivery.pod_status === 'VERIFIED'
-    ) {
-      throw new ConflictException(
-        'Delivery POD challenge is already verified',
-      );
+    if (delivery.pod_status === 'VERIFIED') {
+      throw new ConflictException('Delivery POD challenge is already verified');
     }
 
-    if (
-      delivery.pod_status !== 'ACTIVE'
-    ) {
-      throw new ConflictException(
-        'Delivery POD challenge state is invalid',
-      );
+    if (delivery.pod_status !== 'ACTIVE') {
+      throw new ConflictException('Delivery POD challenge state is invalid');
     }
 
-    const code =
-      deriveDeliveryPod({
-        tenantId:
-          delivery.tenant_id,
+    const code = deriveDeliveryPod({
+      tenantId: delivery.tenant_id,
 
-        branchId:
-          delivery.branch_id,
+      branchId: delivery.branch_id,
 
-        deliveryId:
-          delivery.delivery_id,
+      deliveryId: delivery.delivery_id,
 
-        deliveryTrackingToken:
-          delivery.delivery_tracking_token,
-      });
+      deliveryTrackingToken: delivery.delivery_tracking_token,
+    });
 
     return {
       delivery: {
-        id:
-          delivery.delivery_id,
+        id: delivery.delivery_id,
 
-        status:
-          delivery.delivery_status,
+        status: delivery.delivery_status,
       },
 
       pod: {
-        status:
-          'ACTIVE',
+        status: 'ACTIVE',
 
         // Always a string so leading zeroes are preserved.
         code,
@@ -6096,20 +5303,12 @@ export class DeliveryService {
     branchCodeInput?: string,
     statusInput?: string,
   ) {
-    const tenantCode = this.requireCode(
-      tenantCodeInput,
-      'tenant',
-    );
+    const tenantCode = this.requireCode(tenantCodeInput, 'tenant');
 
-    const branchCode = this.requireCode(
-      branchCodeInput,
-      'branch',
-    );
+    const branchCode = this.requireCode(branchCodeInput, 'branch');
 
-    const deliveryStatus = (
-      statusInput?.trim().toUpperCase() ||
-      'WAITING_ASSIGNMENT'
-    );
+    const deliveryStatus =
+      statusInput?.trim().toUpperCase() || 'WAITING_ASSIGNMENT';
 
     const allowedStatuses = new Set([
       'CREATED',
@@ -6125,18 +5324,15 @@ export class DeliveryService {
     ]);
 
     if (!allowedStatuses.has(deliveryStatus)) {
-      throw new BadRequestException(
-        'Invalid delivery status',
-      );
+      throw new BadRequestException('Invalid delivery status');
     }
 
-    const branchResult =
-      await this.databaseService.query<{
-        tenant_id: string;
-        branch_id: string;
-        branch_name: string;
-      }>(
-        `
+    const branchResult = await this.databaseService.query<{
+      tenant_id: string;
+      branch_id: string;
+      branch_name: string;
+    }>(
+      `
           select
             t.id::text as tenant_id,
             b.id::text as branch_id,
@@ -6154,58 +5350,52 @@ export class DeliveryService {
 
           limit 1
         `,
-        [
-          tenantCode,
-          branchCode,
-        ],
-      );
+      [tenantCode, branchCode],
+    );
 
     const branch = branchResult.rows[0];
 
     if (!branch) {
-      throw new NotFoundException(
-        'Tenant or branch not found',
-      );
+      throw new NotFoundException('Tenant or branch not found');
     }
 
-    const result =
-      await this.databaseService.query<{
-        delivery_id: string;
-        delivery_tracking_token: string;
-        delivery_status: string;
+    const result = await this.databaseService.query<{
+      delivery_id: string;
+      delivery_tracking_token: string;
+      delivery_status: string;
 
-        recipient_name: string;
-        recipient_phone: string;
+      recipient_name: string;
+      recipient_phone: string;
 
-        address_text: string;
-        address_reference: string | null;
+      address_text: string;
+      address_reference: string | null;
 
-        quoted_delivery_fee: string;
+      quoted_delivery_fee: string;
 
-        eta_min_minutes: number | null;
-        eta_max_minutes: number | null;
+      eta_min_minutes: number | null;
+      eta_max_minutes: number | null;
 
-        delivery_created_at: string | Date;
-        delivery_updated_at: string | Date;
+      delivery_created_at: string | Date;
+      delivery_updated_at: string | Date;
 
-        zone_code: string;
-        zone_name: string;
+      zone_code: string;
+      zone_name: string;
 
-        order_id: string;
-        order_number: string;
-        order_status: string;
-        payment_status: string;
-        order_total: string;
+      order_id: string;
+      order_number: string;
+      order_status: string;
+      payment_status: string;
+      order_total: string;
 
-        assignment_id: string | null;
-        assignment_number: number | null;
-        assignment_status: string | null;
+      assignment_id: string | null;
+      assignment_number: number | null;
+      assignment_status: string | null;
 
-        driver_id: string | null;
-        driver_code: string | null;
-        driver_name: string | null;
-      }>(
-        `
+      driver_id: string | null;
+      driver_code: string | null;
+      driver_name: string | null;
+    }>(
+      `
           select
             d.id::text
               as delivery_id,
@@ -6319,12 +5509,8 @@ export class DeliveryService {
             d.created_at asc,
             d.id asc
         `,
-        [
-          branch.tenant_id,
-          branch.branch_id,
-          deliveryStatus,
-        ],
-      );
+      [branch.tenant_id, branch.branch_id, deliveryStatus],
+    );
 
     return {
       tenant: tenantCode,
@@ -6341,11 +5527,9 @@ export class DeliveryService {
       deliveries: result.rows.map((row) => ({
         id: row.delivery_id,
 
-        trackingToken:
-          row.delivery_tracking_token,
+        trackingToken: row.delivery_tracking_token,
 
-        status:
-          row.delivery_status,
+        status: row.delivery_status,
 
         order: {
           id: row.order_id,
@@ -6371,42 +5555,34 @@ export class DeliveryService {
         },
 
         quote: {
-          deliveryFee:
-            Number(row.quoted_delivery_fee),
+          deliveryFee: Number(row.quoted_delivery_fee),
 
           eta: {
-            minMinutes:
-              row.eta_min_minutes,
+            minMinutes: row.eta_min_minutes,
 
-            maxMinutes:
-              row.eta_max_minutes,
+            maxMinutes: row.eta_max_minutes,
           },
         },
 
-        assignment:
-          row.assignment_id
-            ? {
-                id: row.assignment_id,
+        assignment: row.assignment_id
+          ? {
+              id: row.assignment_id,
 
-                number:
-                  row.assignment_number,
+              number: row.assignment_number,
 
-                status:
-                  row.assignment_status,
+              status: row.assignment_status,
 
-                driver: {
-                  id: row.driver_id,
-                  code: row.driver_code,
-                  name: row.driver_name,
-                },
-              }
-            : null,
+              driver: {
+                id: row.driver_id,
+                code: row.driver_code,
+                name: row.driver_name,
+              },
+            }
+          : null,
 
-        createdAt:
-          row.delivery_created_at,
+        createdAt: row.delivery_created_at,
 
-        updatedAt:
-          row.delivery_updated_at,
+        updatedAt: row.delivery_updated_at,
       })),
     };
   }
@@ -6415,23 +5591,16 @@ export class DeliveryService {
     tenantCodeInput?: string,
     branchCodeInput?: string,
   ) {
-    const tenantCode = this.requireCode(
-      tenantCodeInput,
-      'tenant',
-    );
+    const tenantCode = this.requireCode(tenantCodeInput, 'tenant');
 
-    const branchCode = this.requireCode(
-      branchCodeInput,
-      'branch',
-    );
+    const branchCode = this.requireCode(branchCodeInput, 'branch');
 
-    const branchResult =
-      await this.databaseService.query<{
-        tenant_id: string;
-        branch_id: string;
-        branch_name: string;
-      }>(
-        `
+    const branchResult = await this.databaseService.query<{
+      tenant_id: string;
+      branch_id: string;
+      branch_name: string;
+    }>(
+      `
           select
             t.id::text as tenant_id,
             b.id::text as branch_id,
@@ -6449,31 +5618,25 @@ export class DeliveryService {
 
           limit 1
         `,
-        [
-          tenantCode,
-          branchCode,
-        ],
-      );
+      [tenantCode, branchCode],
+    );
 
     const branch = branchResult.rows[0];
 
     if (!branch) {
-      throw new NotFoundException(
-        'Tenant or branch not found',
-      );
+      throw new NotFoundException('Tenant or branch not found');
     }
 
-    const result =
-      await this.databaseService.query<{
-        id: string;
-        code: string;
-        display_name: string;
-        phone: string;
-        driver_status: string;
-        branch_status: string;
-        active_assignments: number;
-      }>(
-        `
+    const result = await this.databaseService.query<{
+      id: string;
+      code: string;
+      display_name: string;
+      phone: string;
+      driver_status: string;
+      branch_status: string;
+      active_assignments: number;
+    }>(
+      `
           select
             drv.id::text,
             drv.code,
@@ -6526,11 +5689,8 @@ export class DeliveryService {
             drv.code,
             drv.id
         `,
-        [
-          branch.tenant_id,
-          branch.branch_id,
-        ],
-      );
+      [branch.tenant_id, branch.branch_id],
+    );
 
     return {
       tenant: tenantCode,
@@ -6546,20 +5706,15 @@ export class DeliveryService {
         id: row.id,
         code: row.code,
 
-        displayName:
-          row.display_name,
+        displayName: row.display_name,
 
-        phone:
-          row.phone,
+        phone: row.phone,
 
-        status:
-          row.driver_status,
+        status: row.driver_status,
 
-        branchStatus:
-          row.branch_status,
+        branchStatus: row.branch_status,
 
-        activeAssignments:
-          row.active_assignments,
+        activeAssignments: row.active_assignments,
       })),
     };
   }
@@ -6567,29 +5722,31 @@ export class DeliveryService {
     branch: DeliveryBranchRow,
     destination: GeoPoint,
   ): Promise<GeoRouteResult> {
-    const origin =
-      this.requireDeliveryBranchOrigin(
-        branch,
-      );
+    const origin = this.requireDeliveryBranchOrigin(branch);
 
-    return this.geoUsageMeter.measure({ tenantId: branch.tenant_id, provider: 'GOOGLE', operation: 'ROUTE', cacheHit: false }, () => this.geoProvider.calculateRoute({
-      origin,
-      destination,
-    }));
+    return this.geoUsageMeter.measure(
+      {
+        tenantId: branch.tenant_id,
+        provider: 'GOOGLE',
+        operation: 'ROUTE',
+        cacheHit: false,
+      },
+      () =>
+        this.geoProvider.calculateRoute({
+          origin,
+          destination,
+        }),
+    );
   }
   async getCachedDeliveryMapRouteForMonitor(
     tenantId: string,
     origin: GeoPoint,
     destination: GeoPoint,
   ): Promise<GeoRouteResult> {
-    return this.getCachedDeliveryMapRoute(
-      tenantId,
-      origin,
-      destination,
-    );
+    return this.getCachedDeliveryMapRoute(tenantId, origin, destination);
   }
 
-    private async getCachedDeliveryMapRoute(
+  private async getCachedDeliveryMapRoute(
     tenantId: string,
     origin: GeoPoint,
     destination: GeoPoint,
@@ -6599,24 +5756,21 @@ export class DeliveryService {
     const cacheKey = routeIdentity
       ? [
           tenantId,
-          "FC_G4114_STABLE_DELIVERY_ROUTE_IDENTITY",
+          'FC_G4114_STABLE_DELIVERY_ROUTE_IDENTITY',
           routeIdentity,
           destination.latitude,
           destination.longitude,
-        ].join(":")
+        ].join(':')
       : [
           tenantId,
           origin.latitude,
           origin.longitude,
           destination.latitude,
           destination.longitude,
-        ].join(":");
+        ].join(':');
 
     const cached = this.deliveryMapRouteCache.get(cacheKey);
-    if (
-      cached &&
-      (Boolean(routeIdentity) || cached.expiresAt > now)
-    ) {
+    if (cached && (Boolean(routeIdentity) || cached.expiresAt > now)) {
       return cached.route;
     }
     if (cached) {
@@ -6638,13 +5792,10 @@ export class DeliveryService {
     );
 
     if (
-      this.deliveryMapRouteCache.size >=
-      DELIVERY_MAP_ROUTE_CACHE_MAX_ENTRIES
+      this.deliveryMapRouteCache.size >= DELIVERY_MAP_ROUTE_CACHE_MAX_ENTRIES
     ) {
-      const oldestKey =
-        this.deliveryMapRouteCache.keys().next().value as
-          | string
-          | undefined;
+      const oldestKey = this.deliveryMapRouteCache.keys().next().value as
+        string | undefined;
       if (oldestKey) {
         this.deliveryMapRouteCache.delete(oldestKey);
       }
@@ -6659,29 +5810,20 @@ export class DeliveryService {
     return route;
   }
 
-  private requireDeliveryBranchOrigin(
-    branch: DeliveryBranchRow,
-  ): GeoPoint {
-    const latitudeValue =
-      branch.delivery_origin_latitude;
+  private requireDeliveryBranchOrigin(branch: DeliveryBranchRow): GeoPoint {
+    const latitudeValue = branch.delivery_origin_latitude;
 
-    const longitudeValue =
-      branch.delivery_origin_longitude;
+    const longitudeValue = branch.delivery_origin_longitude;
 
-    if (
-      latitudeValue === null ||
-      longitudeValue === null
-    ) {
+    if (latitudeValue === null || longitudeValue === null) {
       throw new ServiceUnavailableException(
         'Delivery branch origin coordinates are not configured',
       );
     }
 
-    const latitude =
-      Number(latitudeValue);
+    const latitude = Number(latitudeValue);
 
-    const longitude =
-      Number(longitudeValue);
+    const longitude = Number(longitudeValue);
 
     if (
       !Number.isFinite(latitude) ||
@@ -6716,10 +5858,7 @@ export class DeliveryService {
       );
     }
 
-    if (
-      !Number.isSafeInteger(durationSeconds) ||
-      durationSeconds < 0
-    ) {
+    if (!Number.isSafeInteger(durationSeconds) || durationSeconds < 0) {
       throw new ServiceUnavailableException(
         'Delivery route duration is invalid',
       );
@@ -6732,13 +5871,8 @@ export class DeliveryService {
     latitude: number,
     longitude: number,
   ): DeliveryCheckoutRouteSnapshot {
-    if (
-      !snapshot ||
-      typeof snapshot !== 'object'
-    ) {
-      throw new ConflictException(
-        'Delivery route snapshot is missing',
-      );
+    if (!snapshot || typeof snapshot !== 'object') {
+      throw new ConflictException('Delivery route snapshot is missing');
     }
 
     if (
@@ -6750,10 +5884,7 @@ export class DeliveryService {
       );
     }
 
-    const origin =
-      this.requireDeliveryBranchOrigin(
-        branch,
-      );
+    const origin = this.requireDeliveryBranchOrigin(branch);
 
     if (
       snapshot.origin.latitude !== origin.latitude ||
@@ -6788,8 +5919,7 @@ export class DeliveryService {
     minMinutes: number;
     maxMinutes: number;
   } {
-    const prepMinutes =
-      branch.delivery_default_prep_minutes;
+    const prepMinutes = branch.delivery_default_prep_minutes;
 
     if (
       !Number.isSafeInteger(prepMinutes) ||
@@ -6801,10 +5931,7 @@ export class DeliveryService {
       );
     }
 
-    if (
-      !Number.isSafeInteger(durationSeconds) ||
-      durationSeconds < 0
-    ) {
+    if (!Number.isSafeInteger(durationSeconds) || durationSeconds < 0) {
       throw new ServiceUnavailableException(
         'Delivery route duration is invalid',
       );
@@ -6822,29 +5949,13 @@ export class DeliveryService {
       );
     }
 
-    const travelMinutes =
-      Math.max(
-        1,
-        Math.ceil(
-          durationSeconds / 60,
-        ),
-      );
+    const travelMinutes = Math.max(1, Math.ceil(durationSeconds / 60));
 
-    const routeReadyMinutes =
-      prepMinutes +
-      travelMinutes;
+    const routeReadyMinutes = prepMinutes + travelMinutes;
 
-    const minMinutes =
-      Math.max(
-        zone.eta_min_minutes,
-        routeReadyMinutes,
-      );
+    const minMinutes = Math.max(zone.eta_min_minutes, routeReadyMinutes);
 
-    const maxMinutes =
-      Math.max(
-        zone.eta_max_minutes,
-        minMinutes,
-      );
+    const maxMinutes = Math.max(zone.eta_max_minutes, minMinutes);
 
     if (
       !Number.isSafeInteger(minMinutes) ||
@@ -6886,48 +5997,30 @@ export class DeliveryService {
     };
   }
 
-  private requireUuid(
-    value: unknown,
-    field: string,
-  ): string {
+  private requireUuid(value: unknown, field: string): string {
     if (typeof value !== 'string') {
-      throw new BadRequestException(
-        `${field} is required`,
-      );
+      throw new BadRequestException(`${field} is required`);
     }
 
-    const normalized =
-      value.trim().toLowerCase();
+    const normalized = value.trim().toLowerCase();
 
     if (
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
         normalized,
       )
     ) {
-      throw new BadRequestException(
-        `${field} is invalid`,
-      );
+      throw new BadRequestException(`${field} is invalid`);
     }
 
     return normalized;
   }
 
-  private optionalUuid(
-    value: unknown,
-    field: string,
-  ): string | null {
-    if (
-      value === undefined ||
-      value === null ||
-      value === ''
-    ) {
+  private optionalUuid(value: unknown, field: string): string | null {
+    if (value === undefined || value === null || value === '') {
       return null;
     }
 
-    return this.requireUuid(
-      value,
-      field,
-    );
+    return this.requireUuid(value, field);
   }
   private requireCode(value: unknown, field: string): string {
     if (typeof value !== 'string') {

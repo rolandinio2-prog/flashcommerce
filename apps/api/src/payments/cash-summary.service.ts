@@ -8,7 +8,12 @@ export function validateCashSummaryDate(value: unknown): string {
     throw new BadRequestException('Indica una fecha valida (AAAA-MM-DD).');
   }
   const time = Date.parse(value + 'T00:00:00Z');
-  if (!Number.isFinite(time) || new Date(time).toISOString().slice(0, 10) !== value || value < '2000-01-01' || value > '2100-12-31') {
+  if (
+    !Number.isFinite(time) ||
+    new Date(time).toISOString().slice(0, 10) !== value ||
+    value < '2000-01-01' ||
+    value > '2100-12-31'
+  ) {
     throw new BadRequestException('La fecha no es valida.');
   }
   return value;
@@ -19,16 +24,31 @@ export function validateCashSummaryDate(value: unknown): string {
 export class CashSummaryService {
   constructor(private readonly database: DatabaseService) {}
 
-  async getSummary(principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>, date: unknown) {
+  async getSummary(
+    principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
+    date: unknown,
+  ) {
     const day = validateCashSummaryDate(date);
-    return this.database.withTransaction(async client => {
-      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY');
+    return this.database.withTransaction(async (client) => {
+      await client.query(
+        'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY',
+      );
       return this.getSummaryInTransaction(client, principal, day);
     });
   }
 
-  async getSummaryInTransaction(client: PoolClient, principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>, day: string) {
-      const totals = await client.query<{currency: string; category: string; count: string; amount: string}>(`
+  async getSummaryInTransaction(
+    client: PoolClient,
+    principal: Pick<StaffSessionPrincipal, 'tenantId' | 'branchId'>,
+    day: string,
+  ) {
+    const totals = await client.query<{
+      currency: string;
+      category: string;
+      count: string;
+      amount: string;
+    }>(
+      `
         with scoped as (
           select p.*, o.total as order_total, o.currency as order_currency,
                  o.order_type, o.payment_status as order_payment_status,
@@ -53,21 +73,34 @@ export class CashSummaryService {
         )
         select currency, category, count(*)::text as count, sum(amount)::text as amount
         from classified group by currency, category order by currency, category
-      `, [principal.tenantId, principal.branchId, day]);
-      const review = await client.query<{orderNumber: string; status: string; currency: string; total: string; totalRows: string}>(`
+      `,
+      [principal.tenantId, principal.branchId, day],
+    );
+    const review = await client.query<{
+      orderNumber: string;
+      status: string;
+      currency: string;
+      total: string;
+      totalRows: string;
+    }>(
+      `
         select order_number::text as "orderNumber", payment_status as status, currency, total::text,
                count(*) over ()::text as "totalRows"
         from public.orders
         where tenant_id=$1::uuid and branch_id=$2::uuid and payment_status='REVIEW_REQUIRED'
         order by created_at, id limit 200
-      `, [principal.tenantId, principal.branchId]);
-      return {
-        date: day, timezone: 'America/La_Paz', kind: 'CURRENT_STATE_REPORT' as const,
-        totals: totals.rows,
-        reviewRequired: review.rows.map(({totalRows: _count, ...row}) => row),
-        reviewRequiredCount: review.rows[0]?.totalRows ?? '0',
-        limit: 200,
-        note: 'Estado actual de los cobros realizados en la fecha. No constituye un cierre de caja. Revisiones pendientes incluyen otras fechas.',
-      };
+      `,
+      [principal.tenantId, principal.branchId],
+    );
+    return {
+      date: day,
+      timezone: 'America/La_Paz',
+      kind: 'CURRENT_STATE_REPORT' as const,
+      totals: totals.rows,
+      reviewRequired: review.rows.map(({ totalRows: _count, ...row }) => row),
+      reviewRequiredCount: review.rows[0]?.totalRows ?? '0',
+      limit: 200,
+      note: 'Estado actual de los cobros realizados en la fecha. No constituye un cierre de caja. Revisiones pendientes incluyen otras fechas.',
+    };
   }
 }

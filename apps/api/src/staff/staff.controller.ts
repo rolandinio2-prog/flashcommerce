@@ -68,12 +68,19 @@ export class StaffController {
   private sessionCookieOptions() {
     // Only explicitly local development/test may use HTTP cookies.
     // Configured HTTPS always requires Secure; never trust request headers.
-    const localMode = ['development', 'test'].includes(process.env.NODE_ENV || '');
+    const localMode = ['development', 'test'].includes(
+      process.env.NODE_ENV || '',
+    );
     const configuredHttps = [
       process.env.FLASH_CUSTOMER_URL || '',
       ...(process.env.FLASH_ALLOWED_ORIGINS || '').split(','),
-    ].some(origin => origin.trim().toLowerCase().startsWith('https://'));
-    return { httpOnly: true, sameSite: 'lax' as const, secure: !localMode || configuredHttps, path: '/' };
+    ].some((origin) => origin.trim().toLowerCase().startsWith('https://'));
+    return {
+      httpOnly: true,
+      sameSite: 'lax' as const,
+      secure: !localMode || configuredHttps,
+      path: '/',
+    };
   }
 
   @Get('bootstrap-status')
@@ -155,10 +162,7 @@ export class StaffController {
     @Req() request: StaffAuthenticatedRequest,
     @Body() body: ChangeStaffPasswordBody,
   ) {
-    return this.staffService.changePassword(
-      request.staff,
-      body?.newPassword,
-    );
+    return this.staffService.changePassword(request.staff, body?.newPassword);
   }
 
   @UseGuards(StaffSessionGuard)
@@ -211,10 +215,6 @@ export class StaffController {
     @Param('userId', new ParseUUIDPipe()) userId: string,
     @Body() body: SetStaffStatusBody,
   ) {
-    return this.staffService.setUserStatus(
-      request.staff,
-      userId,
-      body?.status,
-    );
+    return this.staffService.setUserStatus(request.staff, userId, body?.status);
   }
 }

@@ -1,5 +1,8 @@
 import { Controller, Get, Query, Req } from '@nestjs/common';
-import { OperationsAccess, OperationPermission } from '../operations/operations-access';
+import {
+  OperationsAccess,
+  OperationPermission,
+} from '../operations/operations-access';
 import type { StaffAuthenticatedRequest } from '../staff/staff.types';
 import { CashSummaryService } from './cash-summary.service';
 
@@ -10,7 +13,10 @@ export class CashSummaryController {
 
   @Get('summary')
   @OperationPermission('payments.read')
-  getSummary(@Req() request: StaffAuthenticatedRequest, @Query('date') date: unknown) {
+  getSummary(
+    @Req() request: StaffAuthenticatedRequest,
+    @Query('date') date: unknown,
+  ) {
     return this.summary.getSummary(request.staff, date);
   }
 }

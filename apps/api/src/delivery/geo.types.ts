@@ -62,26 +62,17 @@ export interface GeoRouteResult {
 // GEO-1 PROVIDER-NEUTRAL CONTRACTS
 // ============================================================
 
-export type GeoProviderId =
-  | 'GOOGLE'
-  | 'VALHALLA'
-  | 'OPEN_GEOCODING';
+export type GeoProviderId = 'GOOGLE' | 'VALHALLA' | 'OPEN_GEOCODING';
 
 export type GeoRouteGeometryFormat =
-  | 'GOOGLE_ENCODED_POLYLINE'
-  | 'POLYLINE6'
-  | 'GEOJSON_LINESTRING';
+  'GOOGLE_ENCODED_POLYLINE' | 'POLYLINE6' | 'GEOJSON_LINESTRING';
 
-export type GeoMapCompatibility =
-  | 'GOOGLE_MAPS_ONLY'
-  | 'OPEN_STANDARD_ONLY';
+export type GeoMapCompatibility = 'GOOGLE_MAPS_ONLY' | 'OPEN_STANDARD_ONLY';
 
 export interface GeoJsonLineString {
   type: 'LineString';
 
-  coordinates: ReadonlyArray<
-    readonly [number, number]
-  >;
+  coordinates: ReadonlyArray<readonly [number, number]>;
 }
 
 export interface GeoCapabilities {
@@ -100,11 +91,7 @@ export interface GeoCapabilities {
   };
 }
 
-export type GeoMetadataValue =
-  | string
-  | number
-  | boolean
-  | null;
+export type GeoMetadataValue = string | number | boolean | null;
 
 export interface RouteResult {
   provider: GeoProviderId;
@@ -112,32 +99,19 @@ export interface RouteResult {
   distanceMeters: number;
   durationSeconds: number;
 
-  trafficDurationSeconds:
-    | number
-    | null;
+  trafficDurationSeconds: number | null;
 
-  geometry:
-    | string
-    | GeoJsonLineString;
+  geometry: string | GeoJsonLineString;
 
-  geometryFormat:
-    GeoRouteGeometryFormat;
+  geometryFormat: GeoRouteGeometryFormat;
 
-  mapCompatibility:
-    GeoMapCompatibility;
+  mapCompatibility: GeoMapCompatibility;
 
   calculatedAt: string;
 
-  expiresAt:
-    | string
-    | null;
+  expiresAt: string | null;
 
-  metadata: Readonly<
-    Record<
-      string,
-      GeoMetadataValue
-    >
-  >;
+  metadata: Readonly<Record<string, GeoMetadataValue>>;
 }
 
 export interface GeoRouteMatrixInput {
@@ -156,22 +130,13 @@ export interface GeoRouteMatrixEntry {
 export interface GeoRouteMatrixResult {
   provider: GeoProviderId;
 
-  entries: ReadonlyArray<
-    GeoRouteMatrixEntry
-  >;
+  entries: ReadonlyArray<GeoRouteMatrixEntry>;
 
   calculatedAt: string;
 
-  expiresAt:
-    | string
-    | null;
+  expiresAt: string | null;
 
-  metadata: Readonly<
-    Record<
-      string,
-      GeoMetadataValue
-    >
-  >;
+  metadata: Readonly<Record<string, GeoMetadataValue>>;
 }
 
 export interface GeoMapMatchInput {
@@ -181,24 +146,15 @@ export interface GeoMapMatchInput {
 export interface GeoMapMatchResult {
   provider: GeoProviderId;
 
-  geometry:
-    | string
-    | GeoJsonLineString;
+  geometry: string | GeoJsonLineString;
 
-  geometryFormat:
-    GeoRouteGeometryFormat;
+  geometryFormat: GeoRouteGeometryFormat;
 
-  mapCompatibility:
-    GeoMapCompatibility;
+  mapCompatibility: GeoMapCompatibility;
 
   calculatedAt: string;
 
-  metadata: Readonly<
-    Record<
-      string,
-      GeoMetadataValue
-    >
-  >;
+  metadata: Readonly<Record<string, GeoMetadataValue>>;
 }
 
 export interface GeoSearchInput {
@@ -221,13 +177,9 @@ export interface GeoCandidate {
 
   text: string;
 
-  mainText:
-    | string
-    | null;
+  mainText: string | null;
 
-  secondaryText:
-    | string
-    | null;
+  secondaryText: string | null;
 }
 
 export interface GeoResolveInput {

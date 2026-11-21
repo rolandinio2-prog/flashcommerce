@@ -10,28 +10,17 @@ import type {
   GeoSearchInput,
 } from './geo.types';
 
-import type {
-  GeocodingProvider,
-} from './geocoding-provider';
+import type { GeocodingProvider } from './geocoding-provider';
 
-import {
-  GoogleGeoProvider,
-} from './google-geo.provider';
+import { GoogleGeoProvider } from './google-geo.provider';
 
 @Injectable()
-export class GoogleGeocodingProvider
-  implements GeocodingProvider {
-  readonly name:
-    GeoProviderId =
-      'GOOGLE';
+export class GoogleGeocodingProvider implements GeocodingProvider {
+  readonly name: GeoProviderId = 'GOOGLE';
 
-  constructor(
-    private readonly googleGeoProvider:
-      GoogleGeoProvider,
-  ) {}
+  constructor(private readonly googleGeoProvider: GoogleGeoProvider) {}
 
-  getCapabilities():
-    GeoCapabilities {
+  getCapabilities(): GeoCapabilities {
     return {
       routing: {
         route: false,
@@ -49,111 +38,73 @@ export class GoogleGeocodingProvider
     };
   }
 
-  async search(
-    input: GeoSearchInput,
-  ): Promise<GeoCandidate[]> {
-    const suggestions =
-      await this.googleGeoProvider
-        .autocomplete({
-          input:
-            input.query,
+  async search(input: GeoSearchInput): Promise<GeoCandidate[]> {
+    const suggestions = await this.googleGeoProvider.autocomplete({
+      input: input.query,
 
-          languageCode:
-            input.languageCode,
+      languageCode: input.languageCode,
 
-          regionCode:
-            input.regionCode,
+      regionCode: input.regionCode,
 
-          countryCode:
-            input.countryCode,
+      countryCode: input.countryCode,
 
-          locationBias:
-            input.locationBias,
-        });
+      locationBias: input.locationBias,
+    });
 
-    return suggestions.map(
-      (suggestion) => ({
-        provider:
-          this.name,
+    return suggestions.map((suggestion) => ({
+      provider: this.name,
 
-        candidateId:
-          suggestion.placeId,
+      candidateId: suggestion.placeId,
 
-        text:
-          suggestion.text,
+      text: suggestion.text,
 
-        mainText:
-          suggestion.mainText,
+      mainText: suggestion.mainText,
 
-        secondaryText:
-          suggestion.secondaryText,
-      }),
-    );
+      secondaryText: suggestion.secondaryText,
+    }));
   }
 
-  async resolve(
-    input: GeoResolveInput,
-  ): Promise<GeoLocation> {
-    const resolved =
-      await this.googleGeoProvider
-        .resolvePlace({
-          placeId:
-            input.candidateId,
+  async resolve(input: GeoResolveInput): Promise<GeoLocation> {
+    const resolved = await this.googleGeoProvider.resolvePlace({
+      placeId: input.candidateId,
 
-          languageCode:
-            input.languageCode,
+      languageCode: input.languageCode,
 
-          regionCode:
-            input.regionCode,
-        });
+      regionCode: input.regionCode,
+    });
 
     return {
-      provider:
-        this.name,
+      provider: this.name,
 
-      candidateId:
-        resolved.placeId,
+      candidateId: resolved.placeId,
 
-      formattedAddress:
-        resolved.formattedAddress,
+      formattedAddress: resolved.formattedAddress,
 
-      location:
-        resolved.location,
+      location: resolved.location,
     };
   }
 
-  async geocode(
-    input: GeoForwardGeocodeInput,
-  ): Promise<GeoLocation | null> {
-    const resolved =
-      await this.googleGeoProvider
-        .geocodeAddress({
-          address:
-            input.address,
+  async geocode(input: GeoForwardGeocodeInput): Promise<GeoLocation | null> {
+    const resolved = await this.googleGeoProvider.geocodeAddress({
+      address: input.address,
 
-          languageCode:
-            input.languageCode,
+      languageCode: input.languageCode,
 
-          regionCode:
-            input.regionCode,
-        });
+      regionCode: input.regionCode,
+    });
 
     if (!resolved) {
       return null;
     }
 
     return {
-      provider:
-        this.name,
+      provider: this.name,
 
-      candidateId:
-        resolved.placeId,
+      candidateId: resolved.placeId,
 
-      formattedAddress:
-        resolved.formattedAddress,
+      formattedAddress: resolved.formattedAddress,
 
-      location:
-        resolved.location,
+      location: resolved.location,
     };
   }
 }

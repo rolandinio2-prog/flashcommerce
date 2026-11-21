@@ -28,9 +28,7 @@ import {
 //   tiene una table_session OPEN.
 // =========================================================
 
-export type TableAvailability =
-  | 'AVAILABLE'
-  | 'OCCUPIED';
+export type TableAvailability = 'AVAILABLE' | 'OCCUPIED';
 
 interface DiningTableRow {
   id: string;
@@ -51,12 +49,7 @@ interface DiningTableRow {
 // =========================================================
 
 export type OperationalOrderStatus =
-  | 'PENDING'
-  | 'CONFIRMED'
-  | 'PREPARING'
-  | 'READY'
-  | 'COMPLETED'
-  | 'CANCELLED';
+  'PENDING' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'COMPLETED' | 'CANCELLED';
 
 export interface OperationalTableOrder {
   id: string;
@@ -329,9 +322,7 @@ interface TableContextOrderRow {
 
 @Injectable()
 export class TablesService {
-  constructor(
-    private readonly databaseService: DatabaseService,
-  ) {}
+  constructor(private readonly databaseService: DatabaseService) {}
 
   // =======================================================
   // 1. LISTAR MESAS DE UNA SUCURSAL
@@ -348,20 +339,17 @@ export class TablesService {
     // explícitamente desde la sesión/contexto Flash.
     // -----------------------------------------------------
 
-    const tenant =
-      tenantCode?.trim() || 'POLLO001';
+    const tenant = tenantCode?.trim() || 'POLLO001';
 
-    const branch =
-      branchCode?.trim() || 'SUC001';
+    const branch = branchCode?.trim() || 'SUC001';
 
     // -----------------------------------------------------
     // Una mesa activa se considera OCCUPIED solamente
     // cuando tiene una table_session OPEN.
     // -----------------------------------------------------
 
-    const result =
-      await this.databaseService.query<DiningTableRow>(
-        `
+    const result = await this.databaseService.query<DiningTableRow>(
+      `
           select
             dt.id::text,
             dt.code,
@@ -399,55 +387,35 @@ export class TablesService {
             dt.sort_order,
             dt.name
         `,
-        [
-          tenant,
-          branch,
-        ],
-      );
+      [tenant, branch],
+    );
 
     return {
       tenant,
       branch,
 
-      total:
-        result.rows.length,
+      total: result.rows.length,
 
-      available:
-        result.rows.filter(
-          (table) =>
-            table.availability ===
-            'AVAILABLE',
-        ).length,
+      available: result.rows.filter(
+        (table) => table.availability === 'AVAILABLE',
+      ).length,
 
-      occupied:
-        result.rows.filter(
-          (table) =>
-            table.availability ===
-            'OCCUPIED',
-        ).length,
+      occupied: result.rows.filter((table) => table.availability === 'OCCUPIED')
+        .length,
 
-      tables:
-        result.rows.map(
-          (table) => ({
-            id:
-              table.id,
+      tables: result.rows.map((table) => ({
+        id: table.id,
 
-            code:
-              table.code,
+        code: table.code,
 
-            name:
-              table.name,
+        name: table.name,
 
-            capacity:
-              table.capacity,
+        capacity: table.capacity,
 
-            zone:
-              table.zone,
+        zone: table.zone,
 
-            availability:
-              table.availability,
-          }),
-        ),
+        availability: table.availability,
+      })),
     };
   }
 
@@ -458,9 +426,8 @@ export class TablesService {
       return null;
     }
 
-    const result =
-      await this.databaseService.query<TableContextOrderRow>(
-        `
+    const result = await this.databaseService.query<TableContextOrderRow>(
+      `
           select
             o.order_number::text,
             o.tracking_token::text,
@@ -487,8 +454,8 @@ export class TablesService {
 
           limit 1
         `,
-        [tableSessionId],
-      );
+      [tableSessionId],
+    );
 
     const order = result.rows[0];
 
@@ -512,15 +479,12 @@ export class TablesService {
     tenantCode: string | undefined,
     branchCode: string | undefined,
   ): Promise<OperationalTableQrContextResponse> {
-    const tenant =
-      tenantCode?.trim() || 'POLLO001';
+    const tenant = tenantCode?.trim() || 'POLLO001';
 
-    const branch =
-      branchCode?.trim() || 'SUC001';
+    const branch = branchCode?.trim() || 'SUC001';
 
-    const result =
-      await this.databaseService.query<TableContextRow>(
-        `
+    const result = await this.databaseService.query<TableContextRow>(
+      `
           select
             dt.id::text,
             dt.code,
@@ -558,12 +522,8 @@ export class TablesService {
 
           limit 1
         `,
-        [
-          tableId,
-          tenant,
-          branch,
-        ],
-      );
+      [tableId, tenant, branch],
+    );
 
     const table = result.rows[0];
 
@@ -573,12 +533,11 @@ export class TablesService {
       );
     }
 
-    const permanentQrToken =
-      (
-        table as TableContextRow & {
-          public_qr_token: string;
-        }
-      ).public_qr_token;
+    const permanentQrToken = (
+      table as TableContextRow & {
+        public_qr_token: string;
+      }
+    ).public_qr_token;
 
     if (!permanentQrToken) {
       throw new NotFoundException(
@@ -586,32 +545,26 @@ export class TablesService {
       );
     }
 
-    const currentOrder =
-      await this.getTableContextCurrentOrder(
-        table.table_session_id,
-      );
+    const currentOrder = await this.getTableContextCurrentOrder(
+      table.table_session_id,
+    );
 
     const context = issueTableContext({
       tenant,
       branch,
       tableId: table.id,
       tableCode: table.code,
-      tableSessionId:
-        table.table_session_id ?? undefined,
+      tableSessionId: table.table_session_id ?? undefined,
     });
 
     const customerUrl = new URL(
-      process.env.FLASH_CUSTOMER_URL?.trim() ||
-        'http://localhost:3000',
+      process.env.FLASH_CUSTOMER_URL?.trim() || 'http://localhost:3000',
     );
 
     customerUrl.pathname = '/';
     customerUrl.search = '';
     customerUrl.hash = '';
-    customerUrl.searchParams.set(
-      'tableContext',
-      context.token,
-    );
+    customerUrl.searchParams.set('tableContext', context.token);
 
     const permanentUrl = new URL(
       process.env.FLASH_TABLE_QR_PUBLIC_BASE_URL?.trim() ||
@@ -653,18 +606,14 @@ export class TablesService {
   async resolvePermanentTableQr(
     publicQrToken: string,
   ): Promise<PermanentTableQrResolutionResponse> {
-    const normalizedToken =
-      publicQrToken.trim();
+    const normalizedToken = publicQrToken.trim();
 
     if (!normalizedToken) {
-      throw new BadRequestException(
-        'public table QR token is required',
-      );
+      throw new BadRequestException('public table QR token is required');
     }
 
-    const result =
-      await this.databaseService.query<PermanentQrDiningTableRow>(
-        `
+    const result = await this.databaseService.query<PermanentQrDiningTableRow>(
+      `
           select
             dt.id::text,
             dt.code,
@@ -686,11 +635,10 @@ export class TablesService {
 
           limit 1
         `,
-        [normalizedToken],
-      );
+      [normalizedToken],
+    );
 
-    const table =
-      result.rows[0];
+    const table = result.rows[0];
 
     if (!table) {
       throw new NotFoundException(
@@ -703,26 +651,21 @@ export class TablesService {
     // session. Order checkout may reuse the OPEN session via
     // the validated table context, while the printed QR stays
     // valid across future table sessions.
-    const context =
-      issueTableContext({
-        tenant: table.tenant_code,
-        branch: table.branch_code,
-        tableId: table.id,
-        tableCode: table.code,
-      });
+    const context = issueTableContext({
+      tenant: table.tenant_code,
+      branch: table.branch_code,
+      tableId: table.id,
+      tableCode: table.code,
+    });
 
     const customerUrl = new URL(
-      process.env.FLASH_CUSTOMER_URL?.trim() ||
-        'http://localhost:3000',
+      process.env.FLASH_CUSTOMER_URL?.trim() || 'http://localhost:3000',
     );
 
     customerUrl.pathname = '/';
     customerUrl.search = '';
     customerUrl.hash = '';
-    customerUrl.searchParams.set(
-      'tableContext',
-      context.token,
-    );
+    customerUrl.searchParams.set('tableContext', context.token);
 
     return {
       tenant: table.tenant_code,
@@ -744,13 +687,10 @@ export class TablesService {
     const normalizedToken = token?.trim();
 
     if (!normalizedToken) {
-      throw new BadRequestException(
-        'table context token is required',
-      );
+      throw new BadRequestException('table context token is required');
     }
 
-    const payload =
-      verifyTableContextToken(normalizedToken);
+    const payload = verifyTableContextToken(normalizedToken);
 
     if (!payload) {
       throw new BadRequestException(
@@ -758,9 +698,8 @@ export class TablesService {
       );
     }
 
-    const result =
-      await this.databaseService.query<TableContextRow>(
-        `
+    const result = await this.databaseService.query<TableContextRow>(
+      `
           select
             dt.id::text,
             dt.code,
@@ -798,13 +737,8 @@ export class TablesService {
 
           limit 1
         `,
-        [
-          payload.tableId,
-          payload.tableCode,
-          payload.tenant,
-          payload.branch,
-        ],
-      );
+      [payload.tableId, payload.tableCode, payload.tenant, payload.branch],
+    );
 
     const table = result.rows[0];
 
@@ -818,9 +752,7 @@ export class TablesService {
       payload.tableSessionId &&
       table.table_session_id !== payload.tableSessionId
     ) {
-      throw new BadRequestException(
-        'table context session is no longer open',
-      );
+      throw new BadRequestException('table context session is no longer open');
     }
 
     const sessionBound =
@@ -832,8 +764,7 @@ export class TablesService {
       branch: payload.branch,
       timeZone: TABLE_CONTEXT_TIME_ZONE,
       validOn: payload.validOn,
-      expiresAt:
-        getTableContextExpiration(payload.validOn),
+      expiresAt: getTableContextExpiration(payload.validOn),
       sessionBound,
       table: {
         id: table.id,
@@ -858,15 +789,12 @@ export class TablesService {
     tenantCode: string | undefined,
     branchCode: string | undefined,
   ): Promise<OperationalTablesResponse> {
-    const tenant =
-      tenantCode?.trim() || 'POLLO001';
+    const tenant = tenantCode?.trim() || 'POLLO001';
 
-    const branch =
-      branchCode?.trim() || 'SUC001';
+    const branch = branchCode?.trim() || 'SUC001';
 
-    const result =
-      await this.databaseService.query<OperationalDiningTableRow>(
-        `
+    const result = await this.databaseService.query<OperationalDiningTableRow>(
+      `
           select
             dt.id::text,
             dt.code,
@@ -962,77 +890,52 @@ export class TablesService {
             dt.sort_order,
             dt.name
         `,
-        [
-          tenant,
-          branch,
-        ],
-      );
+      [tenant, branch],
+    );
 
     return {
       tenant,
       branch,
 
-      total:
-        result.rows.length,
+      total: result.rows.length,
 
-      available:
-        result.rows.filter(
-          (table) =>
-            table.availability ===
-            'AVAILABLE',
-        ).length,
+      available: result.rows.filter(
+        (table) => table.availability === 'AVAILABLE',
+      ).length,
 
-      occupied:
-        result.rows.filter(
-          (table) =>
-            table.availability ===
-            'OCCUPIED',
-        ).length,
+      occupied: result.rows.filter((table) => table.availability === 'OCCUPIED')
+        .length,
 
-      tables:
-        result.rows.map(
-          (table) => ({
-            id:
-              table.id,
+      tables: result.rows.map((table) => ({
+        id: table.id,
 
-            code:
-              table.code,
+        code: table.code,
 
-            name:
-              table.name,
+        name: table.name,
 
-            capacity:
-              table.capacity,
+        capacity: table.capacity,
 
-            zone:
-              table.zone,
+        zone: table.zone,
 
-            availability:
-              table.availability,
+        availability: table.availability,
 
-            tableSession:
-              table.table_session_id === null ||
-              table.table_session_status === null ||
-              table.table_session_opened_at === null
-                ? null
-                : {
-                    id:
-                      table.table_session_id,
+        tableSession:
+          table.table_session_id === null ||
+          table.table_session_status === null ||
+          table.table_session_opened_at === null
+            ? null
+            : {
+                id: table.table_session_id,
 
-                    status:
-                      table.table_session_status,
+                status: table.table_session_status,
 
-                    openedAt:
-                      table.table_session_opened_at,
+                openedAt: table.table_session_opened_at,
 
-                    occupiedMinutes:
-                      table.occupied_minutes ?? 0,
-                  },
+                occupiedMinutes: table.occupied_minutes ?? 0,
+              },
 
-            orders:
-              table.orders,
-          }),
-        ),
+        orders: table.orders,
+      })),
     };
   }
 
@@ -1049,17 +952,13 @@ export class TablesService {
     tenantCode: string | undefined,
     branchCode: string | undefined,
   ): Promise<OccupyOperationalTableResponse> {
-    const tenant =
-      tenantCode?.trim() || 'POLLO001';
+    const tenant = tenantCode?.trim() || 'POLLO001';
 
-    const branch =
-      branchCode?.trim() || 'SUC001';
+    const branch = branchCode?.trim() || 'SUC001';
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const tableResult =
-          await client.query<LockedOperationalDiningTableRow>(
-            `
+    return this.databaseService.withTransaction(async (client) => {
+      const tableResult = await client.query<LockedOperationalDiningTableRow>(
+        `
               select
                 dt.id::text,
                 dt.tenant_id::text,
@@ -1085,33 +984,28 @@ export class TablesService {
 
               for update of dt
             `,
-            [
-              tableId,
-              tenant,
-              branch,
-            ],
-          );
+        [tableId, tenant, branch],
+      );
 
-        const table =
-          tableResult.rows[0];
+      const table = tableResult.rows[0];
 
-        if (!table) {
-          throw new NotFoundException(
-            'Table not found for this tenant and branch',
-          );
-        }
+      if (!table) {
+        throw new NotFoundException(
+          'Table not found for this tenant and branch',
+        );
+      }
 
-        await lockBranchAdmission(client, table.tenant_id, table.branch_id, ['DINE_IN']);
+      await lockBranchAdmission(client, table.tenant_id, table.branch_id, [
+        'DINE_IN',
+      ]);
 
-        if (!table.is_active) {
-          throw new ConflictException(
-            `${table.name} is not active`,
-          );
-        }
+      if (!table.is_active) {
+        throw new ConflictException(`${table.name} is not active`);
+      }
 
-        const openSessionResult =
-          await client.query<ExistingOperationalTableSessionRow>(
-            `
+      const openSessionResult =
+        await client.query<ExistingOperationalTableSessionRow>(
+          `
               select
                 ts.id::text
 
@@ -1124,22 +1018,16 @@ export class TablesService {
 
               limit 1
             `,
-            [
-              table.tenant_id,
-              table.branch_id,
-              table.id,
-            ],
-          );
+          [table.tenant_id, table.branch_id, table.id],
+        );
 
-        if (openSessionResult.rows[0]) {
-          throw new ConflictException(
-            `${table.name} is already occupied`,
-          );
-        }
+      if (openSessionResult.rows[0]) {
+        throw new ConflictException(`${table.name} is already occupied`);
+      }
 
-        const sessionResult =
-          await client.query<CreatedOperationalTableSessionRow>(
-            `
+      const sessionResult =
+        await client.query<CreatedOperationalTableSessionRow>(
+          `
               insert into public.table_sessions (
                 tenant_id,
                 branch_id,
@@ -1157,55 +1045,40 @@ export class TablesService {
                 status,
                 opened_at
             `,
-            [
-              table.tenant_id,
-              table.branch_id,
-              table.id,
-            ],
-          );
+          [table.tenant_id, table.branch_id, table.id],
+        );
 
-        const session =
-          sessionResult.rows[0];
+      const session = sessionResult.rows[0];
 
-        const response: OccupyOperationalTableResponse = {
-          tenant,
-          branch,
+      const response: OccupyOperationalTableResponse = {
+        tenant,
+        branch,
 
-          table: {
-            id:
-              table.id,
+        table: {
+          id: table.id,
 
-            code:
-              table.code,
+          code: table.code,
 
-            name:
-              table.name,
+          name: table.name,
 
-            capacity:
-              table.capacity,
+          capacity: table.capacity,
 
-            zone:
-              table.zone,
+          zone: table.zone,
 
-            availability:
-              'OCCUPIED',
-          },
+          availability: 'OCCUPIED',
+        },
 
-          tableSession: {
-            id:
-              session.id,
+        tableSession: {
+          id: session.id,
 
-            status:
-              session.status,
+          status: session.status,
 
-            openedAt:
-              session.opened_at,
-          },
-        };
+          openedAt: session.opened_at,
+        },
+      };
 
-        return response;
-      },
-    );
+      return response;
+    });
   }
 
   // =======================================================
@@ -1221,17 +1094,14 @@ export class TablesService {
     tenantCode: string | undefined,
     branchCode: string | undefined,
   ): Promise<CloseOperationalTableSessionResponse> {
-    const tenant =
-      tenantCode?.trim() || 'POLLO001';
+    const tenant = tenantCode?.trim() || 'POLLO001';
 
-    const branch =
-      branchCode?.trim() || 'SUC001';
+    const branch = branchCode?.trim() || 'SUC001';
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const sessionResult =
-          await client.query<LockedOperationalTableSessionRow>(
-            `
+    return this.databaseService.withTransaction(async (client) => {
+      const sessionResult =
+        await client.query<LockedOperationalTableSessionRow>(
+          `
               select
                 ts.id::text,
                 ts.status,
@@ -1262,31 +1132,23 @@ export class TablesService {
 
               for update of dt, ts
             `,
-            [
-              sessionId,
-              tenant,
-              branch,
-            ],
-          );
+          [sessionId, tenant, branch],
+        );
 
-        const session =
-          sessionResult.rows[0];
+      const session = sessionResult.rows[0];
 
-        if (!session) {
-          throw new NotFoundException(
-            'Table session not found for this tenant and branch',
-          );
-        }
+      if (!session) {
+        throw new NotFoundException(
+          'Table session not found for this tenant and branch',
+        );
+      }
 
-        if (session.status !== 'OPEN') {
-          throw new ConflictException(
-            'Table session is already closed',
-          );
-        }
+      if (session.status !== 'OPEN') {
+        throw new ConflictException('Table session is already closed');
+      }
 
-        const updateResult =
-          await client.query<ClosedOperationalTableSessionRow>(
-            `
+      const updateResult = await client.query<ClosedOperationalTableSessionRow>(
+        `
               update public.table_sessions
 
               set
@@ -1305,61 +1167,44 @@ export class TablesService {
                 closed_at,
                 updated_at
             `,
-            [
-              session.tenant_id,
-              session.branch_id,
-              session.id,
-            ],
-          );
+        [session.tenant_id, session.branch_id, session.id],
+      );
 
-        const closedSession =
-          updateResult.rows[0];
+      const closedSession = updateResult.rows[0];
 
-        if (!closedSession) {
-          throw new ConflictException(
-            'Table session is no longer open',
-          );
-        }
+      if (!closedSession) {
+        throw new ConflictException('Table session is no longer open');
+      }
 
-        const response: CloseOperationalTableSessionResponse = {
-          tenant,
-          branch,
+      const response: CloseOperationalTableSessionResponse = {
+        tenant,
+        branch,
 
-          table: {
-            id:
-              session.table_id,
+        table: {
+          id: session.table_id,
 
-            code:
-              session.table_code,
+          code: session.table_code,
 
-            name:
-              session.table_name,
+          name: session.table_name,
 
-            availability:
-              'AVAILABLE',
-          },
+          availability: 'AVAILABLE',
+        },
 
-          tableSession: {
-            id:
-              closedSession.id,
+        tableSession: {
+          id: closedSession.id,
 
-            previousStatus:
-              'OPEN',
+          previousStatus: 'OPEN',
 
-            status:
-              closedSession.status,
+          status: closedSession.status,
 
-            closedAt:
-              closedSession.closed_at,
+          closedAt: closedSession.closed_at,
 
-            updatedAt:
-              closedSession.updated_at,
-          },
-        };
+          updatedAt: closedSession.updated_at,
+        },
+      };
 
-        return response;
-      },
-    );
+      return response;
+    });
   }
 
   // =======================================================
@@ -1377,17 +1222,13 @@ export class TablesService {
     tenantCode: string | undefined,
     branchCode: string | undefined,
   ): Promise<AssignOrderTableResponse> {
-    const tenant =
-      tenantCode?.trim() || 'POLLO001';
+    const tenant = tenantCode?.trim() || 'POLLO001';
 
-    const branch =
-      branchCode?.trim() || 'SUC001';
+    const branch = branchCode?.trim() || 'SUC001';
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const orderResult =
-          await client.query<AssignableOrderRow>(
-            `
+    return this.databaseService.withTransaction(async (client) => {
+      const orderResult = await client.query<AssignableOrderRow>(
+        `
               select
                 o.id::text,
                 o.order_number::text,
@@ -1413,43 +1254,35 @@ export class TablesService {
 
               for update of o
             `,
-            [
-              orderId,
-              tenant,
-              branch,
-            ],
-          );
+        [orderId, tenant, branch],
+      );
 
-        const order =
-          orderResult.rows[0];
+      const order = orderResult.rows[0];
 
-        if (!order) {
-          throw new NotFoundException(
-            'Order not found for this tenant and branch',
-          );
-        }
+      if (!order) {
+        throw new NotFoundException(
+          'Order not found for this tenant and branch',
+        );
+      }
 
-        if (order.order_type !== 'DINE_IN') {
-          throw new ConflictException(
-            'Only DINE_IN orders can be assigned to a table',
-          );
-        }
+      if (order.order_type !== 'DINE_IN') {
+        throw new ConflictException(
+          'Only DINE_IN orders can be assigned to a table',
+        );
+      }
 
-        if (order.status === 'CANCELLED') {
-          throw new ConflictException(
-            'A cancelled order cannot be assigned to a table',
-          );
-        }
+      if (order.status === 'CANCELLED') {
+        throw new ConflictException(
+          'A cancelled order cannot be assigned to a table',
+        );
+      }
 
-        if (order.table_session_id !== null) {
-          throw new ConflictException(
-            'Order already has a table session',
-          );
-        }
+      if (order.table_session_id !== null) {
+        throw new ConflictException('Order already has a table session');
+      }
 
-        const tableResult =
-          await client.query<LockedOperationalDiningTableRow>(
-            `
+      const tableResult = await client.query<LockedOperationalDiningTableRow>(
+        `
               select
                 dt.id::text,
                 dt.tenant_id::text,
@@ -1468,31 +1301,24 @@ export class TablesService {
 
               for update of dt
             `,
-            [
-              tableId,
-              order.tenant_id,
-              order.branch_id,
-            ],
-          );
+        [tableId, order.tenant_id, order.branch_id],
+      );
 
-        const table =
-          tableResult.rows[0];
+      const table = tableResult.rows[0];
 
-        if (!table) {
-          throw new NotFoundException(
-            'Table not found for this tenant and branch',
-          );
-        }
+      if (!table) {
+        throw new NotFoundException(
+          'Table not found for this tenant and branch',
+        );
+      }
 
-        if (!table.is_active) {
-          throw new ConflictException(
-            `${table.name} is not active`,
-          );
-        }
+      if (!table.is_active) {
+        throw new ConflictException(`${table.name} is not active`);
+      }
 
-        const openSessionResult =
-          await client.query<AssignableOpenTableSessionRow>(
-            `
+      const openSessionResult =
+        await client.query<AssignableOpenTableSessionRow>(
+          `
               select
                 ts.id::text,
                 ts.status,
@@ -1507,23 +1333,17 @@ export class TablesService {
 
               limit 1
             `,
-            [
-              order.tenant_id,
-              order.branch_id,
-              table.id,
-            ],
-          );
+          [order.tenant_id, order.branch_id, table.id],
+        );
 
-        let session =
-          openSessionResult.rows[0];
+      let session = openSessionResult.rows[0];
 
-        let sessionCreated =
-          false;
+      let sessionCreated = false;
 
-        if (!session) {
-          const sessionResult =
-            await client.query<CreatedOperationalTableSessionRow>(
-              `
+      if (!session) {
+        const sessionResult =
+          await client.query<CreatedOperationalTableSessionRow>(
+            `
                 insert into public.table_sessions (
                   tenant_id,
                   branch_id,
@@ -1541,23 +1361,16 @@ export class TablesService {
                   status,
                   opened_at
               `,
-              [
-                order.tenant_id,
-                order.branch_id,
-                table.id,
-              ],
-            );
+            [order.tenant_id, order.branch_id, table.id],
+          );
 
-          session =
-            sessionResult.rows[0];
+        session = sessionResult.rows[0];
 
-          sessionCreated =
-            true;
-        }
+        sessionCreated = true;
+      }
 
-        const updateResult =
-          await client.query<UpdatedOrderTableRow>(
-            `
+      const updateResult = await client.query<UpdatedOrderTableRow>(
+        `
               update public.orders
 
               set
@@ -1578,88 +1391,63 @@ export class TablesService {
                 table_code,
                 table_session_id::text
             `,
-            [
-              order.tenant_id,
-              order.branch_id,
-              order.id,
-              table.code,
-              session.id,
-            ],
-          );
+        [order.tenant_id, order.branch_id, order.id, table.code, session.id],
+      );
 
-        const updatedOrder =
-          updateResult.rows[0];
+      const updatedOrder = updateResult.rows[0];
 
-        if (!updatedOrder) {
-          throw new ConflictException(
-            'Order table assignment changed during this operation',
-          );
-        }
+      if (!updatedOrder) {
+        throw new ConflictException(
+          'Order table assignment changed during this operation',
+        );
+      }
 
-        const response: AssignOrderTableResponse = {
-          tenant,
-          branch,
+      const response: AssignOrderTableResponse = {
+        tenant,
+        branch,
 
-          order: {
-            id:
-              updatedOrder.id,
+        order: {
+          id: updatedOrder.id,
 
-            orderNumber:
-              updatedOrder.order_number,
+          orderNumber: updatedOrder.order_number,
 
-            orderType:
-              updatedOrder.order_type,
+          orderType: updatedOrder.order_type,
 
-            status:
-              updatedOrder.status,
+          status: updatedOrder.status,
 
-            tableCode:
-              updatedOrder.table_code,
+          tableCode: updatedOrder.table_code,
 
-            tableSessionId:
-              updatedOrder.table_session_id,
+          tableSessionId: updatedOrder.table_session_id,
 
-            changed:
-              true,
-          },
+          changed: true,
+        },
 
-          table: {
-            id:
-              table.id,
+        table: {
+          id: table.id,
 
-            code:
-              table.code,
+          code: table.code,
 
-            name:
-              table.name,
+          name: table.name,
 
-            capacity:
-              table.capacity,
+          capacity: table.capacity,
 
-            zone:
-              table.zone,
+          zone: table.zone,
 
-            availability:
-              'OCCUPIED',
-          },
+          availability: 'OCCUPIED',
+        },
 
-          tableSession: {
-            id:
-              session.id,
+        tableSession: {
+          id: session.id,
 
-            status:
-              session.status,
+          status: session.status,
 
-            openedAt:
-              session.opened_at,
+          openedAt: session.opened_at,
 
-            created:
-              sessionCreated,
-          },
-        };
+          created: sessionCreated,
+        },
+      };
 
-        return response;
-      },
-    );
+      return response;
+    });
   }
 }

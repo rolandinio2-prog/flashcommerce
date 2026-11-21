@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  Injectable,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../database/database.service';
 import { DeliveryService } from './delivery.service';
@@ -48,21 +45,12 @@ export class DeliveryMonitorService {
     routeDeliveryId?: string,
     includeRoutes = true,
   ): Promise<DeliveryMonitorSnapshot> {
-    const tenant =
-      this.requireCode(
-        tenantCode,
-        'tenant',
-      );
+    const tenant = this.requireCode(tenantCode, 'tenant');
 
-    const branch =
-      this.requireCode(
-        branchCode,
-        'branch',
-      );
+    const branch = this.requireCode(branchCode, 'branch');
 
-    const result =
-      await this.databaseService.query<DeliveryMonitorRow>(
-        `
+    const result = await this.databaseService.query<DeliveryMonitorRow>(
+      `
           select
             d.id::text
               as delivery_id,
@@ -260,31 +248,21 @@ export class DeliveryMonitorService {
             d.updated_at desc,
             d.id
         `,
-        [
-          tenant,
-          branch,
-          routeDeliveryId ?? null,
-        ],
-      );
+      [tenant, branch, routeDeliveryId ?? null],
+    );
 
     return {
-      snapshotVersion:
-        'delivery-monitor.snapshot.v1',
+      snapshotVersion: 'delivery-monitor.snapshot.v1',
 
-      generatedAt:
-        new Date().toISOString(),
+      generatedAt: new Date().toISOString(),
 
-      items:
-        includeRoutes ? await this.mapRowsWithRoutes(
-          result.rows,
-          (
-            await this.resolveScope(
-              tenantCode,
-              branchCode,
-            )
-          ).tenantId,
-          routeDeliveryId,
-        ) : result.rows.map((row) => this.mapRow(row)),
+      items: includeRoutes
+        ? await this.mapRowsWithRoutes(
+            result.rows,
+            (await this.resolveScope(tenantCode, branchCode)).tenantId,
+            routeDeliveryId,
+          )
+        : result.rows.map((row) => this.mapRow(row)),
     };
   }
 
@@ -297,21 +275,12 @@ export class DeliveryMonitorService {
     tenantCode: string;
     branchCode: string;
   }> {
-    const tenant =
-      this.requireCode(
-        tenantCode,
-        'tenant',
-      );
+    const tenant = this.requireCode(tenantCode, 'tenant');
 
-    const branch =
-      this.requireCode(
-        branchCode,
-        'branch',
-      );
+    const branch = this.requireCode(branchCode, 'branch');
 
-    const result =
-      await this.databaseService.query<DeliveryMonitorScopeRow>(
-        `
+    const result = await this.databaseService.query<DeliveryMonitorScopeRow>(
+      `
           select
             t.id::text
               as tenant_id,
@@ -335,33 +304,23 @@ export class DeliveryMonitorService {
 
           limit 2
         `,
-        [
-          tenant,
-          branch,
-        ],
-      );
+      [tenant, branch],
+    );
 
     if (result.rows.length !== 1) {
-      throw new BadRequestException(
-        'Delivery monitor scope was not found',
-      );
+      throw new BadRequestException('Delivery monitor scope was not found');
     }
 
-    const row =
-      result.rows[0];
+    const row = result.rows[0];
 
     return {
-      tenantId:
-        row.tenant_id,
+      tenantId: row.tenant_id,
 
-      branchId:
-        row.branch_id,
+      branchId: row.branch_id,
 
-      tenantCode:
-        row.tenant_code,
+      tenantCode: row.tenant_code,
 
-      branchCode:
-        row.branch_code,
+      branchCode: row.branch_code,
     };
   }
   async getActiveDeliveryRoute(
@@ -369,18 +328,15 @@ export class DeliveryMonitorService {
     branchCode: string | undefined,
     deliveryId: string,
   ): Promise<DeliveryMonitorSnapshot['items'][number]['route']> {
-    const snapshot =
-      await this.getActiveSnapshot(
-        tenantCode,
-        branchCode,
-        deliveryId,
-      );
+    const snapshot = await this.getActiveSnapshot(
+      tenantCode,
+      branchCode,
+      deliveryId,
+    );
 
     return (
-      snapshot.items.find(
-        (item) =>
-          item.deliveryId === deliveryId,
-      )?.route ?? null
+      snapshot.items.find((item) => item.deliveryId === deliveryId)?.route ??
+      null
     );
   }
 
@@ -389,16 +345,12 @@ export class DeliveryMonitorService {
     tenantId: string,
     routeDeliveryId?: string,
   ): Promise<DeliveryMonitorSnapshot['items']> {
-    const items = rows.map(
-      (row) => this.mapRow(row),
-    );
+    const items = rows.map((row) => this.mapRow(row));
 
     const targetIndexes = items
       .map((item, index) => ({ item, index }))
       .filter(
-        ({ item }) =>
-          !routeDeliveryId ||
-          item.deliveryId === routeDeliveryId,
+        ({ item }) => !routeDeliveryId || item.deliveryId === routeDeliveryId,
       )
       .map(({ index }) => index);
 
@@ -413,8 +365,7 @@ export class DeliveryMonitorService {
           return;
         }
 
-        const targetIndex =
-          targetIndexes[cursorIndex];
+        const targetIndex = targetIndexes[cursorIndex];
 
         if (targetIndex === undefined) {
           continue;
@@ -426,11 +377,7 @@ export class DeliveryMonitorService {
           continue;
         }
 
-        const route =
-          await this.buildMonitorRouteFailOpen(
-            item,
-            tenantId,
-          );
+        const route = await this.buildMonitorRouteFailOpen(item, tenantId);
 
         items[targetIndex] = {
           ...item,
@@ -439,18 +386,11 @@ export class DeliveryMonitorService {
       }
     };
 
-    const workerCount = Math.min(
-      2,
-      targetIndexes.length,
-    );
+    const workerCount = Math.min(2, targetIndexes.length);
 
     const workers: Array<Promise<void>> = [];
 
-    for (
-      let index = 0;
-      index < workerCount;
-      index += 1
-    ) {
+    for (let index = 0; index < workerCount; index += 1) {
       workers.push(worker());
     }
 
@@ -471,22 +411,17 @@ export class DeliveryMonitorService {
       const calculatedAt = new Date();
 
       const route =
-        await this.deliveryService
-          .getCachedDeliveryMapRouteForMonitor(
-            tenantId,
-            {
-              latitude:
-                item.latestLocation.latitude,
-              longitude:
-                item.latestLocation.longitude,
-            },
-            {
-              latitude:
-                item.destinationLocation.latitude,
-              longitude:
-                item.destinationLocation.longitude,
-            },
-          );
+        await this.deliveryService.getCachedDeliveryMapRouteForMonitor(
+          tenantId,
+          {
+            latitude: item.latestLocation.latitude,
+            longitude: item.latestLocation.longitude,
+          },
+          {
+            latitude: item.destinationLocation.latitude,
+            longitude: item.destinationLocation.longitude,
+          },
+        );
 
       if (
         !Number.isFinite(route.distanceMeters) ||
@@ -497,18 +432,16 @@ export class DeliveryMonitorService {
         return null;
       }
 
-      const coordinates =
-        this.decodeGoogleEncodedPolyline(
-          route.encodedPolyline,
-        );
+      const coordinates = this.decodeGoogleEncodedPolyline(
+        route.encodedPolyline,
+      );
 
       if (coordinates.length < 2) {
         return null;
       }
 
       const etaAt = new Date(
-        calculatedAt.getTime() +
-          route.durationSeconds * 1000,
+        calculatedAt.getTime() + route.durationSeconds * 1000,
       );
 
       return {
@@ -525,17 +458,14 @@ export class DeliveryMonitorService {
         distanceM: route.distanceMeters,
         durationS: route.durationSeconds,
         etaAt: etaAt.toISOString(),
-        calculatedAt:
-          calculatedAt.toISOString(),
+        calculatedAt: calculatedAt.toISOString(),
       };
     } catch {
       return null;
     }
   }
 
-  private decodeGoogleEncodedPolyline(
-    encodedPolyline: string,
-  ): number[][] {
+  private decodeGoogleEncodedPolyline(encodedPolyline: string): number[][] {
     if (!encodedPolyline) {
       return [];
     }
@@ -552,51 +482,35 @@ export class DeliveryMonitorService {
 
       do {
         if (index >= encodedPolyline.length) {
-          throw new Error(
-            'Invalid encoded polyline',
-          );
+          throw new Error('Invalid encoded polyline');
         }
 
-        byte =
-          encodedPolyline.charCodeAt(index) -
-          63;
+        byte = encodedPolyline.charCodeAt(index) - 63;
         index += 1;
         result |= (byte & 0x1f) << shift;
         shift += 5;
       } while (byte >= 0x20);
 
-      return (result & 1) !== 0
-        ? ~(result >> 1)
-        : result >> 1;
+      return (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
     };
 
     while (index < encodedPolyline.length) {
       latitude += decodeValue();
       longitude += decodeValue();
 
-      const latitudeValue =
-        latitude / 100000;
-      const longitudeValue =
-        longitude / 100000;
+      const latitudeValue = latitude / 100000;
+      const longitudeValue = longitude / 100000;
 
-      if (
-        !Number.isFinite(latitudeValue) ||
-        !Number.isFinite(longitudeValue)
-      ) {
+      if (!Number.isFinite(latitudeValue) || !Number.isFinite(longitudeValue)) {
         return [];
       }
 
-      coordinates.push([
-        longitudeValue,
-        latitudeValue,
-      ]);
+      coordinates.push([longitudeValue, latitudeValue]);
     }
 
     return coordinates;
   }
-  private mapRow(
-    row: DeliveryMonitorRow,
-  ): DeliveryMonitorItem {
+  private mapRow(row: DeliveryMonitorRow): DeliveryMonitorItem {
     const hasLocation =
       row.location_latitude !== null &&
       row.location_longitude !== null &&
@@ -604,61 +518,45 @@ export class DeliveryMonitorService {
 
     return {
       assignmentKey: row.assignment_id,
-      assignedAt: row.assigned_at ? new Date(row.assigned_at).toISOString() : null,
-      deliveryId:
-        row.delivery_id,
+      assignedAt: row.assigned_at
+        ? new Date(row.assigned_at).toISOString()
+        : null,
+      deliveryId: row.delivery_id,
 
-      orderId:
-        row.order_id,
+      orderId: row.order_id,
 
-      orderNumber:
-        row.order_number,
+      orderNumber: row.order_number,
 
-      deliveryStatus:
-        row.delivery_status,
+      deliveryStatus: row.delivery_status,
 
-      driverId:
-        row.driver_id,
+      driverId: row.driver_id,
 
-      driverCode:
-        row.driver_code,
+      driverCode: row.driver_code,
 
-      latestLocation:
-        hasLocation
-          ? {
-              latitude:
-                Number(row.location_latitude),
+      latestLocation: hasLocation
+        ? {
+            latitude: Number(row.location_latitude),
 
-              longitude:
-                Number(row.location_longitude),
+            longitude: Number(row.location_longitude),
 
-              accuracyM:
-                row.accuracy_meters === null
-                  ? null
-                  : Number(row.accuracy_meters),
+            accuracyM:
+              row.accuracy_meters === null ? null : Number(row.accuracy_meters),
 
-              capturedAt:
-                new Date(
-                  row.captured_at as string | Date,
-                ).toISOString(),
-            }
-          : null,
+            capturedAt: new Date(
+              row.captured_at as string | Date,
+            ).toISOString(),
+          }
+        : null,
 
-      trail:
-        this.mapTrailPoints(
-          row.location_trail,
-        ),
+      trail: this.mapTrailPoints(row.location_trail),
 
       destinationLocation: {
-        latitude:
-          Number(row.destination_latitude),
+        latitude: Number(row.destination_latitude),
 
-        longitude:
-          Number(row.destination_longitude),
+        longitude: Number(row.destination_longitude),
       },
 
-      route:
-        null,
+      route: null,
     };
   }
 
@@ -669,99 +567,58 @@ export class DeliveryMonitorService {
       return [];
     }
 
-    return value.flatMap(
-      (candidate) => {
-        if (
-          !candidate ||
-          typeof candidate !== 'object'
-        ) {
-          return [];
-        }
+    return value.flatMap((candidate) => {
+      if (!candidate || typeof candidate !== 'object') {
+        return [];
+      }
 
-        const record =
-          candidate as Record<
-            string,
-            unknown
-          >;
+      const record = candidate as Record<string, unknown>;
 
-        const latitude =
-          Number(
-            record.latitude,
-          );
+      const latitude = Number(record.latitude);
 
-        const longitude =
-          Number(
-            record.longitude,
-          );
+      const longitude = Number(record.longitude);
 
-        const capturedAt =
-          typeof record.capturedAt ===
-            'string'
-            ? record.capturedAt
-            : '';
+      const capturedAt =
+        typeof record.capturedAt === 'string' ? record.capturedAt : '';
 
-        const capturedAtMs =
-          new Date(
-            capturedAt,
-          ).getTime();
+      const capturedAtMs = new Date(capturedAt).getTime();
 
-        if (
-          !Number.isFinite(latitude) ||
-          !Number.isFinite(longitude) ||
-          !Number.isFinite(capturedAtMs)
-        ) {
-          return [];
-        }
+      if (
+        !Number.isFinite(latitude) ||
+        !Number.isFinite(longitude) ||
+        !Number.isFinite(capturedAtMs)
+      ) {
+        return [];
+      }
 
-        const accuracyValue =
-          record.accuracyM;
+      const accuracyValue = record.accuracyM;
 
-        const accuracyM =
-          accuracyValue === null ||
-          accuracyValue === undefined
-            ? null
-            : Number(
-                accuracyValue,
-              );
+      const accuracyM =
+        accuracyValue === null || accuracyValue === undefined
+          ? null
+          : Number(accuracyValue);
 
-        return [
-          {
-            latitude,
-            longitude,
-            accuracyM:
-              accuracyM !== null &&
-              Number.isFinite(
-                accuracyM,
-              )
-                ? accuracyM
-                : null,
-            capturedAt:
-              new Date(
-                capturedAtMs,
-              ).toISOString(),
-          },
-        ];
-      },
-    );
+      return [
+        {
+          latitude,
+          longitude,
+          accuracyM:
+            accuracyM !== null && Number.isFinite(accuracyM) ? accuracyM : null,
+          capturedAt: new Date(capturedAtMs).toISOString(),
+        },
+      ];
+    });
   }
 
-  private requireCode(
-    value: string | undefined,
-    field: string,
-  ): string {
-    const normalized =
-      value?.trim();
+  private requireCode(value: string | undefined, field: string): string {
+    const normalized = value?.trim();
 
     if (!normalized) {
-      throw new BadRequestException(
-        `${field} is required`,
-      );
+      throw new BadRequestException(`${field} is required`);
     }
 
     if (normalized.length > 80) {
-      throw new BadRequestException(
-        `${field} is too long`,
-      );
+      throw new BadRequestException(`${field} is too long`);
     }
 
     return normalized;

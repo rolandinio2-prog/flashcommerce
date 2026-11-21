@@ -20,17 +20,14 @@ import type { DriverAuthenticatedRequest } from './driver-access.guard';
 @Controller('driver')
 @UseGuards(DriverAccessGuard)
 export class DriverController {
-  constructor(
-    private readonly deliveryService: DeliveryService,
-  ) {}
+  constructor(private readonly deliveryService: DeliveryService) {}
 
   @Get('me')
   getAuthenticatedDriver(
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireIdentity(request);
+    const identity = this.requireIdentity(request);
 
     return {
       authenticated: true,
@@ -44,19 +41,16 @@ export class DriverController {
         id: identity.driverId,
         code: identity.driverCode,
 
-        displayName:
-          identity.displayName,
+        displayName: identity.displayName,
 
-        phone:
-          identity.phone,
+        phone: identity.phone,
 
         status: 'ACTIVE',
         passwordChangeRequired: identity.passwordChangeRequired,
       },
 
       credential: {
-        expiresAt:
-          identity.expiresAt,
+        expiresAt: identity.expiresAt,
       },
     };
   }
@@ -66,8 +60,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.getDriverActiveDeliveries(
       identity.tenantId,
@@ -83,8 +76,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.getDriverDeliveryMapRoute(
       deliveryId,
@@ -100,8 +92,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.acceptDriverDelivery(
       deliveryId,
@@ -119,8 +110,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.pickupDriverDelivery(
       deliveryId,
@@ -137,8 +127,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.startDriverDelivery(
       deliveryId,
@@ -155,8 +144,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.arriveDriverDelivery(
       deliveryId,
@@ -186,8 +174,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.recordDriverLocation(
       deliveryId,
@@ -242,8 +229,7 @@ export class DriverController {
     @Req()
     request: DriverAuthenticatedRequest,
   ) {
-    const identity =
-      this.requireOperationalIdentity(request);
+    const identity = this.requireOperationalIdentity(request);
 
     return this.deliveryService.deliverDriverDelivery(
       deliveryId,
@@ -253,30 +239,21 @@ export class DriverController {
       body?.pod,
     );
   }
-  private requireOperationalIdentity(
-    request: DriverAuthenticatedRequest,
-  ) {
+  private requireOperationalIdentity(request: DriverAuthenticatedRequest) {
     const identity = this.requireIdentity(request);
 
     if (identity.passwordChangeRequired) {
-      throw new ForbiddenException(
-        'Driver password change is required',
-      );
+      throw new ForbiddenException('Driver password change is required');
     }
 
     return identity;
   }
 
-  private requireIdentity(
-    request: DriverAuthenticatedRequest,
-  ) {
-    const identity =
-      request.driverAuth;
+  private requireIdentity(request: DriverAuthenticatedRequest) {
+    const identity = request.driverAuth;
 
     if (!identity) {
-      throw new UnauthorizedException(
-        'Invalid driver credentials',
-      );
+      throw new UnauthorizedException('Invalid driver credentials');
     }
 
     return identity;

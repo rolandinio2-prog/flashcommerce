@@ -49,10 +49,9 @@ export class StaffDeliveryHandoffService {
       throw new BadRequestException('Invalid deliveryId');
     }
 
-    return this.databaseService.withTransaction(
-      async (client) => {
-        const deliveryResult = await client.query<HandoffDeliveryRow>(
-          `
+    return this.databaseService.withTransaction(async (client) => {
+      const deliveryResult = await client.query<HandoffDeliveryRow>(
+        `
             select
               d.id::text,
               d.tenant_id::text,
@@ -76,31 +75,26 @@ export class StaffDeliveryHandoffService {
 
             for update of d, o
           `,
-          [
-            staff.tenantId,
-            staff.branchId,
-            deliveryId,
-          ],
+        [staff.tenantId, staff.branchId, deliveryId],
+      );
+
+      const delivery = deliveryResult.rows[0];
+
+      if (!delivery) {
+        throw new NotFoundException('Delivery not found');
+      }
+
+      if (
+        delivery.delivery_status !== 'ACCEPTED' &&
+        delivery.delivery_status !== 'PICKED_UP'
+      ) {
+        throw new ConflictException(
+          `Delivery cannot be handed off from ${delivery.delivery_status}`,
         );
+      }
 
-        const delivery = deliveryResult.rows[0];
-
-        if (!delivery) {
-          throw new NotFoundException('Delivery not found');
-        }
-
-        if (
-          delivery.delivery_status !== 'ACCEPTED' &&
-          delivery.delivery_status !== 'PICKED_UP'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot be handed off from ${delivery.delivery_status}`,
-          );
-        }
-
-        const assignmentResult =
-          await client.query<HandoffAssignmentRow>(
-            `
+      const assignmentResult = await client.query<HandoffAssignmentRow>(
+        `
               select
                 a.id::text,
                 a.assignment_number,
@@ -136,71 +130,61 @@ export class StaffDeliveryHandoffService {
 
               for update of a
             `,
-            [
-              delivery.tenant_id,
-              delivery.branch_id,
-              delivery.id,
-            ],
-          );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        const assignment = assignmentResult.rows[0];
+      const assignment = assignmentResult.rows[0];
 
-        if (!assignment) {
-          throw new ConflictException(
-            'Driver must accept the delivery before handoff',
-          );
-        }
+      if (!assignment) {
+        throw new ConflictException(
+          'Driver must accept the delivery before handoff',
+        );
+      }
 
-        if (
-          delivery.delivery_status === 'PICKED_UP'
-        ) {
-          return {
-            changed: false,
-            action: 'UNCHANGED',
-            delivery: {
-              id: delivery.id,
-              status: 'PICKED_UP',
+      if (delivery.delivery_status === 'PICKED_UP') {
+        return {
+          changed: false,
+          action: 'UNCHANGED',
+          delivery: {
+            id: delivery.id,
+            status: 'PICKED_UP',
+          },
+          order: {
+            id: delivery.order_id,
+            number: delivery.order_number,
+            status: delivery.order_status,
+          },
+          assignment: {
+            id: assignment.id,
+            number: assignment.assignment_number,
+            status: assignment.status,
+            acceptedAt: assignment.accepted_at,
+            driver: {
+              id: assignment.driver_id,
+              code: assignment.driver_code,
+              name: assignment.driver_name,
             },
-            order: {
-              id: delivery.order_id,
-              number: delivery.order_number,
-              status: delivery.order_status,
-            },
-            assignment: {
-              id: assignment.id,
-              number: assignment.assignment_number,
-              status: assignment.status,
-              acceptedAt: assignment.accepted_at,
-              driver: {
-                id: assignment.driver_id,
-                code: assignment.driver_code,
-                name: assignment.driver_name,
-              },
-            },
-          };
-        }
+          },
+        };
+      }
 
-        if (
-          delivery.order_status !== 'READY'
-        ) {
-          throw new ConflictException(
-            `Delivery cannot be handed off while order is ${delivery.order_status}`,
-          );
-        }
+      if (delivery.order_status !== 'READY') {
+        throw new ConflictException(
+          `Delivery cannot be handed off while order is ${delivery.order_status}`,
+        );
+      }
 
-        if (!assignment.accepted_at) {
-          throw new ConflictException(
-            'Driver acceptance timestamp is missing',
-          );
-        }
+      if (!assignment.accepted_at) {
+        throw new ConflictException('Driver acceptance timestamp is missing');
+      }
 
-        await assertDeliveryQrPaid(client, delivery);
+      await assertDeliveryQrPaid(client, delivery);
 
-        const deliveryUpdate = await client.query<{
-          id: string;
-          updated_at: string | Date;
-        }>(
-          `
+      const deliveryUpdate = await client.query<{
+        id: string;
+        updated_at: string | Date;
+      }>(
+        `
             update public.deliveries
 
             set
@@ -216,23 +200,17 @@ export class StaffDeliveryHandoffService {
               id::text,
               updated_at
           `,
-          [
-            delivery.tenant_id,
-            delivery.branch_id,
-            delivery.id,
-          ],
-        );
+        [delivery.tenant_id, delivery.branch_id, delivery.id],
+      );
 
-        if (deliveryUpdate.rowCount !== 1) {
-          throw new ConflictException(
-            'Delivery status changed concurrently',
-          );
-        }
+      if (deliveryUpdate.rowCount !== 1) {
+        throw new ConflictException('Delivery status changed concurrently');
+      }
 
-        const eventResult = await client.query<{
-          created_at: string | Date;
-        }>(
-          `
+      const eventResult = await client.query<{
+        created_at: string | Date;
+      }>(
+        `
             insert into public.delivery_events (
               tenant_id,
               branch_id,
@@ -268,62 +246,59 @@ export class StaffDeliveryHandoffService {
             )
             returning created_at
           `,
-          [
-            delivery.tenant_id,
-            delivery.branch_id,
-            delivery.id,
-            staff.userCode,
-            assignment.driver_id,
-            assignment.driver_code,
-            assignment.driver_name,
-            assignment.id,
-            assignment.assignment_number,
-            delivery.order_id,
-            delivery.order_number,
-            staff.userId,
-            staff.displayName,
-          ],
-        );
+        [
+          delivery.tenant_id,
+          delivery.branch_id,
+          delivery.id,
+          staff.userCode,
+          assignment.driver_id,
+          assignment.driver_code,
+          assignment.driver_name,
+          assignment.id,
+          assignment.assignment_number,
+          delivery.order_id,
+          delivery.order_number,
+          staff.userId,
+          staff.displayName,
+        ],
+      );
 
-        const handoffEvent = eventResult.rows[0];
+      const handoffEvent = eventResult.rows[0];
 
-        if (!handoffEvent) {
-          throw new ConflictException(
-            'Delivery handoff event was not created',
-          );
-        }
+      if (!handoffEvent) {
+        throw new ConflictException('Delivery handoff event was not created');
+      }
 
-        return {
-          changed: true,
-          action: 'PICKED_UP',
-          handoffBy: {
-            userId: staff.userId,
-            userCode: staff.userCode,
-            displayName: staff.displayName,
+      return {
+        changed: true,
+        action: 'PICKED_UP',
+        handoffBy: {
+          userId: staff.userId,
+          userCode: staff.userCode,
+          displayName: staff.displayName,
+        },
+        delivery: {
+          id: delivery.id,
+          status: 'PICKED_UP',
+          pickedUpAt: handoffEvent.created_at,
+        },
+        order: {
+          id: delivery.order_id,
+          number: delivery.order_number,
+          status: delivery.order_status,
+        },
+        assignment: {
+          id: assignment.id,
+          number: assignment.assignment_number,
+          status: assignment.status,
+          acceptedAt: assignment.accepted_at,
+          driver: {
+            id: assignment.driver_id,
+            code: assignment.driver_code,
+            name: assignment.driver_name,
           },
-          delivery: {
-            id: delivery.id,
-            status: 'PICKED_UP',
-            pickedUpAt: handoffEvent.created_at,
-          },
-          order: {
-            id: delivery.order_id,
-            number: delivery.order_number,
-            status: delivery.order_status,
-          },
-          assignment: {
-            id: assignment.id,
-            number: assignment.assignment_number,
-            status: assignment.status,
-            acceptedAt: assignment.accepted_at,
-            driver: {
-              id: assignment.driver_id,
-              code: assignment.driver_code,
-              name: assignment.driver_name,
-            },
-          },
-        };
-      },
-    );
+        },
+      };
+    });
   }
 }

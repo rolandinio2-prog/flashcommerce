@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  Logger,
-} from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type {
   GeoUsageMeasureInput,
@@ -14,42 +11,31 @@ interface GeoUsageWriteRow {
 
 @Injectable()
 export class GeoUsageMeterService {
-  private readonly logger =
-    new Logger(GeoUsageMeterService.name);
+  private readonly logger = new Logger(GeoUsageMeterService.name);
 
-  constructor(
-    private readonly databaseService: DatabaseService,
-  ) {}
+  constructor(private readonly databaseService: DatabaseService) {}
 
   async measure<T>(
     input: GeoUsageMeasureInput,
     action: () => Promise<T>,
   ): Promise<T> {
-    const startedAt =
-      Date.now();
+    const startedAt = Date.now();
 
     try {
       return await action();
     } finally {
       await this.record({
         ...input,
-        latencyMs:
-          Date.now() - startedAt,
+        latencyMs: Date.now() - startedAt,
       });
     }
   }
 
-  async record(
-    input: GeoUsageRecordInput,
-  ): Promise<void> {
+  async record(input: GeoUsageRecordInput): Promise<void> {
     try {
-      const tenantId =
-        input.tenantId?.trim() || null;
+      const tenantId = input.tenantId?.trim() || null;
 
-      const tenantCode =
-        input.tenantCode
-          ?.trim()
-          .toUpperCase() || null;
+      const tenantCode = input.tenantCode?.trim().toUpperCase() || null;
 
       if (!tenantId && !tenantCode) {
         this.logger.warn(
@@ -59,24 +45,15 @@ export class GeoUsageMeterService {
         return;
       }
 
-      const latencyMs =
-        Math.max(
-          0,
-          Math.round(
-            Number.isFinite(input.latencyMs)
-              ? input.latencyMs
-              : 0,
-          ),
-        );
+      const latencyMs = Math.max(
+        0,
+        Math.round(Number.isFinite(input.latencyMs) ? input.latencyMs : 0),
+      );
 
-      const cacheHitCount =
-        input.cacheHit
-          ? 1
-          : 0;
+      const cacheHitCount = input.cacheHit ? 1 : 0;
 
-      const result =
-        await this.databaseService.query<GeoUsageWriteRow>(
-          `
+      const result = await this.databaseService.query<GeoUsageWriteRow>(
+        `
             insert into public.geo_provider_usage (
               usage_date,
               tenant_id,
@@ -125,15 +102,15 @@ export class GeoUsageMeterService {
             returning
               id::text
           `,
-          [
-            tenantId,
-            tenantCode,
-            input.provider,
-            input.operation,
-            cacheHitCount,
-            latencyMs,
-          ],
-        );
+        [
+          tenantId,
+          tenantCode,
+          input.provider,
+          input.operation,
+          cacheHitCount,
+          latencyMs,
+        ],
+      );
 
       if (!result.rows[0]) {
         this.logger.warn(
@@ -141,9 +118,7 @@ export class GeoUsageMeterService {
         );
       }
     } catch {
-      this.logger.warn(
-        'Geo usage metering failed',
-      );
+      this.logger.warn('Geo usage metering failed');
     }
   }
 }

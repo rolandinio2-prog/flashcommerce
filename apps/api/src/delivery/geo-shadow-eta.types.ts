@@ -3,10 +3,7 @@ export type GeoShadowEtaProviderId = 'GOOGLE' | 'VALHALLA';
 export type GeoShadowEtaSampleStatus = 'SUCCESS' | 'FAILED';
 
 export type GeoShadowEtaComparisonStatus =
-  | 'COMPARABLE'
-  | 'REFERENCE_FAILED'
-  | 'SHADOW_FAILED'
-  | 'BOTH_FAILED';
+  'COMPARABLE' | 'REFERENCE_FAILED' | 'SHADOW_FAILED' | 'BOTH_FAILED';
 
 export interface GeoShadowEtaSuccessSample {
   provider: GeoShadowEtaProviderId;
@@ -26,8 +23,7 @@ export interface GeoShadowEtaFailedSample {
 }
 
 export type GeoShadowEtaSample =
-  | GeoShadowEtaSuccessSample
-  | GeoShadowEtaFailedSample;
+  GeoShadowEtaSuccessSample | GeoShadowEtaFailedSample;
 
 export interface GeoShadowEtaComparisonInput {
   reference: GeoShadowEtaSample;

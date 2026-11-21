@@ -4,10 +4,7 @@ import { DatabaseService } from '../database/database.service';
 import type { StaffSessionPrincipal } from './staff.types';
 
 type TrackingDeliveryStatus =
-  | 'PICKED_UP'
-  | 'EN_ROUTE'
-  | 'ARRIVED'
-  | 'DELIVERED';
+  'PICKED_UP' | 'EN_ROUTE' | 'ARRIVED' | 'DELIVERED';
 
 interface TrackingDeliveryRow {
   delivery_id: string;
@@ -65,11 +62,7 @@ export class StaffTrackingService {
       200,
     );
 
-    const delivered = await this.queryDeliveries(
-      staff,
-      ['DELIVERED'],
-      100,
-    );
+    const delivered = await this.queryDeliveries(staff, ['DELIVERED'], 100);
 
     return {
       tenant: {
@@ -99,9 +92,8 @@ export class StaffTrackingService {
     statuses: TrackingDeliveryStatus[],
     limit: number,
   ) {
-    const result =
-      await this.databaseService.query<TrackingDeliveryRow>(
-        `
+    const result = await this.databaseService.query<TrackingDeliveryRow>(
+      `
           select
             d.id::text as delivery_id,
             d.tracking_token::text as tracking_token,
@@ -246,13 +238,8 @@ export class StaffTrackingService {
 
           limit $4
         `,
-        [
-          staff.tenantId,
-          staff.branchId,
-          statuses,
-          limit,
-        ],
-      );
+      [staff.tenantId, staff.branchId, statuses, limit],
+    );
 
     return result.rows.map((row) => ({
       id: row.delivery_id,
@@ -321,8 +308,7 @@ export class StaffTrackingService {
           : null,
 
       podVerified:
-        row.delivery_status === 'DELIVERED' &&
-        row.delivered_at !== null,
+        row.delivery_status === 'DELIVERED' && row.delivered_at !== null,
 
       createdAt: row.delivery_created_at,
       updatedAt: row.delivery_updated_at,

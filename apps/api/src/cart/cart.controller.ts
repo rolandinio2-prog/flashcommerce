@@ -32,10 +32,7 @@ export class CartController {
 
   @Post()
   createCart(@Body() body: CreateCartBody) {
-    return this.cartService.createCart(
-      body?.tenantCode,
-      body?.branchCode,
-    );
+    return this.cartService.createCart(body?.tenantCode, body?.branchCode);
   }
 
   @Post(':cartToken/items')
@@ -52,36 +49,30 @@ export class CartController {
   }
 
   @Get(':cartToken')
-  getCart(
-    @Param('cartToken') cartToken: string,
-  ) {
+  getCart(@Param('cartToken') cartToken: string) {
     return this.cartService.getCart(cartToken);
   }
 
   @Patch(':cartToken/items/:productId')
-    updateItem(
+  updateItem(
     @Param('cartToken') cartToken: string,
     @Param('productId') productId: string,
     @Body() body: UpdateCartItemBody,
-    ) {
+  ) {
     return this.cartService.updateItem(
-        cartToken,
-        productId,
-        body?.quantity,
+      cartToken,
+      productId,
+      body?.quantity,
       body?.riceChoice,
     );
-    }
+  }
 
   @Delete(':cartToken/items/:productId')
-    removeItem(
+  removeItem(
     @Param('cartToken') cartToken: string,
     @Param('productId') productId: string,
     @Query('riceChoice') rice: string | undefined,
-    ) {
-    return this.cartService.removeItem(
-        cartToken,
-        productId,
-        rice,
-    );
-}
+  ) {
+    return this.cartService.removeItem(cartToken, productId, rice);
+  }
 }

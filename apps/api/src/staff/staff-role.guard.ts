@@ -7,10 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 
 import { STAFF_ROLES_KEY } from './staff-roles.decorator';
-import {
-  StaffAuthenticatedRequest,
-  StaffRole,
-} from './staff.types';
+import { StaffAuthenticatedRequest, StaffRole } from './staff.types';
 
 @Injectable()
 export class StaffRoleGuard implements CanActivate {
