@@ -19,4 +19,4 @@ Producción usaba los secretos demo públicos de Supabase. `production/rotate-jw
 secreto de clientes (tenant Realtime + `SUPABASE_JWT_SECRET` del API), `API_JWT_SECRET` y `METRICS_JWT_SECRET` de Realtime,
 re-firmó el token anon de Kong y eliminó el mapeo `sb_secret` demo → service_role.
 Los secretos nuevos solo existen en el servidor (`/etc/fastpay/prod-runtime-v1/*.env`, copia en
-`/var/backups/fastpay/PROD_JWT_ROTATION_20261121_V1/`, root 600). Pendiente: `DB_ENC_KEY` de Realtime sigue en valor demo.
+`/var/backups/fastpay/PROD_JWT_ROTATION_20261121_V1/`, root 600). `DB_ENC_KEY` de Realtime rotado el mismo día con `production/rotate-realtime-dbenckey-20261121.py` (Realtime activo: `fastpay-realtime-prod-v3`).
