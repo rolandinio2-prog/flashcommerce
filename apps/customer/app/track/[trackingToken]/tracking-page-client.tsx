@@ -1,4 +1,5 @@
 "use client";
+import { useResetOnChange } from '../../../lib/use-reset-on-change';
 import {createMonitorSnapshotSync} from '../../ops/delivery-monitor/delivery-monitor-snapshot-sync';
 
 
@@ -158,7 +159,7 @@ export default function TrackingPageClient({trackingToken}:{trackingToken:string
   const [mapExpanded,setMapExpanded]=useState(false);
   const expandButton=useRef<HTMLButtonElement>(null);
   const scrollBeforeExpand=useRef(0);
-  useEffect(()=>{setMapExpanded(false);},[trackingToken]);
+  useResetOnChange([trackingToken],()=>setMapExpanded(false));
   useEffect(()=>{
     if(!mapExpanded)return;
     const previousOverflow=document.body.style.overflow;
@@ -175,10 +176,12 @@ export default function TrackingPageClient({trackingToken}:{trackingToken:string
   const [fcG4114DeliveryLocationError,setFcG4114DeliveryLocationError]=useState<string|null>(null);
 
 
+  useResetOnChange([trackingToken], () => {
+    setOrder(null); setOpenPanel(null); setFcG4114DeliveryLocation(null); setFcG4114DeliveryLocationError(null);
+    if (isUuid(trackingToken)) { setLoading(true); setError(null); } else { setError('El enlace de seguimiento no es válido.'); setLoading(false); }
+  });
   useEffect(() => {
-    setOrder(null); setLoading(true); setError(null); setOpenPanel(null);
-    setFcG4114DeliveryLocation(null); setFcG4114DeliveryLocationError(null);
-    if (!isUuid(trackingToken)) { setError('El enlace de seguimiento no es válido.'); setLoading(false); return; }
+    if (!isUuid(trackingToken)) return;
     const sync = createMonitorSnapshotSync<CreatedOrder>({
       fetchSnapshot: signal => getOrderTracking(trackingToken,signal),
       onSnapshot: next => { setOrder(next); setError(null); setLoading(false); if (next.status === 'COMPLETED' || next.status === 'CANCELLED') sync.dispose(); },

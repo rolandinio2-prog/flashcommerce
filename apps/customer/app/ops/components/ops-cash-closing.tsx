@@ -1,4 +1,5 @@
 "use client";
+import { useResetOnChange } from '../../../lib/use-reset-on-change';
 import { useEffect, useRef, useState } from 'react';
 import { apiRequest } from '../../../lib/flash-api';
 type Closing={expectedCash:string;countedCash:string;difference:string;note:string;actorCode:string;closedAt:string; snapshot:{totals:{currency:string;category:string;amount:string;count:string}[]}};
@@ -9,10 +10,10 @@ export default function OpsCashClosing({date,summaryRevision}:{date:string;summa
   const [error,setError]=useState(''),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false);
   const [confirm,setConfirm]=useState(false),[revision,setRevision]=useState(0);
   const lock=useRef(false);
+  useResetOnChange([date,summaryRevision,revision],()=>{setData(null);setConfirm(false);setError('');setCounted('');setNote('');if(date)setLoading(true);});
   useEffect(()=>{
-    let active=true;setData(null);setConfirm(false);setError('');setCounted('');setNote('');
+    let active=true;
     if(!date)return;
-    setLoading(true);
     apiRequest<Preview>(endpoint+'?date='+encodeURIComponent(date),{cache:'no-store'}).then(value=>{if(active)setData(value);})
       .catch(()=>{if(active)setError('No se pudo consultar el cierre. Actualiza antes de continuar.');})
       .finally(()=>{if(active)setLoading(false);});

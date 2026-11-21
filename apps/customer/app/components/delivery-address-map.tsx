@@ -1,5 +1,6 @@
 'use client';
 
+import { useResetOnChange } from '../../lib/use-reset-on-change';
 import { useEffect, useRef, useState } from 'react';
 import { loadTrackingMapLibraries } from '../../lib/google-maps';
 import { containMapGestures } from '../../lib/map-gestures';
@@ -38,13 +39,13 @@ export default function DeliveryAddressMap({ tenantCode, branchCode, initial, on
     return () => { dialog.close(); document.body.style.overflow = previousOverflow; previousFocus?.focus(); };
   }, []);
 
+  useResetOnChange([tenantCode, branchCode, initial], () => { setReady(false); setChosen(false); setError(null); });
   useEffect(() => {
     alive.current = true; completed.current = false; interacted.current = false;
     let disposed = false;
     const controller = new AbortController();
     const listeners: google.maps.MapsEventListener[] = [];
     let releaseGestures: (() => void) | undefined;
-    setReady(false); setChosen(false); setError(null);
     if (!gpsRequest.current) gpsRequest.current = new Promise(resolve => {
       if (!navigator.geolocation) { resolve(null); return; }
       try {
@@ -115,8 +116,8 @@ export default function DeliveryAddressMap({ tenantCode, branchCode, initial, on
     };
   }, [tenantCode, branchCode, initial]);
 
+  useResetOnChange([message, ready], () => setHintVisible(true));
   useEffect(() => {
-    setHintVisible(true);
     const timer = setTimeout(() => setHintVisible(false), 5000);
     return () => clearTimeout(timer);
   }, [message, ready]);

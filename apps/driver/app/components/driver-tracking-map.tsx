@@ -1,5 +1,6 @@
 "use client";
 
+import { useResetOnChange } from '../../lib/use-reset-on-change';
 import {useEffect, useRef, useState} from "react";
 import {loadDriverMapLibraries} from "../../lib/google-maps";
 import type {DriverJourney, DriverNavigation, DriverMapRoute, JourneyPoint} from "@/lib/flash-api";
@@ -28,10 +29,11 @@ export default function DriverTrackingMap({tenantCode,deliveryId,currentLocation
   const [map,setMap]=useState<google.maps.Map|null>(null);
   const [loadError,setLoadError]=useState<string|null>(null);
 
+  useResetOnChange([deliveryId,tenantCode],()=>setMap(null));
   useEffect(()=>{
     let cancelled=false;
     let instance: google.maps.Map|null=null;
-    setMap(null); fittedRef.current=false;
+    fittedRef.current=false;
     const releaseGestures=containerRef.current ? containMapGestures(containerRef.current) : () => {};
     void loadDriverMapLibraries(process.env.NEXT_PUBLIC_FLASH_GOOGLE_MAPS_API_KEY ?? "").then(({maps})=>{
       if(cancelled || !containerRef.current) return;

@@ -246,6 +246,7 @@ export function DriverSessionClient({
 
   useEffect(() => {
     if (!resumeDeliveryId || selectedDeliveryId !== resumeDeliveryId || !session || !token) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- consumes a one-shot resume request together with starting the geolocation watch (external system)
     setResumeDeliveryId(null);
     if (geolocationWatchIdRef.current === null) startTracking();
   }, [resumeDeliveryId, selectedDeliveryId, session, token]);

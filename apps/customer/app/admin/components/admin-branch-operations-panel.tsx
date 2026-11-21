@@ -1,4 +1,5 @@
 'use client';
+import { useResetOnChange } from '../../../lib/use-reset-on-change';
 import AdminProductLifecycle from './admin-product-lifecycle';
 import {useEffect,useRef,useState} from 'react';
 import {getBranchServices,saveBranchServices,getBranchCatalog,saveBranchCatalogProduct,
@@ -16,9 +17,9 @@ export default function AdminBranchOperationsPanel(){
  const [busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[uncertain,setUncertain]=useState(false);
  const [reload,setReload]=useState(0),flight=useRef(false),generation=useRef(0);
  const dirty=reason.length>0||!!selected||!!services&&JSON.stringify(services.states)!==JSON.stringify(draft);
+ useResetOnChange([reload],()=>{setLoading(true);setError('');setServices(null);setDraft(null);setProducts([]);setSelected(null);setReason('');});
  useEffect(()=>{
-  const id=++generation.current,controller=new AbortController();setLoading(true);setError('');
-  setServices(null);setDraft(null);setProducts([]);setSelected(null);setReason('');
+  const id=++generation.current,controller=new AbortController();
   Promise.all([getBranchServices(controller.signal),getBranchCatalog(controller.signal)]).then(([s,p])=>{
    if(id!==generation.current)return;setServices(s);setDraft({...s.states});setProducts(p.products);setUncertain(false);
   }).catch(()=>{if(id===generation.current&&!controller.signal.aborted)setError('No pudimos cargar la configuración. Verifica tu sesión de administrador.');})

@@ -12,6 +12,7 @@ export default function CheckoutDraftCard({tenant,branch,cartToken,ready,busy,co
   const last=useRef<string|null>(null), blocked=useRef(false);
   const data=JSON.stringify({form,items,cartToken});
   useEffect(()=>{
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- hydrates from localStorage after mount (browser-only external store; SSR-safe)
     try {setPending(parseDraft(window.localStorage.getItem(key),tenant,branch));}catch{setStatus('Este navegador no permite guardar el borrador.');}
     setLoaded(true);
     const changed=(event:StorageEvent)=>{if(event.key===key){blocked.current=true;setConflict(true);setStatus('El borrador cambió en otra ventana. Recarga para recuperar la versión más reciente.');}};
@@ -22,6 +23,7 @@ export default function CheckoutDraftCard({tenant,branch,cartToken,ready,busy,co
     if(!loaded||pending||blocked.current||!ready||busy||completed||!cartToken||items.length===0){last.current=null;return;}
     const draft:CheckoutDraft={version:1,tenant,branch,cartToken,updatedAt:Date.now(),form,items};
     const raw=JSON.stringify(draft);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reports the result of writing to localStorage (external system sync)
     if(!parseDraft(raw,tenant,branch)){setStatus('Revisa los datos: no se pudo guardar el borrador.');return;}
     try {window.localStorage.setItem(key,raw);last.current=raw;setStatus('Borrador guardado en este navegador');}
     catch{last.current=null;setStatus('No se pudo guardar en este navegador. Mantén esta ventana abierta.');}

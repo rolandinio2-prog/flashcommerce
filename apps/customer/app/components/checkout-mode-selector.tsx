@@ -1,5 +1,6 @@
 'use client';
 
+import { useResetOnChange } from '../../lib/use-reset-on-change';
 import { useEffect, useState } from 'react';
 import { getPublicBranchServices, type FlashOrderType, type BranchServiceKey } from '../../lib/flash-api';
 import styles from './order-design.module.css';
@@ -17,9 +18,9 @@ export default function CheckoutModeSelector({ tenant, branch, value, locked, bu
   onChange: (value: FlashOrderType) => void;
 }) {
   const [available,setAvailable]=useState<Record<BranchServiceKey,boolean>|null>(null);
+  useResetOnChange([tenant,branch],()=>setAvailable(null));
   useEffect(()=>{
     let stopped=false,timer:ReturnType<typeof setTimeout>;const controller=new AbortController();
-    setAvailable(null);
     const refresh=async()=>{try{const r=await getPublicBranchServices(tenant,branch,controller.signal);if(!stopped)setAvailable(r.available);}catch{if(!stopped)setAvailable(null);}finally{if(!stopped)timer=setTimeout(refresh,30000);}};
     void refresh();return()=>{stopped=true;controller.abort();clearTimeout(timer);};
   },[tenant,branch]);

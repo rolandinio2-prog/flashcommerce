@@ -14,10 +14,11 @@ export default function RemoteDraftCard(props:Props) {
  const [retryVersion,setRetryVersion]=useState(0);
  const access=useRef<DraftAccess|null>(null),local=useRef<CheckoutDraft|null>(null),incoming=useRef<string|null>(null);
  const mounted=useRef(false),flight=useRef(false),boot=useRef(false),lastAuthenticated=useRef(authenticated),latest=useRef(props);
- latest.current=props;
  const scopeKey=accessKey(tenant,branch),localKey=draftKey(tenant,branch);
  const snapshot=JSON.stringify({cartToken,form,items,authenticated});
- const currentSnapshot=useRef(snapshot);currentSnapshot.current=snapshot;
+ const currentSnapshot=useRef(snapshot);
+ // Sync latest props/snapshot before every other effect and event of this component.
+ useLayoutEffect(()=>{latest.current=props;currentSnapshot.current=snapshot;});
  function updateContinuity(secret:string|null){
    try{const next=continuityUrl(location.href,tenant,branch,secret);if(next!==null)history.replaceState(history.state,'',next);}catch{/* Browser may prohibit history updates; saving still works. */}
  }
@@ -27,6 +28,7 @@ export default function RemoteDraftCard(props:Props) {
    mounted.current=true;
    try{access.current=readAccess(localStorage,scopeKey);local.current=parseDraft(localStorage.getItem(localKey),tenant,branch);}catch{/* Storage is optional. */}
    const token=fragmentSecret(location.hash);if(token){incoming.current=token;updateContinuity(null);}
+   // eslint-disable-next-line react-hooks/set-state-in-effect -- marks hydration from localStorage/location.hash done (browser-only; SSR-safe)
    setLoaded(true);
    const changed=(event:StorageEvent)=>{if(event.key===scopeKey||event.key===localKey){setBlocked(true);setMessage('Tu pedido cambió en otra ventana. Recarga para revisar la versión más reciente.');}};
    window.addEventListener('storage',changed);
@@ -41,9 +43,10 @@ export default function RemoteDraftCard(props:Props) {
    setChoices([]);setBlocked(false);setSaved('');setLink('');setPhase('active');
    setMessage('Retomamos tu pedido automáticamente. Revisa el total y calcula nuevamente el envío.');
  }
+ // A completed order leaves nothing to resolve: show the card as active (adjusted during render).
+ if(loaded&&ready&&!busy&&completed&&phase!=='active')setPhase('active');
  useEffect(()=>{
-   if(!loaded||!ready||busy||flight.current)return;
-   if(completed){setPhase('active');return;}
+   if(!loaded||!ready||busy||flight.current||completed)return;
    // A login may discover an account draft only while there is no active cart.
    if(authenticated!==lastAuthenticated.current){lastAuthenticated.current=authenticated;if(authenticated&&!cartToken)boot.current=false;}
    if(boot.current)return;

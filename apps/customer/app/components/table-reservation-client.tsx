@@ -1,5 +1,6 @@
 "use client";
-import {useEffect,useMemo,useRef,useState} from "react";
+import { useResetOnChange } from '../../lib/use-reset-on-change';
+import {useEffect,useLayoutEffect,useMemo,useRef,useState} from "react";
 import {createTableReservation,getReservationAvailability,getTableReservationTracking,type ReservationAvailabilityResponse,type TableReservation} from "../../lib/flash-api";
 import CheckoutContact from "./checkout-contact";
 import {FlashApiError,getCustomerRecoveryProfile,registerCustomerRecovery,loginCustomerRecovery,updateCustomerRecoveryName,normalizeRecoveryContactPhone,recoveryAccessError,type CustomerRecoveryProfile} from "../../lib/flash-api";
@@ -28,6 +29,7 @@ export default function TableReservationClient({tenantCode,branchCode,timeZone,r
  const [active,setActive]=useState<TableReservation|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState("");
  const [uncertain,setUncertain]=useState(false);
  const dialog=useRef<HTMLDialogElement>(null),heading=useRef<HTMLHeadingElement>(null),flight=useRef(false),request=useRef(0),alive=useRef(true);
+ // eslint-disable-next-line react-hooks/set-state-in-effect -- initial slot uses the browser clock/localStorage after mount (avoids SSR hydration mismatch)
  useEffect(()=>{alive.current=true;const initial=localParts(new Date(Math.ceil((Date.now()+90*60000)/900000)*900000),timeZone);setDate(initial.date);setTime(initial.time);
  let disposed=false;let token:string|null=null;try{token=localStorage.getItem(storageKey);}catch{/* Optional browser storage. */}
  if(token)void getTableReservationTracking(token).then(r=>{if(!disposed&&r.tenant===tenantCode&&r.branch===branchCode)setActive(r.reservation);}).catch(()=>{/* Keep access on temporary network failure. */});
@@ -48,11 +50,13 @@ export default function TableReservationClient({tenantCode,branchCode,timeZone,r
  const contactSaved=!editingContact&&contactReady&&samePhone&&profile?.fullName===contactName&&!contactBusy&&!contactLoading&&!contactError;
  const contactEnabled=open&&step==="contact"&&!busy;
  const contactKey=JSON.stringify([tenantCode,name,phone,pin,contactMode,editingContact,open,step]);
- const contactVersion=useRef({key:contactKey,value:0});
- if(contactVersion.current.key!==contactKey)contactVersion.current={key:contactKey,value:contactVersion.current.value+1};
+ // Bumps whenever contact inputs change; an in-flight save compares it to drop stale responses.
+ const contactVersion=useRef(0);
+ useLayoutEffect(()=>{contactVersion.current++;},[contactKey]);
  const contactMessage=contactLoading?"Verificando tus datos guardados…":(contactMode==="register"||samePhone)&&!nameValid?"Completa tu nombre completo.":!phoneValid?"Ingresa un teléfono válido.":!contactReady?"Completa tu código de recuperación de 6 dígitos.":"Tus datos se guardarán automáticamente.";
+ useResetOnChange([open,tenantCode],()=>{if(open)setContactLoading(true);});
  useEffect(()=>{
-  if(!open)return;let disposed=false;setContactLoading(true);
+  if(!open)return;let disposed=false;
   void getCustomerRecoveryProfile(tenantCode).then(p=>{
    if(disposed||p.tenantCode!==tenantCode)return;setProfile(p);setPin("");setContactError(null);
    if(!contactEdited.current){setName(p.fullName);setPhone(p.phone);setEditingContact(!p.fullName);}
@@ -62,7 +66,7 @@ export default function TableReservationClient({tenantCode,branchCode,timeZone,r
  },[open,tenantCode]);
  async function saveContact(){
   if(contactFlight.current||contactLoading||!contactEnabled||!contactReady)return;
-  const version=contactVersion.current.value;
+  const version=contactVersion.current;
   contactFlight.current=true;setContactBusy(true);setContactError(null);
   try{
    if(editingContact&&samePhone)await updateCustomerRecoveryName(tenantCode,contactName,contactPhone,pin);
@@ -70,7 +74,7 @@ export default function TableReservationClient({tenantCode,branchCode,timeZone,r
    else if(!samePhone)await registerCustomerRecovery(tenantCode,contactName,contactPhone,pin);
    const p=await getCustomerRecoveryProfile(tenantCode);
    if(!alive.current)return;
-   if(version!==contactVersion.current.value)throw Error("Stale profile response");
+   if(version!==contactVersion.current)throw Error("Stale profile response");
    if(p.tenantCode!==tenantCode||p.phone!==contactPhone||(editingContact&&p.fullName!==contactName))throw Error("Profile mismatch");
    setProfile(p);setName(p.fullName);setPhone(p.phone);setPin("");setEditingContact(!p.fullName);onProfileSaved?.(p);
   }catch(e){

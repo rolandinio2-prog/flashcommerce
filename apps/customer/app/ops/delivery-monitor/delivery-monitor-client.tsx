@@ -1,4 +1,5 @@
 'use client';
+import { useResetOnChange } from '../../../lib/use-reset-on-change';
 import {monitorItemIdentity} from './delivery-monitor-contract';
 
 import {
@@ -287,8 +288,8 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 5000); return () => clearInterval(timer); }, []);
   const loadSnapshot = useCallback(async () => { await snapshotSyncRef.current?.request(); }, []);
 
+  useResetOnChange([tenantCode, branchCode, onDenied], () => setActiveAccess({tenantCode: tenantCode.trim(), branchCode: branchCode.trim()}));
   useEffect(() => {
-    setActiveAccess({tenantCode: tenantCode.trim(), branchCode: branchCode.trim()});
     const sync = createMonitorSnapshotSync<DeliveryMonitorSnapshot>({
       fetchSnapshot: (signal) => getDeliveryMonitorSnapshot({tenantCode, branchCode}, {stateOnly: true, signal}),
       onSnapshot: (incoming) => {
@@ -333,15 +334,11 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
     }
   }, [snapshot]);
 
+  // Each (re)subscription starts CONNECTING; without access the channel is OFF.
+  useResetOnChange([activeAccess, onDenied], () => setRealtimeStatus(activeAccess ? 'CONNECTING' : 'OFF'));
   useEffect(
     () => {
-      if (!activeAccess) {
-        setRealtimeStatus(
-          'OFF',
-        );
-
-        return;
-      }
+      if (!activeAccess) return;
 
       let disposed =
         false;
@@ -613,9 +610,6 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
       }
 
       discoverRouteRef.current = scheduleRouteRefresh;
-      setRealtimeStatus(
-        'CONNECTING',
-      );
 
       lastMovementByDelivery
         .current
@@ -844,6 +838,7 @@ function AuthenticatedDeliveryMonitor({ user, onDenied }: { user: StaffSessionUs
             },
           },
         );
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reports a synchronous failure of the external Realtime subscription
       } catch { setRealtimeStatus("ERROR"); setRealtimeError("No se pudo iniciar el canal de ubicación. Las consultas de estado continúan."); }
 
       return () => {

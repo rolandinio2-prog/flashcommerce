@@ -1,4 +1,5 @@
 "use client";
+import { useResetOnChange } from '../../lib/use-reset-on-change';
 import { isCartActionPending, type PendingCartAction } from "./cart-action-queue";
 
 import { useEffect, useId, useState, type ReactNode, type ButtonHTMLAttributes } from "react";
@@ -76,7 +77,7 @@ export function OrderProductCard({ product, quantity, ready, busy, pendingAction
 }) {
   const groupId=useId();
   const [sizesExpanded,setSizesExpanded]=useState(true);
-  useEffect(() => { if (expandSizesRequest > 0) setSizesExpanded(true); }, [expandSizesRequest]);
+  useResetOnChange([expandSizesRequest], () => { if (expandSizesRequest > 0) setSizesExpanded(true); });
   const [rice,setRice]=useState<RiceChoice | null>(null);
   const [selectedId,setSelectedId]=useState<string|null>(() => compact ? presentations.find(option => option.product.available)?.product.id ?? null : null);
   const selected=presentations.find(p=>p.product.id===selectedId);

@@ -1,4 +1,5 @@
 "use client";
+import { useResetOnChange } from '../../lib/use-reset-on-change';
 import {useEffect,useRef,useState,type ReactNode} from 'react';
 import type {DriverActiveDelivery,DriverSession} from '../../lib/flash-api';
 type Item=DriverActiveDelivery;
@@ -20,9 +21,11 @@ export default function DriverWorkspace(p:DriverWorkspaceProps){
  const flight=useRef(false),heading=useRef<HTMLHeadingElement>(null),expandButton=useRef<HTMLButtonElement>(null);
  const item=p.items.find(i=>i.delivery.id===detailId)??null,routeItem=p.items.find(i=>i.delivery.id===p.selectedId)??null;
  const busy=p.busyId!==null||p.loading||submitting,blocked=busy||p.needsRefresh;
- useEffect(()=>{heading.current?.focus();setFormError('');},[view]);
- useEffect(()=>{if(!p.loading&&detailId&&!item){setDetailId(null);setView('list');setPod('');setAmount('');}},[item,detailId,p.loading]);
- useEffect(()=>{if((view==='cash'&&item&&!item.payment?.cashCollectionRequired)||(view==='pod'&&item&&next(item)?.action!=='pod')){setView('detail');setPod('');setAmount('');}},[view,item]);
+ useResetOnChange([view],()=>setFormError(''));
+ useEffect(()=>{heading.current?.focus();},[view]);
+ // Adjusted during render: leave views whose delivery/action no longer applies.
+ if(!p.loading&&detailId&&!item){setDetailId(null);setView('list');setPod('');setAmount('');}
+ else if((view==='cash'&&item&&!item.payment?.cashCollectionRequired)||(view==='pod'&&item&&next(item)?.action!=='pod')){setView('detail');setPod('');setAmount('');}
  useEffect(()=>{if(!expanded)return;const old=document.body.style.overflow;document.body.style.overflow='hidden';const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){setExpanded(false);expandButton.current?.focus();}};window.addEventListener('keydown',key);return()=>{document.body.style.overflow=old;window.removeEventListener('keydown',key);};},[expanded]);
  const changeView=(v:typeof view)=>{if(busy)return;setExpanded(false);if(v==='route')setRouteVisited(true);setView(v);setPod('');setAmount('');};
  function open(i:Item){setDetailId(i.delivery.id);changeView('detail');}

@@ -8,7 +8,11 @@ export function CarouselHint() {
   const [visible, setVisible] = useState(false);
   useEffect(() => {
     if (!ref.current) return;
-    if (!("IntersectionObserver" in window)) { setVisible(true); return; }
+    if (!("IntersectionObserver" in window)) {
+      // No observer: reveal on the next frame (no synchronous render cascade).
+      const frame = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(frame);
+    }
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) { setVisible(true); observer.disconnect(); }
     }, { threshold: 0.8 });

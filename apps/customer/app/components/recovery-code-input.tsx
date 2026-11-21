@@ -1,5 +1,6 @@
 'use client';
 
+import { useResetOnChange } from '../../lib/use-reset-on-change';
 import { useEffect, useState } from 'react';
 import styles from './order-design.module.css';
 
@@ -8,7 +9,7 @@ export default function RecoveryCodeInput({ id, value, onChange, disabled = fals
   disabled?: boolean; describedBy?: string; boxed?: boolean;
 }) {
   const [visible, setVisible] = useState(false);
-  useEffect(() => { if (!value) setVisible(false); }, [value]);
+  useResetOnChange([value], () => { if (!value) setVisible(false); });
   return <span className={`${styles.recoveryCodeInput} ${boxed ? styles.recoveryCodeBox : ''}`}>
     <input id={id} type={visible ? 'text' : 'password'} inputMode="numeric" autoComplete="off"
       spellCheck={false} maxLength={6} value={value} disabled={disabled} placeholder="6 dígitos"

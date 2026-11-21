@@ -1,14 +1,16 @@
 'use client';
-import {useEffect,useRef,useState} from 'react';
+import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {loadTrackingMapLibraries} from '../../../lib/google-maps';
 import {containMapGestures} from '../../../lib/map-gestures';
 import styles from './admin-branch-location.module.css';
 export type BranchPoint={latitude:number;longitude:number};
 export default function AdminBranchMap({point,onChange,disabled,tenantCode}:{tenantCode:string;point:BranchPoint|null;onChange:(p:BranchPoint)=>void;disabled:boolean}) {
   const container=useRef<HTMLDivElement>(null),map=useRef<google.maps.Map|null>(null),alive=useRef(false),manual=useRef(0);
-  const onChangeRef=useRef(onChange),disabledRef=useRef(disabled);onChangeRef.current=onChange;disabledRef.current=disabled;
+  const onChangeRef=useRef(onChange),disabledRef=useRef(disabled);
   const initial=useRef(point),gpsBusy=useRef(false);
-  const latestPoint=useRef(point);latestPoint.current=point;
+  const latestPoint=useRef(point);
+  // Keep the latest props for map listeners/GPS callbacks (synced before any other effect or event).
+  useLayoutEffect(()=>{onChangeRef.current=onChange;disabledRef.current=disabled;latestPoint.current=point;});
   const [ready,setReady]=useState(false),[locating,setLocating]=useState(false),[error,setError]=useState('');
   useEffect(()=>{
     let disposed=false;alive.current=true;const listeners:google.maps.MapsEventListener[]=[];let release:(()=>void)|undefined,keyMove:((e:KeyboardEvent)=>void)|undefined;

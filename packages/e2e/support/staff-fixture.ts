@@ -112,6 +112,17 @@ export class StaffFixture {
     return String(Number(accuracy));
   }
 
+  /** Tracking token of the most recent order of the test branch (read-only), for page smoke tests. */
+  async latestTrackingToken(): Promise<string | null> {
+    const r = await this.client.query<{ token: string }>(
+      `select tracking_token::text as token from public.orders
+        where tenant_id = $1 and branch_id = $2 and tracking_token is not null
+        order by created_at desc limit 1`,
+      [this.tenantId, this.branchId],
+    );
+    return r.rows[0]?.token ?? null;
+  }
+
   /** B10: the session reaches its expiry time. */
   async expireSession(handle: StaffSessionHandle): Promise<void> {
     const result = await this.client.query(

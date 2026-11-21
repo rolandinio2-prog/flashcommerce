@@ -1,4 +1,5 @@
 'use client';
+import { useResetOnChange } from '../../../lib/use-reset-on-change';
 import {useEffect,useRef,useState} from 'react';
 import {FlashApiError,getStaffBranchLocation,saveStaffBranchLocation,type StaffBranchLocation} from '../../../lib/flash-api';
 import AdminBranchMap from './admin-branch-map';
@@ -17,9 +18,9 @@ export default function AdminBranchLocationPanel({tenantCode,branchCode}:{tenant
   const dirty=!!saved&&(cleanAddress!==saved.address||(point?.latitude??null)!==saved.latitude||(point?.longitude??null)!==saved.longitude);
   const valid=cleanAddress.length>=8&&cleanAddress.length<=400&&!!point;
   function populate(value:StaffBranchLocation){setSaved(value);setAddress(value.address);setLatitude(value.latitude===null?'':String(value.latitude));setLongitude(value.longitude===null?'':String(value.longitude));}
+  useResetOnChange([tenantCode,branchCode,loadVersion],()=>{setLoading(true);setSaved(null);setError('');setNotice('');setMapOpen(false);setReloadRequired(false);});
   useEffect(()=>{
     alive.current=true;const id=++generation.current;const controller=new AbortController();
-    setLoading(true);setSaved(null);setError('');setNotice('');setMapOpen(false);setReloadRequired(false);
     getStaffBranchLocation(controller.signal).then(value=>{if(!alive.current||generation.current!==id)return;if(value.tenantCode!==tenantCode||value.branchCode!==branchCode)throw Error('scope');populate(value);}).catch(()=>{if(alive.current&&generation.current===id&&!controller.signal.aborted)setError('No pudimos cargar la sucursal. Verifica tu sesión de administrador y vuelve a cargar.');}).finally(()=>{if(alive.current&&generation.current===id)setLoading(false);});
     return()=>{alive.current=false;generation.current++;controller.abort();};
   },[tenantCode,branchCode,loadVersion]);

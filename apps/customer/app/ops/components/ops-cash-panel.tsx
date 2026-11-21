@@ -1,4 +1,5 @@
 "use client";
+import { useResetOnChange } from '../../../lib/use-reset-on-change';
 import OpsCashClosing from './ops-cash-closing';
 
 import { useEffect, useRef, useState } from 'react';
@@ -22,10 +23,13 @@ export default function OpsCashPanel({canReconcile}: {canReconcile: boolean}) {
   const [selected, setSelected] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const actionLock = useRef(false);
-  useEffect(() => {
-    let ignore = false;
+  useResetOnChange([date, revision], () => {
     if (!date) {setData(null); setLoading(false); return;}
     setLoading(true); setError(''); setData(null); setSelected(null);
+  });
+  useEffect(() => {
+    let ignore = false;
+    if (!date) return;
     getCashSummary(date).then(value => { if (!ignore) setData(value); }).catch(() => {
       if (!ignore) setError('No se pudo consultar caja. Verifica tu sesión e intenta actualizar.');
     }).finally(() => {if (!ignore) setLoading(false);});
