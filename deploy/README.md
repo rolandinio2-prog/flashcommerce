@@ -20,3 +20,9 @@ secreto de clientes (tenant Realtime + `SUPABASE_JWT_SECRET` del API), `API_JWT_
 re-firmó el token anon de Kong y eliminó el mapeo `sb_secret` demo → service_role.
 Los secretos nuevos solo existen en el servidor (`/etc/fastpay/prod-runtime-v1/*.env`, copia en
 `/var/backups/fastpay/PROD_JWT_ROTATION_20261121_V1/`, root 600). `DB_ENC_KEY` de Realtime rotado el mismo día con `production/rotate-realtime-dbenckey-20261121.py` (Realtime activo: `fastpay-realtime-prod-v3`).
+
+## Contraseñas de la base de producción (2026-11-21)
+Todos los roles con LOGIN (37) usaban `postgres`. `production/rotate-db-passwords-20261121.py` les asignó contraseñas
+aleatorias (solo en el servidor: `/var/backups/fastpay/PROD_DB_PASSWORD_ROTATION_20261121_V1/new-role-passwords.private.json`,
+root 600) y actualizó API (`fastpay-api-prod-s5-v4`) y Realtime (`fastpay-realtime-prod-v4`, incluida la conexión
+CDC cifrada del tenant). El respaldo diario usa el socket local y no depende de estas contraseñas.
