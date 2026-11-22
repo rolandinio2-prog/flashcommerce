@@ -15,6 +15,16 @@ export function rejectCashOnDelivery(): never {
     'Pago contraentrega no habilitado. Delivery requiere QR pagado antes del despacho.',
   );
 }
+/**
+ * QR provider whose confirmed payments may release a delivery: the environment's
+ * configured provider. Production (BCP_QR) accepts only bank QR payments; a MOCK
+ * environment (staging/lab, no bank) accepts its MOCK confirmations.
+ */
+export function deliveryQrProvider(
+  configured: string | undefined = process.env.PAYMENT_PROVIDER,
+): 'BCP_QR' | 'MOCK' {
+  return (configured ?? '').trim().toUpperCase() === 'MOCK' ? 'MOCK' : 'BCP_QR';
+}
 export async function assertDeliveryQrPaid(
   client: PoolClient,
   scope: { tenant_id: string; branch_id: string; order_id: string },
@@ -36,8 +46,15 @@ export async function assertDeliveryQrPaid(
     );
   }
   const payment = await client.query<{ eligible: boolean }>(
-    "select exists (select 1 from public.order_payments where tenant_id=$1::uuid and branch_id=$2::uuid and order_id=$3::uuid and method='QR' and provider='BCP_QR' and status='PAID' and amount=$4::numeric and currency=$5 and paid_at is not null and verified_at is not null) as eligible",
-    [scope.tenant_id, scope.branch_id, scope.order_id, row.total, row.currency],
+    "select exists (select 1 from public.order_payments where tenant_id=$1::uuid and branch_id=$2::uuid and order_id=$3::uuid and method='QR' and provider=$6 and status='PAID' and amount=$4::numeric and currency=$5 and paid_at is not null and verified_at is not null) as eligible",
+    [
+      scope.tenant_id,
+      scope.branch_id,
+      scope.order_id,
+      row.total,
+      row.currency,
+      deliveryQrProvider(),
+    ],
   );
   if (payment.rows[0]?.eligible !== true) {
     throw new ConflictException(

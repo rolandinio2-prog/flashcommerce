@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import type { StaffSessionPrincipal } from '../staff/staff.types';
+import { deliveryQrProvider } from './delivery-payment-policy';
 
 export function validateCashSummaryDate(value: unknown): string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -62,7 +63,7 @@ export class CashSummaryService {
               when status in ('REFUND_PENDING','REFUNDED') then status
               when paid_attempts<>1 or order_payment_status<>'PAID' or amount<>order_total or currency<>order_currency
                 or paid_at is null or verified_at is null then 'REVIEW_REQUIRED'
-              when method='QR' and provider='BCP_QR' then 'QR'
+              when method='QR' and provider=$4 then 'QR'
               when method='CASH' and provider='CASHIER' and order_type in ('DINE_IN','TAKEAWAY','PICKUP') then 'LOCAL_CASH'
               else 'EXCLUDED_LEGACY'
             end as category
@@ -74,7 +75,8 @@ export class CashSummaryService {
         select currency, category, count(*)::text as count, sum(amount)::text as amount
         from classified group by currency, category order by currency, category
       `,
-      [principal.tenantId, principal.branchId, day],
+      // QR sales = the environment payment provider (BCP_QR in production, MOCK in staging/lab).
+      [principal.tenantId, principal.branchId, day, deliveryQrProvider()],
     );
     const review = await client.query<{
       orderNumber: string;
