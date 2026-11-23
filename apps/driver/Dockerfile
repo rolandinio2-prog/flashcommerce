@@ -10,7 +10,10 @@ FROM base AS dependencies
 RUN pnpm install --frozen-lockfile --ignore-scripts
 FROM dependencies AS build
 COPY . .
-RUN --mount=type=secret,id=public_env,required=true node build-next.cjs
+# BuildKit secrets are not part of the cache key: the public config hash is, so a different
+# public_env can never reuse another environment's compiled bundle (and must match the secret).
+ARG PUBLIC_ENV_SHA256
+RUN --mount=type=secret,id=public_env,required=true test -n "$PUBLIC_ENV_SHA256" && test "$(sha256sum /run/secrets/public_env | cut -d " " -f 1)" = "$PUBLIC_ENV_SHA256" && node build-next.cjs
 FROM $NODE_IMAGE AS runtime
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0 PORT=3000
 WORKDIR /app
