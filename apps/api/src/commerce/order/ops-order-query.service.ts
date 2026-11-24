@@ -212,6 +212,9 @@ export class OpsOrderQueryService {
         where t.code = $1
           and b.code = $2
 
+          -- Courier requests (FlashCommerce Delivery) never go to the kitchen.
+          and o.order_origin <> 'COURIER_REQUEST'
+
           and o.status in (
             'PENDING',
             'CONFIRMED',

@@ -35,11 +35,20 @@ export async function assertDeliveryQrPaid(
     order_type: string;
     total: string;
     currency: string;
+    order_origin: string;
   }>(
-    'select payment_status, order_type, total::text, currency from public.orders where tenant_id=$1::uuid and branch_id=$2::uuid and id=$3::uuid for update',
+    'select payment_status, order_type, total::text, currency, order_origin from public.orders where tenant_id=$1::uuid and branch_id=$2::uuid and id=$3::uuid for update',
     [scope.tenant_id, scope.branch_id, scope.order_id],
   );
   const row = order.rows[0];
+  // Courier request with nothing to collect: no customer payment exists by design.
+  if (
+    row?.order_type === 'DELIVERY' &&
+    row.order_origin === 'COURIER_REQUEST' &&
+    row.payment_status === 'NOT_REQUIRED' &&
+    Number(row.total) === 0
+  )
+    return;
   if (!row || row.order_type !== 'DELIVERY' || row.payment_status !== 'PAID') {
     throw new ConflictException(
       'Delivery requiere pago QR confirmado antes del despacho.',

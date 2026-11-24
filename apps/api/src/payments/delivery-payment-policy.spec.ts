@@ -56,6 +56,20 @@ describe('delivery QR payment policy', () => {
     },
   );
 
+  it('lets a courier request with nothing to collect be dispatched', async () => {
+    const { client: c, query } = client(
+      {
+        ...paidDelivery,
+        payment_status: 'NOT_REQUIRED',
+        total: '0.00',
+        order_origin: 'COURIER_REQUEST',
+      },
+      false,
+    );
+    await expect(assertDeliveryQrPaid(c, scope)).resolves.toBeUndefined();
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects when no eligible confirmed QR payment exists', async () => {
     const { client: c } = client(paidDelivery, false);
     await expect(assertDeliveryQrPaid(c, scope)).rejects.toThrow(
@@ -70,6 +84,18 @@ describe('delivery QR payment policy', () => {
     ],
     ['non-delivery order', { ...paidDelivery, order_type: 'TAKEAWAY' }],
     ['missing order', null],
+    [
+      'courier request with an amount to collect',
+      {
+        ...paidDelivery,
+        payment_status: 'NOT_REQUIRED',
+        order_origin: 'COURIER_REQUEST',
+      },
+    ],
+    [
+      'storefront order marked NOT_REQUIRED',
+      { ...paidDelivery, payment_status: 'NOT_REQUIRED', total: '0.00' },
+    ],
   ])('rejects a %s before checking payments', async (_label, order) => {
     const { client: c, query } = client(order, true);
     await expect(assertDeliveryQrPaid(c, scope)).rejects.toThrow(

@@ -134,6 +134,31 @@ export class StaffFixture {
     return r.rows[0] ?? null;
   }
 
+  /** A point inside the branch's first active delivery zone (courier tests). */
+  async deliveryZonePoint(): Promise<{ latitude: number; longitude: number } | null> {
+    const r = await this.client.query<{ latitude: number; longitude: number }>(
+      `select gis.ST_Y(p)::float8 as latitude, gis.ST_X(p)::float8 as longitude
+         from (select gis.ST_PointOnSurface(z.area::gis.geometry) as p
+                 from public.delivery_zones z
+                where z.tenant_id = $1 and z.branch_id = $2 and z.status = 'ACTIVE'
+                order by z.priority, z.code limit 1) s`,
+      [this.tenantId, this.branchId],
+    );
+    return r.rows[0] ?? null;
+  }
+
+  /** Delivery state of a courier request by order number (read-only). */
+  async courierDeliveryState(orderNumber: number): Promise<{ origin: string; orderStatus: string; deliveryStatus: string; fee: string; pickupName: string | null } | null> {
+    const r = await this.client.query<{ origin: string; orderStatus: string; deliveryStatus: string; fee: string; pickupName: string | null }>(
+      `select o.order_origin as origin, o.status as "orderStatus", d.status as "deliveryStatus",
+              d.quoted_delivery_fee::text as fee, d.pickup_name as "pickupName"
+         from public.orders o join public.deliveries d on d.order_id = o.id
+        where o.tenant_id = $1 and o.branch_id = $2 and o.order_number = $3`,
+      [this.tenantId, this.branchId, orderNumber],
+    );
+    return r.rows[0] ?? null;
+  }
+
   /** B10: the session reaches its expiry time. */
   async expireSession(handle: StaffSessionHandle): Promise<void> {
     const result = await this.client.query(
