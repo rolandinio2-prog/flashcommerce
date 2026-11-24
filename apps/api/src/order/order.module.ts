@@ -10,12 +10,19 @@ import { OrderController } from './order.controller';
 import { OpsOrderController } from './ops-order.controller';
 import { DeliveryModule } from '../delivery/delivery.module';
 import { OrderService } from './order.service';
+import { StockReservationExpiryService } from './stock-reservation-expiry.service';
 
 @Module({
   imports: [OperationsModule, DeliveryModule, PaymentsModule],
 
   controllers: [OrderController, OpsOrderController, OpsPosController],
 
-  providers: [OrderService, OpsPosService, CartService, CatalogService],
+  providers: [
+    OrderService,
+    OpsPosService,
+    CartService,
+    CatalogService,
+    StockReservationExpiryService,
+  ],
 })
 export class OrderModule {}

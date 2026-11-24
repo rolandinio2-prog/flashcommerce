@@ -6,6 +6,7 @@ import { lockBranchAdmission } from '../branch-operations/service-policy';
 import type { StaffSessionPrincipal } from '../staff/staff.types';
 import { sauceOrderItems } from '../cart/sauce-pricing';
 import { prepareRiceItems } from '../cart/rice-choice';
+import { reserveOrderStock } from './stock-reservation';
 import {
   recoveryPhone,
   recoveryPhoneAliases,
@@ -1855,6 +1856,18 @@ export class OrderService {
       );
 
       const order = orderResult.rows[0];
+
+      // Reservar unidades de productos con inventario controlado. El UPDATE
+      // condicionado en la base serializa compradores simultaneos: si otro
+      // pedido tomo las ultimas unidades, este checkout se revierte completo.
+      await reserveOrderStock(client, {
+        tenantId: cart.tenant_id,
+        branchId: cart.branch_id,
+        orderId: order.id,
+        quantities: quantitiesByProduct,
+        names: new Map(items.map((item) => [item.product_id, item.name])),
+      });
+
       if (pos)
         await client.query(
           'update public.pos_drafts set order_id=$2::uuid,checkout_hash=$3 where cart_id=$1::uuid',
