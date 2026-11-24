@@ -13,7 +13,8 @@ import {
   Patch,
 } from '@nestjs/common';
 
-import { OrderService } from './order.service';
+import { OrderLifecycleService } from './order-lifecycle.service';
+import { OpsOrderQueryService } from './ops-order-query.service';
 
 interface UpdateOrderStatusBody {
   status?: string;
@@ -22,12 +23,15 @@ interface UpdateOrderStatusBody {
 @Controller('ops/orders')
 @OperationsAccess()
 export class OpsOrderController {
-  constructor(private readonly orderService: OrderService) {}
+  constructor(
+    private readonly lifecycle: OrderLifecycleService,
+    private readonly opsQuery: OpsOrderQueryService,
+  ) {}
 
   @Get()
   @OperationPermission('orders.read')
   getOperationalOrders(@Req() request: StaffAuthenticatedRequest) {
-    return this.orderService.getOperationalOrders(
+    return this.opsQuery.getOperationalOrders(
       request.staff.tenantCode,
       request.staff.branchCode,
     );
@@ -43,7 +47,7 @@ export class OpsOrderController {
     @Body()
     body: UpdateOrderStatusBody,
   ) {
-    return this.orderService.updateOrderStatus(
+    return this.lifecycle.updateOrderStatus(
       orderId,
       body?.status,
       request.staff,
@@ -64,7 +68,7 @@ export class OpsOrderController {
     @Param('orderId', new ParseUUIDPipe())
     orderId: string,
   ) {
-    return this.orderService.closeTableSession(
+    return this.lifecycle.closeTableSession(
       orderId,
       request.staff.tenantCode,
       request.staff.branchCode,

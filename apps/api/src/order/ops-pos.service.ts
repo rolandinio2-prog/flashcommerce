@@ -7,7 +7,8 @@ import { DatabaseService } from '../database/database.service';
 import { CartService } from '../cart/cart.service';
 import { CatalogService } from '../catalog/catalog.service';
 import { PaymentsService } from '../payments/payments.service';
-import { OrderService } from './order.service';
+import { CheckoutService } from './checkout.service';
+import { OrderTrackingService } from './order-tracking.service';
 import type { StaffSessionPrincipal } from '../staff/staff.types';
 import type { PosCheckoutInput } from './pos-checkout';
 
@@ -17,7 +18,8 @@ export class OpsPosService {
     private readonly db: DatabaseService,
     private readonly carts: CartService,
     private readonly catalog: CatalogService,
-    private readonly orders: OrderService,
+    private readonly orders: CheckoutService,
+    private readonly orderTracking: OrderTrackingService,
     private readonly payments: PaymentsService,
   ) {}
   catalogFor(staff: StaffSessionPrincipal) {
@@ -118,7 +120,9 @@ export class OpsPosService {
   }
   async orderSnapshot(staff: StaffSessionPrincipal, id: string) {
     return {
-      ...(await this.orders.getOrderTracking(await this.orderToken(staff, id))),
+      ...(await this.orderTracking.getOrderTracking(
+        await this.orderToken(staff, id),
+      )),
       id,
     };
   }

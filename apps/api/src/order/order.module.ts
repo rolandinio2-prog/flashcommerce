@@ -9,7 +9,11 @@ import { Module } from '@nestjs/common';
 import { OrderController } from './order.controller';
 import { OpsOrderController } from './ops-order.controller';
 import { DeliveryModule } from '../delivery/delivery.module';
-import { OrderService } from './order.service';
+import { CheckoutService } from './checkout.service';
+import { CustomerRecoveryService } from './customer-recovery.service';
+import { OrderTrackingService } from './order-tracking.service';
+import { OrderLifecycleService } from './order-lifecycle.service';
+import { OpsOrderQueryService } from './ops-order-query.service';
 import { StockReservationExpiryService } from './stock-reservation-expiry.service';
 
 @Module({
@@ -18,7 +22,11 @@ import { StockReservationExpiryService } from './stock-reservation-expiry.servic
   controllers: [OrderController, OpsOrderController, OpsPosController],
 
   providers: [
-    OrderService,
+    CheckoutService,
+    CustomerRecoveryService,
+    OrderTrackingService,
+    OrderLifecycleService,
+    OpsOrderQueryService,
     OpsPosService,
     CartService,
     CatalogService,
