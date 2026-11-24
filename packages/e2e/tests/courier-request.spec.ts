@@ -79,3 +79,38 @@ test('courier: manual delivery request reaches dispatch, not the kitchen', async
     await fixture.dispose();
   }
 });
+
+test('courier: Ops "Envíos" tab creates a request from the form', async ({ page, context }) => {
+  const fixture = await StaffFixture.open();
+  try {
+    const point = await fixture.deliveryZonePoint();
+    test.skip(!point, 'branch has no active delivery zone');
+    const { token } = await fixture.createManagerSession('COURIERUI');
+    await context.addCookies([{ name: STAFF_SESSION_COOKIE, value: token, url: env.baseUrl, httpOnly: true, sameSite: 'Lax' }]);
+    const errors: string[] = [];
+    page.on('pageerror', (e) => errors.push(e.message));
+
+    await page.goto('/ops');
+    await page.getByRole('button', { name: 'Envíos', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '2. Entregar' })).toBeVisible({ timeout: 20_000 });
+
+    await page.getByLabel('Destinatario').fill('Luis UI');
+    await page.getByLabel('Teléfono', { exact: true }).fill('72222222');
+    await page.getByLabel('Dirección', { exact: true }).fill('Calle UI 3');
+    await page.getByLabel('Latitud destino').fill(String(point!.latitude));
+    await page.getByLabel('Longitud destino').fill(String(point!.longitude));
+    await page.getByRole('button', { name: 'Calcular tarifa' }).click();
+    await expect(page.getByText(/Bs \d+\.\d{2}/).first()).toBeVisible();
+    await page.getByRole('button', { name: 'Crear envío' }).click();
+    const status = page.getByRole('status').filter({ hasText: /Envío #\d+ creado/ });
+    await expect(status).toBeVisible();
+    const orderNumber = Number((await status.textContent())!.match(/Envío #(\d+)/)![1]);
+    expect((await fixture.courierDeliveryState(orderNumber))?.origin).toBe('COURIER_REQUEST');
+
+    await page.getByRole('button', { name: 'Envíos', exact: true }).last().click();
+    await expect(page.getByRole('cell', { name: String(orderNumber), exact: true })).toBeVisible();
+    expect(errors).toEqual([]);
+  } finally {
+    await fixture.dispose();
+  }
+});

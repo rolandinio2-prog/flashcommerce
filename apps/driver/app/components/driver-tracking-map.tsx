@@ -57,7 +57,7 @@ export default function DriverTrackingMap({tenantCode,deliveryId,currentLocation
     currentMarkerRef.current?.setVisible(Boolean(currentLocation));
     if(currentLocation) currentMarkerRef.current?.setPosition(latLng(currentLocation));
     branchMarkerRef.current?.setVisible(Boolean(branchOrigin));
-    if(branchOrigin) { branchMarkerRef.current?.setPosition(latLng(branchOrigin)); branchMarkerRef.current?.setTitle("Sucursal: "+branchOrigin.name); }
+    if(branchOrigin) { branchMarkerRef.current?.setPosition(latLng(branchOrigin)); branchMarkerRef.current?.setTitle("Recoger: "+branchOrigin.name); }
     destinationMarkerRef.current?.setPosition(latLng(destination));
     if(!fittedRef.current) {
       const bounds=new google.maps.LatLngBounds(); if(currentLocation) bounds.extend(latLng(currentLocation)); if(branchOrigin) bounds.extend(latLng(branchOrigin)); bounds.extend(latLng(destination)); for(const p of baseRoute?.path??[])bounds.extend(latLng(p));

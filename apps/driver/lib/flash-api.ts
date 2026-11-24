@@ -37,6 +37,8 @@ export type DriverLoginResult = {
 };
 export type DriverActiveDelivery = {
   branchOrigin?: {name: string; latitude: number; longitude: number} | null;
+  /** Courier requests: pickup contact/address and package (null for store orders). */
+  pickup?: {phone: string | null; address: string | null; reference: string | null; packageDescription: string | null} | null;
   delivery: {
     id: string;
     status: string;

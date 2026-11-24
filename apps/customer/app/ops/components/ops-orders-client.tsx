@@ -24,6 +24,7 @@ import OpsCashProducts from './ops-cash-products';
 import { canReceiveCashPayment, cashOrderFingerprint } from './ops-cash-eligibility';
 import OpsTablesPanel from "./ops-tables-panel";
 import OpsReservationsPanel from "./ops-reservations-panel";
+import OpsCourierPanel from "./ops-courier-panel";
 
 // =========================================================
 // KDS - DATOS DE FULFILLMENT
@@ -65,7 +66,7 @@ interface StatusColumn {
   title: string;
 }
 
-type OpsTab = "ORDERS" | "TABLES" | "RESERVATIONS" | "CASH";
+type OpsTab = "ORDERS" | "TABLES" | "RESERVATIONS" | "CASH" | "COURIER";
 
 const STATUS_COLUMNS: StatusColumn[] = [
   {
@@ -580,7 +581,7 @@ export default function OpsOrdersClient({
                 ? "KDS"
                 : activeTab === "TABLES"
                   ? "Mesas"
-                  : activeTab === "CASH" ? "Caja" : "Reservas"}
+                  : activeTab === "CASH" ? "Caja" : activeTab === "COURIER" ? "Envíos" : "Reservas"}
             </h1>
 
             <p className="mt-1 text-sm text-zinc-500">
@@ -655,6 +656,20 @@ export default function OpsOrdersClient({
             Reservas
           </button>
           )}
+
+          {capabilities?.permissions.includes("courier.read") && (
+          <button
+            type="button"
+            onClick={() => setActiveTab("COURIER")}
+            className={`rounded-xl px-5 py-3 text-sm font-bold transition ${
+              activeTab === "COURIER"
+                ? "bg-zinc-950 text-white"
+                : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+            }`}
+          >
+            Envíos
+          </button>
+          )}
         </nav>
       </div>
 
@@ -712,6 +727,11 @@ export default function OpsOrdersClient({
             branchCode={branchCode}
             orders={orders}
             onOrdersChanged={loadOrders}
+          />
+        ) : activeTab === "COURIER" && capabilities?.permissions.includes("courier.read") ? (
+          <OpsCourierPanel
+            tenantCode={tenantCode}
+            canManage={capabilities.permissions.includes("courier.manage")}
           />
         ) : activeTab === "RESERVATIONS" && capabilities?.permissions.includes("reservations.read") ? (
           <OpsReservationsPanel

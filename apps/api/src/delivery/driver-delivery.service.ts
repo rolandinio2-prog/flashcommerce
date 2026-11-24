@@ -80,6 +80,10 @@ export class DriverDeliveryService {
       branch_name: string;
       branch_latitude: string | null;
       branch_longitude: string | null;
+      pickup_phone: string | null;
+      pickup_address: string | null;
+      pickup_reference: string | null;
+      package_description: string | null;
       destination_latitude: number;
       destination_longitude: number;
 
@@ -204,9 +208,13 @@ export class DriverDeliveryService {
             d.address_text,
             d.address_reference,
 
-            b.name as branch_name,
-            b.delivery_origin_latitude::text as branch_latitude,
-            b.delivery_origin_longitude::text as branch_longitude,
+            coalesce(d.pickup_name, b.name) as branch_name,
+            coalesce(d.pickup_latitude, b.delivery_origin_latitude)::text as branch_latitude,
+            coalesce(d.pickup_longitude, b.delivery_origin_longitude)::text as branch_longitude,
+            d.pickup_phone,
+            d.pickup_address,
+            d.pickup_reference,
+            d.package_description,
             gis.ST_Y(
               d.destination::gis.geometry
             )::double precision
@@ -356,6 +364,17 @@ export class DriverDeliveryService {
 
         branchOrigin: trackingBranchOrigin(row),
 
+        // Courier requests: who/where to pick up and what to carry (null for store orders).
+        pickup:
+          row.pickup_address || row.pickup_phone || row.package_description
+            ? {
+                phone: row.pickup_phone,
+                address: row.pickup_address,
+                reference: row.pickup_reference,
+                packageDescription: row.package_description,
+              }
+            : null,
+
         destination: {
           address: row.address_text,
           reference: row.address_reference,
@@ -401,9 +420,9 @@ export class DriverDeliveryService {
     }>(
       `
           select
-            b.name as branch_name,
-            b.delivery_origin_latitude::text as branch_latitude,
-            b.delivery_origin_longitude::text as branch_longitude,
+            coalesce(d.pickup_name, b.name) as branch_name,
+            coalesce(d.pickup_latitude, b.delivery_origin_latitude)::text as branch_latitude,
+            coalesce(d.pickup_longitude, b.delivery_origin_longitude)::text as branch_longitude,
             d.id::text
               as delivery_id,
 

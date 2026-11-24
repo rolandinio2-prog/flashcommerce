@@ -63,9 +63,9 @@ export class DeliveryPublicTrackingService {
             d.status
               as delivery_status,
 
-            b.name as branch_name,
-            b.delivery_origin_latitude::text as branch_latitude,
-            b.delivery_origin_longitude::text as branch_longitude,
+            coalesce(d.pickup_name, b.name) as branch_name,
+            coalesce(d.pickup_latitude, b.delivery_origin_latitude)::text as branch_latitude,
+            coalesce(d.pickup_longitude, b.delivery_origin_longitude)::text as branch_longitude,
             gis.ST_Y(
               d.destination::gis.geometry
             )::double precision
