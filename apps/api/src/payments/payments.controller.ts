@@ -1,7 +1,7 @@
 import {
   OperationsAccess,
   OperationPermission,
-} from '../operations/operations-access';
+} from '../core/operations/operations-access';
 import {
   Body,
   Controller,
@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
-import type { StaffAuthenticatedRequest } from '../staff/staff.types';
+import type { StaffAuthenticatedRequest } from '../core/staff/staff.types';
 
 import { PaymentsService } from './payments.service';
 

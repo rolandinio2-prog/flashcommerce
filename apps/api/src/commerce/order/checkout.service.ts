@@ -1,8 +1,8 @@
 import { posCartRevision } from './pos-cart-revision';
 import { assertPosCartAccess } from './pos-cart-access';
 import { normalizePosCheckout, type PosCheckoutInput } from './pos-checkout';
-import { lockBranchAdmission } from '../branch-operations/service-policy';
-import { type StaffSessionPrincipal } from '../staff/staff.types';
+import { lockBranchAdmission } from '../../core/branch-operations/service-policy';
+import { type StaffSessionPrincipal } from '../../core/staff/staff.types';
 import { sauceOrderItems } from '../cart/sauce-pricing';
 import { prepareRiceItems } from '../cart/rice-choice';
 import { reserveOrderStock } from './stock-reservation';
@@ -15,17 +15,17 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { issueQuote, requireQuoteToken, verifyQuote } from './checkout-quote';
-import { DatabaseService } from '../database/database.service';
-import { DeliveryService } from '../delivery/delivery.service';
+import { DatabaseService } from '../../core/database/database.service';
+import { DeliveryService } from '../../delivery/delivery.service';
 import {
   type CreatedDelivery,
   type DeliveryCheckoutQuote,
   type DeliveryCheckoutRouteSnapshot,
-} from '../delivery/delivery.types';
+} from '../../delivery/delivery.types';
 import {
   type TableContextPayload,
   verifyTableContextToken,
-} from '../tables/table-context-token';
+} from '../../dine-in/tables/table-context-token';
 import {
   type OrderType,
   type CreateOrderInput,

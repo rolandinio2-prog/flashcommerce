@@ -4,7 +4,7 @@ import {
   OnApplicationBootstrap,
   OnModuleDestroy,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 
 /**
  * Returns units held by unpaid PENDING orders whose hold expired.

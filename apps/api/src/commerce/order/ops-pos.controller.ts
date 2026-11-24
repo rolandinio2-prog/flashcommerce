@@ -12,8 +12,8 @@ import { RecoveryRequestGuard } from './recovery-request.guard';
 import {
   OperationsAccess,
   OperationPermission,
-} from '../operations/operations-access';
-import type { StaffAuthenticatedRequest } from '../staff/staff.types';
+} from '../../core/operations/operations-access';
+import type { StaffAuthenticatedRequest } from '../../core/staff/staff.types';
 import type { PosCheckoutInput } from './pos-checkout';
 import { OpsPosService } from './ops-pos.service';
 

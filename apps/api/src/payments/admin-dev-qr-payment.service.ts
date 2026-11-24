@@ -8,8 +8,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 
-import { DatabaseService } from '../database/database.service';
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import { DatabaseService } from '../core/database/database.service';
+import type { StaffSessionPrincipal } from '../core/staff/staff.types';
 import { PaymentsService, type BcpQrCallbackInput } from './payments.service';
 
 interface DevQrCandidateRow {

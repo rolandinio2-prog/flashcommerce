@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import { type OpsOrderRow } from './order.types';
 
 @Injectable()

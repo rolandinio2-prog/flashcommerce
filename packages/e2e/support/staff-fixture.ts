@@ -4,7 +4,7 @@ import pg from 'pg';
 
 import { assertLocalDatabase, env } from './env';
 
-/** Must match apps/api/src/staff/staff.service.ts. */
+/** Must match apps/api/src/core/staff/staff.service.ts. */
 export const STAFF_SESSION_COOKIE = 'flash_staff_session';
 
 export interface StaffSessionHandle {

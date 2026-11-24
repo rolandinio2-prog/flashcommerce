@@ -2,8 +2,8 @@ import { Controller, Get, Query, Req } from '@nestjs/common';
 import {
   OperationsAccess,
   OperationPermission,
-} from '../operations/operations-access';
-import type { StaffAuthenticatedRequest } from '../staff/staff.types';
+} from '../core/operations/operations-access';
+import type { StaffAuthenticatedRequest } from '../core/staff/staff.types';
 import { CashSummaryService } from './cash-summary.service';
 
 @Controller('ops/payments')

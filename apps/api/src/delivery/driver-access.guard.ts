@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../core/database/database.service';
 
 export interface AuthenticatedDriverContext {
   credentialId: string;

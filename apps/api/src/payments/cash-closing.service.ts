@@ -6,8 +6,8 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
-import { DatabaseService } from '../database/database.service';
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import { DatabaseService } from '../core/database/database.service';
+import type { StaffSessionPrincipal } from '../core/staff/staff.types';
 import {
   CashSummaryService,
   validateCashSummaryDate,

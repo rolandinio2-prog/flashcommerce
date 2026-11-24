@@ -3,13 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import { CartService } from '../cart/cart.service';
 import { CatalogService } from '../catalog/catalog.service';
-import { PaymentsService } from '../payments/payments.service';
+import { PaymentsService } from '../../payments/payments.service';
 import { CheckoutService } from './checkout.service';
 import { OrderTrackingService } from './order-tracking.service';
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import type { StaffSessionPrincipal } from '../../core/staff/staff.types';
 import type { PosCheckoutInput } from './pos-checkout';
 
 @Injectable()

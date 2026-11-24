@@ -6,17 +6,17 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 
-import { DatabaseModule } from './database/database.module';
-import { CatalogModule } from './catalog/catalog.module';
-import { CartModule } from './cart/cart.module';
-import { OrderModule } from './order/order.module';
+import { DatabaseModule } from './core/database/database.module';
+import { CatalogModule } from './commerce/catalog/catalog.module';
+import { CartModule } from './commerce/cart/cart.module';
+import { OrderModule } from './commerce/order/order.module';
 
-import { TablesModule } from './tables/tables.module';
-import { ReservationsModule } from './reservations/reservations.module';
+import { TablesModule } from './dine-in/tables/tables.module';
+import { ReservationsModule } from './dine-in/reservations/reservations.module';
 import { PaymentsModule } from './payments/payments.module';
 import { DeliveryModule } from './delivery/delivery.module';
-import { StaffModule } from './staff/staff.module';
-import { BranchOperationsModule } from './branch-operations/branch-operations.module';
+import { StaffModule } from './core/staff/staff.module';
+import { BranchOperationsModule } from './core/branch-operations/branch-operations.module';
 
 @Module({
   imports: [

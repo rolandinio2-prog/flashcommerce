@@ -1,4 +1,4 @@
-import { lockBranchAdmission } from '../branch-operations/service-policy';
+import { lockBranchAdmission } from '../../core/branch-operations/service-policy';
 import {
   BadRequestException,
   ConflictException,
@@ -8,7 +8,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 
 export type ReservationStatus =
   'PENDING' | 'CONFIRMED' | 'SEATED' | 'COMPLETED' | 'CANCELLED' | 'NO_SHOW';

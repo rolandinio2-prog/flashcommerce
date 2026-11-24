@@ -12,7 +12,7 @@ import {
 
 import type { PoolClient } from 'pg';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../core/database/database.service';
 import { PaymentsService } from '../payments/payments.service';
 import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
 import { GeoUsageMeterService } from './geo-usage-meter.service';

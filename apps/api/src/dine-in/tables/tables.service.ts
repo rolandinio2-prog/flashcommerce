@@ -1,4 +1,4 @@
-import { lockBranchAdmission } from '../branch-operations/service-policy';
+import { lockBranchAdmission } from '../../core/branch-operations/service-policy';
 import {
   BadRequestException,
   ConflictException,
@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import {
   getTableContextExpiration,
   issueTableContext,

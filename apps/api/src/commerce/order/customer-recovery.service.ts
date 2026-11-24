@@ -20,7 +20,7 @@ import {
   scryptSync,
   timingSafeEqual,
 } from 'node:crypto';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import {
   type CustomerRecoveryEnrollInput,
   type CustomerRecoveryLoginInput,

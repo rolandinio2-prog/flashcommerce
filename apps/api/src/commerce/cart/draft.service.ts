@@ -7,7 +7,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import { cartToken, draftForm, scope, secret } from './draft-validation';
 
 const hash = (value: string) =>

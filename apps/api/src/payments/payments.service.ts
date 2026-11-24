@@ -2,7 +2,7 @@ import {
   assertLocalCashAllowed,
   rejectCashOnDelivery,
 } from './delivery-payment-policy';
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import type { StaffSessionPrincipal } from '../core/staff/staff.types';
 import {
   BadRequestException,
   ConflictException,
@@ -16,7 +16,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import type { PoolClient } from 'pg';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../core/database/database.service';
 import { BcpQrProvider } from './bcp-qr.provider';
 import { MockQrProvider } from './mock-qr.provider';
 import type {

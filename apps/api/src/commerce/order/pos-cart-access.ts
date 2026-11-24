@@ -1,6 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
-import type { DatabaseService } from '../database/database.service';
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import type { DatabaseService } from '../../core/database/database.service';
+import type { StaffSessionPrincipal } from '../../core/staff/staff.types';
 
 export async function assertPosCartAccess(
   db: Pick<DatabaseService, 'query'>,

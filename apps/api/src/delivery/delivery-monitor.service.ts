@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../core/database/database.service';
 import { DeliveryService } from './delivery.service';
 import type {
   DeliveryMonitorDeliveryStatus,

@@ -2,10 +2,10 @@ import { CashClosingController } from './cash-closing.controller';
 import { CashClosingService } from './cash-closing.service';
 import { CashSummaryController } from './cash-summary.controller';
 import { CashSummaryService } from './cash-summary.service';
-import { OperationsModule } from '../operations/operations.module';
+import { OperationsModule } from '../core/operations/operations.module';
 import { Module } from '@nestjs/common';
 
-import { StaffModule } from '../staff/staff.module';
+import { StaffModule } from '../core/staff/staff.module';
 import { AdminDevQrPaymentController } from './admin-dev-qr-payment.controller';
 import { AdminDevQrPaymentService } from './admin-dev-qr-payment.service';
 import { BcpPaymentCallbackController } from './bcp-payment-callback.controller';

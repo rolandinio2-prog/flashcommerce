@@ -10,7 +10,7 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../core/database/database.service';
 import type { AuthenticatedDriverContext } from './driver-access.guard';
 
 const DRIVER_SESSION_DURATION_MS = 12 * 60 * 60 * 1000;

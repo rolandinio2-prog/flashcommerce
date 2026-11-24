@@ -1,10 +1,10 @@
 import { Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
-import { StaffRoleGuard } from '../staff/staff-role.guard';
-import { StaffRoles } from '../staff/staff-roles.decorator';
-import { StaffSessionGuard } from '../staff/staff-session.guard';
-import type { StaffAuthenticatedRequest } from '../staff/staff.types';
+import { StaffRoleGuard } from '../core/staff/staff-role.guard';
+import { StaffRoles } from '../core/staff/staff-roles.decorator';
+import { StaffSessionGuard } from '../core/staff/staff-session.guard';
+import type { StaffAuthenticatedRequest } from '../core/staff/staff.types';
 import { AdminDevQrPaymentService } from './admin-dev-qr-payment.service';
 
 @Controller('staff/admin/dev-payments')

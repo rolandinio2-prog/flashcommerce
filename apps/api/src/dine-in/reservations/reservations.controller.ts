@@ -1,8 +1,8 @@
 import {
   OperationsAccess,
   OperationPermission,
-} from '../operations/operations-access';
-import type { StaffAuthenticatedRequest } from '../staff/staff.types';
+} from '../../core/operations/operations-access';
+import type { StaffAuthenticatedRequest } from '../../core/staff/staff.types';
 import {
   Body,
   Controller,

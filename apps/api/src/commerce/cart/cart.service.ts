@@ -1,5 +1,5 @@
 import { posCartRevision } from '../order/pos-cart-revision';
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import type { StaffSessionPrincipal } from '../../core/staff/staff.types';
 import { assertPosCartAccess } from '../order/pos-cart-access';
 import { saucePricing, priceSauceLines } from './sauce-pricing';
 import {
@@ -7,7 +7,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import { riceChoice, validateRice, riceName } from './rice-choice';
 
 interface CreatedCartRow {

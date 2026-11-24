@@ -1,4 +1,4 @@
-import { assertDeliveryQrPaid } from '../payments/delivery-payment-policy';
+import { assertDeliveryQrPaid } from '../../payments/delivery-payment-policy';
 import {
   BadRequestException,
   ConflictException,

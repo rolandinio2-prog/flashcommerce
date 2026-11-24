@@ -1,4 +1,4 @@
-import { OperationsModule } from '../operations/operations.module';
+import { OperationsModule } from '../../core/operations/operations.module';
 import { Module } from '@nestjs/common';
 
 import {

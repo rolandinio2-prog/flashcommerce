@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import { DatabaseService } from '../core/database/database.service';
+import type { StaffSessionPrincipal } from '../core/staff/staff.types';
 import { deliveryQrProvider } from './delivery-payment-policy';
 
 export function validateCashSummaryDate(value: unknown): string {

@@ -1,12 +1,12 @@
-import { assertDeliveryQrPaid } from '../payments/delivery-payment-policy';
-import { type StaffSessionPrincipal } from '../staff/staff.types';
+import { assertDeliveryQrPaid } from '../../payments/delivery-payment-policy';
+import { type StaffSessionPrincipal } from '../../core/staff/staff.types';
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import {
   type OrderType,
   type OrderStatus,

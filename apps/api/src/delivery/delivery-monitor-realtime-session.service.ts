@@ -1,4 +1,4 @@
-import type { StaffSessionPrincipal } from '../staff/staff.types';
+import type { StaffSessionPrincipal } from '../core/staff/staff.types';
 import {
   Injectable,
   UnauthorizedException,

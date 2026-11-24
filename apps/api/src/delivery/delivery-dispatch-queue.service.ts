@@ -4,7 +4,7 @@ import {
   OnApplicationBootstrap,
   OnModuleDestroy,
 } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../core/database/database.service';
 
 // Read candidates in age order. The existing dispatcher revalidates the bundle
 // and takes its usual driver-branch lock before creating any assignment.

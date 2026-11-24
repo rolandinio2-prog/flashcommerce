@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '../core/database/database.service';
 import { GEO_PROVIDER, type GeoProvider } from './geo-provider';
 import { GeoUsageMeterService } from './geo-usage-meter.service';
 import type { GeoPoint } from './geo.types';
