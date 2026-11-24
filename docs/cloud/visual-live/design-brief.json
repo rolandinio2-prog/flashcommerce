@@ -1,0 +1,38 @@
+{
+  "status": "DESIGN_PROPOSALS_NOT_IMPLEMENTED_OR_BROWSER_VERIFIED",
+  "screens": [
+    "seller-desktop.png",
+    "buyer-desktop.png",
+    "seller-mobile.png",
+    "buyer-mobile.png"
+  ],
+  "direction": "Forest green, ivory, product-first buyer experience, seller editing and explicit publication separated",
+  "references": [
+    {
+      "url": "https://knowledge.bambuser.com/en_US/bambuser-dashboard/the-dashboard",
+      "use": "Session organization"
+    },
+    {
+      "url": "https://bambuser.helpjuice.com/en_US/pre-production/add-and-remove-products-from-a-show",
+      "use": "Product selection per show"
+    },
+    {
+      "url": "https://support.streamyard.com/hc/en-us/articles/360043291252-First-Steps",
+      "use": "Preparation separated from going live"
+    }
+  ],
+  "reviewNotes": [
+    "Generated images are conceptual, not screenshots of implemented features",
+    "Mobile images require responsive translation and validation at390px",
+    "Do not implement decorative drag handles without separate scope",
+    "Unselected products must not appear in a published selection; synthetic states in these individual proposals are not a synchronized session",
+    "Standardize typography, product renders and final UI labels before implementation",
+    "Preserve manual updates, synthetic data and no real payments/video"
+  ],
+  "sha256": {
+    "seller-desktop.png": "97ff5acf99cc36405e86ec37cab57464942ff46f836758489bf86e861118e9ec",
+    "buyer-desktop.png": "a5299a273d01dd69523dc0650572de4b066dc2dcebe51c15b566ccbab51690e6",
+    "seller-mobile.png": "4bc2d96a4195ede5bc3a5920cfaf560fe2e00e3caaf10c4a391a85528c7a6d28",
+    "buyer-mobile.png": "8d3abded0ffa793a36866ef486e20253063378962ef10c93c9cb7d962a8e58b5"
+  }
+}
