@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { DatabaseService } from '../core/database/database.service';
-import { DeliveryService } from './delivery.service';
+import { DeliveryRoutingService } from './delivery-routing.service';
 import type {
   DeliveryMonitorDeliveryStatus,
   DeliveryMonitorItem,
@@ -36,7 +36,7 @@ interface DeliveryMonitorScopeRow {
 export class DeliveryMonitorService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly deliveryService: DeliveryService,
+    private readonly routing: DeliveryRoutingService,
   ) {}
 
   async getActiveSnapshot(
@@ -410,18 +410,17 @@ export class DeliveryMonitorService {
     try {
       const calculatedAt = new Date();
 
-      const route =
-        await this.deliveryService.getCachedDeliveryMapRouteForMonitor(
-          tenantId,
-          {
-            latitude: item.latestLocation.latitude,
-            longitude: item.latestLocation.longitude,
-          },
-          {
-            latitude: item.destinationLocation.latitude,
-            longitude: item.destinationLocation.longitude,
-          },
-        );
+      const route = await this.routing.getCachedDeliveryMapRouteForMonitor(
+        tenantId,
+        {
+          latitude: item.latestLocation.latitude,
+          longitude: item.latestLocation.longitude,
+        },
+        {
+          latitude: item.destinationLocation.latitude,
+          longitude: item.destinationLocation.longitude,
+        },
+      );
 
       if (
         !Number.isFinite(route.distanceMeters) ||

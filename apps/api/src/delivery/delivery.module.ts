@@ -4,7 +4,11 @@ import { Module } from '@nestjs/common';
 import { PaymentsModule } from '../payments/payments.module';
 import { DeliveryAddressService } from './delivery-address.service';
 import { DeliveryController } from './delivery.controller';
-import { DeliveryService } from './delivery.service';
+import { DeliveryRoutingService } from './delivery-routing.service';
+import { DeliveryCheckoutService } from './delivery-checkout.service';
+import { DriverDeliveryService } from './driver-delivery.service';
+import { DeliveryOpsService } from './delivery-ops.service';
+import { DeliveryPublicTrackingService } from './delivery-public-tracking.service';
 import { DeliveryDispatchQueueService } from './delivery-dispatch-queue.service';
 import { DriverAccessGuard } from './driver-access.guard';
 import { DriverAuthController } from './driver-auth.controller';
@@ -43,7 +47,11 @@ import { DeliveryMonitorRealtimeSessionService } from './delivery-monitor-realti
     DeliveryMonitorService,
     DeliveryMonitorRealtimeSessionService,
     GeoProfileResolver,
-    DeliveryService,
+    DeliveryRoutingService,
+    DeliveryCheckoutService,
+    DriverDeliveryService,
+    DeliveryOpsService,
+    DeliveryPublicTrackingService,
     DeliveryDispatchQueueService,
     DeliveryAddressService,
     GeoUsageMeterService,
@@ -76,7 +84,11 @@ import { DeliveryMonitorRealtimeSessionService } from './delivery-monitor-realti
 
   exports: [
     GeoProfileResolver,
-    DeliveryService,
+    DeliveryRoutingService,
+    DeliveryCheckoutService,
+    DriverDeliveryService,
+    DeliveryOpsService,
+    DeliveryPublicTrackingService,
     GEO_PROVIDER,
     ROUTING_PROVIDER,
     GEOCODING_PROVIDER,

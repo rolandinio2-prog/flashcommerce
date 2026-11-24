@@ -22,9 +22,9 @@ Plan completo: `docs/FlashCommerce_Cloud_Plan_Consolidacion.docx` (v1, 2026-11-2
 ## Etapas
 | Etapa | Contenido | Estado |
 |---|---|---|
-| R0 | Orden: archivo de parches, import de Cloud a `docs/cloud`, regla de nombres | En curso |
-| R1 | Dividir `order.service.ts` (checkout, ciclo de vida, POS, stock) | Pendiente |
-| R2 | API por áreas: núcleo, comercio, pagos, delivery, salón; `packages/domain` | Pendiente |
+| R0 | Orden: archivo de parches, import de Cloud a `docs/cloud`, regla de nombres | Hecho |
+| R1 | Dividir `order.service.ts` (checkout, ciclo de vida, POS, stock) | Hecho |
+| R2 | API por áreas: núcleo, comercio, pagos, delivery, salón; dividir `delivery.service.ts` | Hecho (falta `payments.service.ts` y el método `checkout`) |
 | D1 | Delivery independiente: solicitud de envío, clientes del courier, tarifas, liquidación | Pendiente |
 | R3 | Apps web: tienda, backoffice, panel de Delivery | Pendiente |
 | R4 | Base SaaS: alta de negocios, planes por producto, suscripción, dominios | Pendiente |
@@ -32,3 +32,23 @@ Plan completo: `docs/FlashCommerce_Cloud_Plan_Consolidacion.docx` (v1, 2026-11-2
 
 Reglas vigentes: el simulador de QR se mantiene hasta el final; el QR real del BCP es el último paso;
 Caja y Operaciones son solo de escritorio; todo cambio pasa por staging antes de producción.
+
+## Estructura de la API (desde R2)
+```
+apps/api/src/
+  core/       database, staff, operations, branch-operations
+  commerce/   catalog, cart, order (checkout, tracking, lifecycle, ops-query, customer-recovery, stock)
+  dine-in/    tables, reservations
+  payments/
+  delivery/   delivery-checkout, driver-delivery, delivery-ops, delivery-public-tracking,
+              delivery-routing, delivery-helpers, monitor, dispatch-queue, geo
+```
+
+## Mapa para D1: qué usa Delivery del pedido
+Comercio llama a Delivery solo por `DeliveryCheckoutService` (cotizar, preparar ruta, crear envío) y
+`DeliveryPublicTrackingService` (ubicación y POD públicos).
+
+Delivery lee de `public.orders` en 15 consultas (9 en `driver-delivery.service.ts`) y usa solo:
+`id, tenant_id, branch_id, order_number, status, payment_status, order_type, tracking_token, total`.
+Para Delivery independiente, esos datos pasan a la **solicitud de envío** (número, estado de cobro,
+monto a cobrar, token de seguimiento) y `order_id` queda opcional.

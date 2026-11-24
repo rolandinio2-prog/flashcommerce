@@ -7,13 +7,13 @@ import type {
   DeliveryAddressGeocodeInput,
   DeliveryAddressResolveInput,
 } from './delivery-address.types';
-import { DeliveryService } from './delivery.service';
+import { DeliveryCheckoutService } from './delivery-checkout.service';
 import type { DeliveryQuoteInput } from './delivery.types';
 
 @Controller('delivery')
 export class DeliveryController {
   constructor(
-    private readonly deliveryService: DeliveryService,
+    private readonly deliveryCheckout: DeliveryCheckoutService,
     private readonly deliveryAddressService: DeliveryAddressService,
   ) {}
 
@@ -44,7 +44,7 @@ export class DeliveryController {
   @Post('quote')
   @HttpCode(HttpStatus.OK)
   quoteDelivery(@Body() body: DeliveryQuoteInput) {
-    return this.deliveryService.quoteDelivery(body);
+    return this.deliveryCheckout.quoteDelivery(body);
   }
 
   @Post('address/autocomplete')

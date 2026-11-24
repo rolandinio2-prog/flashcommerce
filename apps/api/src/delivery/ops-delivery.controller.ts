@@ -13,12 +13,12 @@ import {
   Query,
 } from '@nestjs/common';
 
-import { DeliveryService } from './delivery.service';
+import { DeliveryOpsService } from './delivery-ops.service';
 
 @Controller('ops')
 @OperationsAccess()
 export class OpsDeliveryController {
-  constructor(private readonly deliveryService: DeliveryService) {}
+  constructor(private readonly deliveryOps: DeliveryOpsService) {}
 
   @Get('deliveries')
   @OperationPermission('delivery.read')
@@ -28,7 +28,7 @@ export class OpsDeliveryController {
     @Query('status')
     status?: string,
   ) {
-    return this.deliveryService.getOperationalDeliveries(
+    return this.deliveryOps.getOperationalDeliveries(
       request.staff.tenantCode,
       request.staff.branchCode,
       status,
@@ -38,7 +38,7 @@ export class OpsDeliveryController {
   @Get('delivery-drivers')
   @OperationPermission('delivery.read')
   getOperationalDrivers(@Req() request: StaffAuthenticatedRequest) {
-    return this.deliveryService.getOperationalDrivers(
+    return this.deliveryOps.getOperationalDrivers(
       request.staff.tenantCode,
       request.staff.branchCode,
     );
@@ -57,7 +57,7 @@ export class OpsDeliveryController {
       expectedAssignmentId?: unknown;
     },
   ) {
-    return this.deliveryService.assignOperationalDelivery(
+    return this.deliveryOps.assignOperationalDelivery(
       deliveryId,
       request.staff.tenantCode,
       request.staff.branchCode,

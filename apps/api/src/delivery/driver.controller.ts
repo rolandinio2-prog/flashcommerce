@@ -13,14 +13,14 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 
-import { DeliveryService } from './delivery.service';
+import { DriverDeliveryService } from './driver-delivery.service';
 import { DriverAccessGuard } from './driver-access.guard';
 import type { DriverAuthenticatedRequest } from './driver-access.guard';
 
 @Controller('driver')
 @UseGuards(DriverAccessGuard)
 export class DriverController {
-  constructor(private readonly deliveryService: DeliveryService) {}
+  constructor(private readonly driverDeliveries: DriverDeliveryService) {}
 
   @Get('me')
   getAuthenticatedDriver(
@@ -62,7 +62,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.getDriverActiveDeliveries(
+    return this.driverDeliveries.getDriverActiveDeliveries(
       identity.tenantId,
       identity.driverId,
     );
@@ -78,7 +78,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.getDriverDeliveryMapRoute(
+    return this.driverDeliveries.getDriverDeliveryMapRoute(
       deliveryId,
       identity.tenantId,
       identity.driverId,
@@ -94,7 +94,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.acceptDriverDelivery(
+    return this.driverDeliveries.acceptDriverDelivery(
       deliveryId,
       identity.tenantId,
       identity.driverId,
@@ -112,7 +112,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.pickupDriverDelivery(
+    return this.driverDeliveries.pickupDriverDelivery(
       deliveryId,
       identity.tenantId,
       identity.driverId,
@@ -129,7 +129,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.startDriverDelivery(
+    return this.driverDeliveries.startDriverDelivery(
       deliveryId,
       identity.tenantId,
       identity.driverId,
@@ -146,7 +146,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.arriveDriverDelivery(
+    return this.driverDeliveries.arriveDriverDelivery(
       deliveryId,
       identity.tenantId,
       identity.driverId,
@@ -176,7 +176,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.recordDriverLocation(
+    return this.driverDeliveries.recordDriverLocation(
       deliveryId,
       identity.tenantId,
       identity.driverId,
@@ -207,7 +207,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.collectDriverCodCash(
+    return this.driverDeliveries.collectDriverCodCash(
       deliveryId,
       identity.tenantId,
       identity.driverId,
@@ -231,7 +231,7 @@ export class DriverController {
   ) {
     const identity = this.requireOperationalIdentity(request);
 
-    return this.deliveryService.deliverDriverDelivery(
+    return this.driverDeliveries.deliverDriverDelivery(
       deliveryId,
       identity.tenantId,
       identity.driverId,

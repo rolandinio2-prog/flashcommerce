@@ -16,7 +16,7 @@ import {
 } from '@nestjs/common';
 import { issueQuote, requireQuoteToken, verifyQuote } from './checkout-quote';
 import { DatabaseService } from '../../core/database/database.service';
-import { DeliveryService } from '../../delivery/delivery.service';
+import { DeliveryCheckoutService } from '../../delivery/delivery-checkout.service';
 import {
   type CreatedDelivery,
   type DeliveryCheckoutQuote,
@@ -51,7 +51,7 @@ import { CustomerRecoveryService } from './customer-recovery.service';
 export class CheckoutService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly deliveryService: DeliveryService,
+    private readonly deliveryCheckout: DeliveryCheckoutService,
     private readonly orderTracking: OrderTrackingService,
     private readonly customerRecovery: CustomerRecoveryService,
   ) {}
@@ -1255,7 +1255,7 @@ export class CheckoutService {
           throw new Error('Delivery route snapshot invariant failed');
         }
 
-        deliveryQuote = await this.deliveryService.quoteDeliveryForCheckout(
+        deliveryQuote = await this.deliveryCheckout.quoteDeliveryForCheckout(
           client,
           {
             tenantId: cart.tenant_id,
@@ -1567,7 +1567,7 @@ export class CheckoutService {
             status: 'CREATED',
           };
         } else {
-          createdDelivery = await this.deliveryService.createDeliveryForOrder(
+          createdDelivery = await this.deliveryCheckout.createDeliveryForOrder(
             client,
             {
               tenantId: cart.tenant_id,
@@ -1902,7 +1902,7 @@ export class CheckoutService {
       0,
     );
 
-    return this.deliveryService.prepareDeliveryCheckoutRoute({
+    return this.deliveryCheckout.prepareDeliveryCheckoutRoute({
       tenantId: cart.tenant_id,
 
       branchId: cart.branch_id,

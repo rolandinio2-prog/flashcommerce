@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../core/database/database.service';
-import { DeliveryService } from '../../delivery/delivery.service';
+import { DeliveryPublicTrackingService } from '../../delivery/delivery-public-tracking.service';
 import {
   type TrackingOrderRow,
   type TrackingItemRow,
@@ -11,7 +11,7 @@ import {
 export class OrderTrackingService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly deliveryService: DeliveryService,
+    private readonly deliveryTracking: DeliveryPublicTrackingService,
   ) {}
 
   // =======================================================
@@ -218,12 +218,12 @@ export class OrderTrackingService {
     };
   }
   async getDeliveryLocation(trackingToken: string) {
-    return this.deliveryService.getPublicDeliveryLocationByOrderTrackingToken(
+    return this.deliveryTracking.getPublicDeliveryLocationByOrderTrackingToken(
       trackingToken,
     );
   }
   async getDeliveryPod(trackingToken: string) {
-    return this.deliveryService.getPublicDeliveryPodByOrderTrackingToken(
+    return this.deliveryTracking.getPublicDeliveryPodByOrderTrackingToken(
       trackingToken,
     );
   }
