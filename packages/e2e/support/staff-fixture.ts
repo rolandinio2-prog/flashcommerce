@@ -159,6 +159,58 @@ export class StaffFixture {
     return r.rows[0] ?? null;
   }
 
+  private readonly driverIds: string[] = [];
+
+  /**
+   * D1c: a temporary driver for payout tests. It is INACTIVE with a DISABLED
+   * branch membership, so real dispatch never offers it work. Removed in dispose().
+   */
+  async createPayoutDriver(): Promise<string> {
+    const code = `QAE${this.runTag}D${this.driverIds.length}`;
+    const r = await this.client.query<{ id: string }>(
+      `insert into public.delivery_drivers (tenant_id, code, display_name, phone, status)
+       values ($1, $2, $3, '70000001', 'INACTIVE') returning id::text`,
+      [this.tenantId, code, `E2E Driver ${code}`],
+    );
+    const id = r.rows[0].id;
+    this.driverIds.push(id);
+    await this.client.query(
+      `insert into public.delivery_driver_branches (tenant_id, branch_id, driver_id, status) values ($1, $2, $3, 'DISABLED')`,
+      [this.tenantId, this.branchId, id],
+    );
+    return id;
+  }
+
+  /** D1c: marks a courier request as delivered by the given driver (releases any live assignment first). */
+  async completeDelivery(orderNumber: number, driverId: string): Promise<void> {
+    const d = await this.client.query<{ id: string }>(
+      `select d.id::text from public.deliveries d join public.orders o on o.id = d.order_id
+        where o.tenant_id = $1 and o.branch_id = $2 and o.order_number = $3`,
+      [this.tenantId, this.branchId, orderNumber],
+    );
+    const deliveryId = d.rows[0]?.id;
+    if (!deliveryId) throw new Error(`completeDelivery: order ${orderNumber} has no delivery`);
+    await this.client.query('begin');
+    try {
+      await this.client.query(
+        `update public.delivery_assignments set status = 'RELEASED', released_at = now(), release_reason = 'e2e settlement test'
+          where delivery_id = $1 and status in ('ASSIGNED', 'ACCEPTED')`,
+        [deliveryId],
+      );
+      await this.client.query(
+        `insert into public.delivery_assignments (tenant_id, branch_id, delivery_id, driver_id, assignment_number, status, assigned_at, accepted_at, completed_at)
+         select $1, $2, $3, $4, coalesce(max(assignment_number), 0) + 1, 'COMPLETED', now() - interval '10 minutes', now() - interval '9 minutes', now()
+           from public.delivery_assignments where delivery_id = $3`,
+        [this.tenantId, this.branchId, deliveryId, driverId],
+      );
+      await this.client.query(`update public.deliveries set status = 'DELIVERED' where id = $1`, [deliveryId]);
+      await this.client.query('commit');
+    } catch (error) {
+      await this.client.query('rollback');
+      throw error;
+    }
+  }
+
   /** B10: the session reaches its expiry time. */
   async expireSession(handle: StaffSessionHandle): Promise<void> {
     const result = await this.client.query(
@@ -182,6 +234,14 @@ export class StaffFixture {
     try {
       if (this.probeLocationIds.length) {
         await this.client.query(`delete from public.delivery_driver_locations where id = any($1::uuid[])`, [this.probeLocationIds]);
+      }
+      if (this.driverIds.length) {
+        const ids = this.driverIds;
+        await this.client.query(
+          `delete from public.courier_driver_payouts where driver_id = any($1::uuid[])`, [ids]); // items cascade
+        await this.client.query(`delete from public.delivery_assignments where driver_id = any($1::uuid[])`, [ids]);
+        await this.client.query(`delete from public.delivery_driver_branches where driver_id = any($1::uuid[])`, [ids]);
+        await this.client.query(`delete from public.delivery_drivers where id = any($1::uuid[])`, [ids]);
       }
       if (this.created.length) {
         // Sessions and memberships cascade from staff_users.

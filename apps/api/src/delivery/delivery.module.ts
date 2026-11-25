@@ -8,6 +8,8 @@ import { DeliveryRoutingService } from './delivery-routing.service';
 import { DeliveryCheckoutService } from './delivery-checkout.service';
 import { CourierService } from './courier/courier.service';
 import { CourierController } from './courier/courier.controller';
+import { CourierSettlementService } from './courier/courier-settlement.service';
+import { CourierSettlementController } from './courier/courier-settlement.controller';
 import { DriverDeliveryService } from './driver-delivery.service';
 import { DeliveryOpsService } from './delivery-ops.service';
 import { DeliveryPublicTrackingService } from './delivery-public-tracking.service';
@@ -44,10 +46,12 @@ import { DeliveryMonitorRealtimeSessionService } from './delivery-monitor-realti
     DriverController,
     DriverAuthController,
     CourierController,
+    CourierSettlementController,
   ],
 
   providers: [
     CourierService,
+    CourierSettlementService,
     DeliveryMonitorService,
     DeliveryMonitorRealtimeSessionService,
     GeoProfileResolver,

@@ -11,8 +11,9 @@ import {
   type CourierRate,
   type CourierRequestSummary,
 } from "../../../lib/courier-api";
+import { ClientStatements, DriverPayouts } from "./ops-courier-settlements";
 
-type Section = "NEW" | "LIST" | "CLIENTS" | "RATES";
+type Section = "NEW" | "LIST" | "CLIENTS" | "RATES" | "STATEMENTS" | "PAYOUTS";
 
 const input = "w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm";
 const label = "text-xs font-bold uppercase tracking-wide text-zinc-500";
@@ -51,12 +52,19 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
   const tabs: [Section, string][] = [
     ["NEW", "Nuevo envío"],
     ["LIST", "Envíos"],
-    ...(canManage ? ([["CLIENTS", "Clientes"], ["RATES", "Tarifas"]] as [Section, string][]) : []),
+    ...(canManage
+      ? ([
+          ["CLIENTS", "Clientes"],
+          ["RATES", "Tarifas"],
+          ["STATEMENTS", "Cobros a clientes"],
+          ["PAYOUTS", "Pagos a conductores"],
+        ] as [Section, string][])
+      : []),
   ];
 
   return (
     <section className="space-y-5">
-      <nav className="flex flex-wrap gap-2">
+      <nav className="flex flex-wrap gap-2 print:hidden">
         {tabs.map(([key, text]) => (
           <button
             key={key}
@@ -74,6 +82,8 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
       {section === "LIST" && <RequestList />}
       {section === "CLIENTS" && <Clients tenantCode={tenantCode} clients={clients} onChanged={loadClients} />}
       {section === "RATES" && <Rates clients={clients} />}
+      {section === "STATEMENTS" && <ClientStatements clients={clients} />}
+      {section === "PAYOUTS" && <DriverPayouts />}
     </section>
   );
 }
