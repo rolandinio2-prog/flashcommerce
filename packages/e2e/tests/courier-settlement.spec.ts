@@ -53,6 +53,7 @@ test('courier settlements: client statement and driver payout', async ({ request
     const statement = (await created.json()) as { id: string; status: string; totalFee: number; deliveries: { orderNumber: number }[] };
     expect(statement).toMatchObject({ status: 'ISSUED', totalFee: 20 });
     expect(statement.deliveries.map((d) => d.orderNumber).sort()).toEqual([...orders].sort());
+    expect(statement.deliveries.every((d) => (d as { courierRequest?: boolean }).courierRequest === true)).toBe(true);
 
     expect((await post(request, '/statements', { courierClientId: client.id, ...period })).status()).toBe(409); // nothing left to bill
 

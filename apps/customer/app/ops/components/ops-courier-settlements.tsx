@@ -82,7 +82,7 @@ function DeliveriesTable({ rows, showClient, showAmount }: { rows: SettlementDel
           <tr key={r.deliveryId} className="border-t border-zinc-100">
             <td className="py-1.5 font-bold">#{r.orderNumber}</td>
             <td>{when(r.deliveredAt)}</td>
-            {showClient && <td>{r.clientName ?? "Tienda"}</td>}
+            {showClient && <td>{r.clientName ?? (r.courierRequest ? "Sin cliente" : "Tienda")}</td>}
             <td>{r.recipientName}</td>
             <td className="text-right">{money(r.fee)}</td>
             {showAmount && <td className="text-right">{money(r.amount ?? 0)}</td>}

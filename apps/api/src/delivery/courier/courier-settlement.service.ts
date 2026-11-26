@@ -68,6 +68,7 @@ interface PendingRow {
   delivered_at: string;
   recipient_name: string;
   client_name: string | null;
+  order_origin: string;
   fee: string;
 }
 
@@ -98,7 +99,7 @@ export class CourierSettlementService {
   private completedSql(extra: string) {
     return `
       select d.id::text as delivery_id, o.order_number::text, a.completed_at::text as delivered_at,
-             d.recipient_name, c.name as client_name, d.quoted_delivery_fee::text as fee
+             d.recipient_name, c.name as client_name, o.order_origin, d.quoted_delivery_fee::text as fee
         from public.delivery_assignments a
         join public.deliveries d on d.tenant_id=a.tenant_id and d.branch_id=a.branch_id and d.id=a.delivery_id
         join public.orders o on o.tenant_id=d.tenant_id and o.branch_id=d.branch_id and o.id=d.order_id
@@ -117,6 +118,8 @@ export class CourierSettlementService {
       deliveredAt: r.delivered_at,
       recipientName: r.recipient_name,
       clientName: r.client_name,
+      /** true for courier requests (with or without client); false for store orders. */
+      courierRequest: r.order_origin === 'COURIER_REQUEST',
       fee: Number(r.fee),
     }));
   }
@@ -309,7 +312,7 @@ export class CourierSettlementService {
     if (!x) throw new NotFoundException('Liquidación no encontrada.');
     const items = await db.query<PendingRow>(
       `select d.id::text as delivery_id, o.order_number::text, a.completed_at::text as delivered_at,
-              d.recipient_name, null::text as client_name, i.fee::text
+              d.recipient_name, null::text as client_name, o.order_origin, i.fee::text
          from public.courier_client_statement_items i
          join public.deliveries d on d.id=i.delivery_id
          join public.orders o on o.id=d.order_id
@@ -632,7 +635,7 @@ export class CourierSettlementService {
     if (!x) throw new NotFoundException('Pago no encontrado.');
     const items = await db.query<PendingRow & { amount: string }>(
       `select d.id::text as delivery_id, o.order_number::text, a.completed_at::text as delivered_at,
-              d.recipient_name, c.name as client_name, i.fee::text, i.amount::text
+              d.recipient_name, c.name as client_name, o.order_origin, i.fee::text, i.amount::text
          from public.courier_driver_payout_items i
          join public.deliveries d on d.id=i.delivery_id
          join public.orders o on o.id=d.order_id

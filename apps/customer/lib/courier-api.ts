@@ -74,6 +74,7 @@ export interface SettlementDelivery {
   deliveredAt: string;
   recipientName: string;
   clientName: string | null;
+  courierRequest: boolean;
   fee: number;
   amount?: number;
 }
