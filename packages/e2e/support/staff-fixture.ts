@@ -181,14 +181,19 @@ export class StaffFixture {
     return id;
   }
 
-  /** D1c: marks a courier request as delivered by the given driver (releases any live assignment first). */
-  async completeDelivery(orderNumber: number, driverId: string): Promise<void> {
-    const d = await this.client.query<{ id: string }>(
-      `select d.id::text from public.deliveries d join public.orders o on o.id = d.order_id
+  /**
+   * D1c: marks a courier request as delivered by the given driver (releases any live assignment first).
+   * With `cashReceived`, it also records the driver's cash-on-delivery collection the way the driver
+   * app does (DRIVER_COD payment PAID + delivery_cash_collections row).
+   */
+  async completeDelivery(orderNumber: number, driverId: string, cashReceived?: number): Promise<void> {
+    const d = await this.client.query<{ id: string; order_id: string }>(
+      `select d.id::text, o.id::text as order_id from public.deliveries d join public.orders o on o.id = d.order_id
         where o.tenant_id = $1 and o.branch_id = $2 and o.order_number = $3`,
       [this.tenantId, this.branchId, orderNumber],
     );
     const deliveryId = d.rows[0]?.id;
+    const orderId = d.rows[0]?.order_id;
     if (!deliveryId) throw new Error(`completeDelivery: order ${orderNumber} has no delivery`);
     await this.client.query('begin');
     try {
@@ -197,12 +202,31 @@ export class StaffFixture {
           where delivery_id = $1 and status in ('ASSIGNED', 'ACCEPTED')`,
         [deliveryId],
       );
-      await this.client.query(
+      const assignment = await this.client.query<{ id: string }>(
         `insert into public.delivery_assignments (tenant_id, branch_id, delivery_id, driver_id, assignment_number, status, assigned_at, accepted_at, completed_at)
          select $1, $2, $3, $4, coalesce(max(assignment_number), 0) + 1, 'COMPLETED', now() - interval '10 minutes', now() - interval '9 minutes', now()
-           from public.delivery_assignments where delivery_id = $3`,
+           from public.delivery_assignments where delivery_id = $3
+         returning id::text`,
         [this.tenantId, this.branchId, deliveryId, driverId],
       );
+      if (cashReceived !== undefined) {
+        const paid = await this.client.query<{ id: string; amount: string }>(
+          `update public.order_payments set status = 'PAID', paid_at = now(), verified_at = now(),
+                  cash_received_amount = $2, cash_change_amount = $2 - amount
+            where order_id = $1 and provider = 'DRIVER_COD' and status = 'AWAITING_CONFIRMATION'
+            returning id::text, amount::text`,
+          [orderId, cashReceived],
+        );
+        if (!paid.rows[0]) throw new Error(`completeDelivery: order ${orderNumber} has no pending DRIVER_COD payment`);
+        await this.client.query(`update public.orders set payment_status = 'PAID' where id = $1`, [orderId]);
+        await this.client.query(
+          `insert into public.delivery_cash_collections (tenant_id, branch_id, order_id, delivery_id, assignment_id, driver_id, payment_id,
+                  amount, currency, cash_received_amount, cash_change_amount, idempotency_key)
+           values ($1, $2, $3, $4, $5, $6, $7, $8::numeric, 'BOB', $9::numeric, $9::numeric - $8::numeric, $10)`,
+          [this.tenantId, this.branchId, orderId, deliveryId, assignment.rows[0].id, driverId, paid.rows[0].id,
+            paid.rows[0].amount, cashReceived, `e2e-collect:${deliveryId}`],
+        );
+      }
       await this.client.query(`update public.deliveries set status = 'DELIVERED' where id = $1`, [deliveryId]);
       await this.client.query('commit');
     } catch (error) {
@@ -239,6 +263,9 @@ export class StaffFixture {
         const ids = this.driverIds;
         await this.client.query(
           `delete from public.courier_driver_payouts where driver_id = any($1::uuid[])`, [ids]); // items cascade
+        await this.client.query(`delete from public.delivery_cash_settlement_items where driver_id = any($1::uuid[])`, [ids]);
+        await this.client.query(`delete from public.delivery_cash_settlements where driver_id = any($1::uuid[])`, [ids]);
+        await this.client.query(`delete from public.delivery_cash_collections where driver_id = any($1::uuid[])`, [ids]);
         await this.client.query(`delete from public.delivery_assignments where driver_id = any($1::uuid[])`, [ids]);
         await this.client.query(`delete from public.delivery_driver_branches where driver_id = any($1::uuid[])`, [ids]);
         await this.client.query(`delete from public.delivery_drivers where id = any($1::uuid[])`, [ids]);

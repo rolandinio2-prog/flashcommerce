@@ -43,6 +43,8 @@ export interface CourierRequestSummary {
   addressText: string;
   fee: number;
   collectAmount: number;
+  /** AWAITING_CONFIRMATION: cash still to collect; PAID: collected; NOT_REQUIRED: nothing to collect. */
+  paymentStatus: string;
   createdAt: string;
 }
 
@@ -60,6 +62,8 @@ export interface CourierRequestInput {
   latitude: number;
   longitude: number;
   packageDescription?: string;
+  /** Cash the driver collects from the recipient for the client. */
+  collectAmount?: number;
   feeOverride?: number;
   notes?: string;
 }
@@ -76,6 +80,8 @@ export interface SettlementDelivery {
   clientName: string | null;
   courierRequest: boolean;
   fee: number;
+  /** Cash collected for the client on this delivery (0 if none). */
+  collected: number;
   amount?: number;
 }
 
@@ -87,6 +93,9 @@ export interface StatementSummary {
   periodTo: string;
   deliveryCount: number;
   totalFee: number;
+  collectedTotal: number;
+  /** collectedTotal - totalFee: > 0 the fleet pays the client, < 0 the client pays the fleet. */
+  netAmount: number;
   status: SettlementStatus;
   paymentMethod: PaymentMethod | null;
   paidAt: string | null;
@@ -133,6 +142,32 @@ export interface StatementPreview {
   deliveries: SettlementDelivery[];
   deliveryCount: number;
   totalFee: number;
+  collectedTotal: number;
+  netAmount: number;
+}
+export interface DriverCash {
+  driverId: string;
+  displayName: string;
+  code: string;
+  collections: number;
+  amount: number;
+  oldestCollectedAt: string;
+}
+export interface DriverCashPending {
+  driverId: string;
+  expectedAmount: number;
+  collections: { id: string; orderNumber: number; recipientName: string; clientName: string | null; amount: number; collectedAt: string }[];
+}
+export interface CashRemittance {
+  id: string;
+  driverName: string;
+  status: string;
+  collections: number;
+  expectedAmount: number;
+  receivedAmount: number | null;
+  differenceAmount: number | null;
+  settledAt: string | null;
+  notes: string | null;
 }
 export interface PayoutPreview {
   payMode: DriverPayMode;
@@ -156,7 +191,7 @@ export const courierApi = {
   quote: (input: Partial<CourierRequestInput>) => apiRequest<CourierQuote>(`${BASE}/quote`, json("POST", input)),
   listRequests: () => apiRequest<{ requests: CourierRequestSummary[] }>(`${BASE}/requests`),
   createRequest: (input: CourierRequestInput) =>
-    apiRequest<{ orderNumber: number; trackingToken: string; fee: number; eta: { minMinutes: number; maxMinutes: number } }>(
+    apiRequest<{ orderNumber: number; trackingToken: string; fee: number; collectAmount: number; eta: { minMinutes: number; maxMinutes: number } }>(
       `${BASE}/requests`,
       json("POST", input),
     ),
@@ -187,6 +222,16 @@ export const courierApi = {
   payPayout: (id: string, input: { paymentMethod: PaymentMethod; paymentReference?: string }) =>
     apiRequest<PayoutDetail>(`${BASE}/payouts/${encodeURIComponent(id)}/pay`, json("POST", input)),
   voidPayout: (id: string) => apiRequest<PayoutDetail>(`${BASE}/payouts/${encodeURIComponent(id)}/void`, json("POST", {})),
+
+  // COD: driver cash remittance
+  cashSummary: () => apiRequest<{ currency: string; drivers: DriverCash[] }>(`${BASE}/cash`),
+  driverCash: (driverId: string) => apiRequest<DriverCashPending>(`${BASE}/cash/drivers/${encodeURIComponent(driverId)}`),
+  listRemittances: () => apiRequest<{ remittances: CashRemittance[] }>(`${BASE}/cash/remittances`),
+  remit: (input: { driverId: string; receivedAmount: number; notes?: string }) =>
+    apiRequest<{ id: string; expectedAmount: number; receivedAmount: number; differenceAmount: number }>(
+      `${BASE}/cash/remittances`,
+      json("POST", input),
+    ),
 };
 
 export const PAY_MODE_LABEL: Record<DriverPayMode, string> = {

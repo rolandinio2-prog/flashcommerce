@@ -2051,7 +2051,14 @@ export class PaymentsService {
     client: PoolClient,
     input: DriverCodCashCollectionInput,
   ) {
-    rejectCashOnDelivery();
+    // Cash on delivery is enabled only for courier requests (FlashCommerce Delivery);
+    // store delivery orders stay prepaid-QR only.
+    const origin = await client.query<{ order_origin: string }>(
+      'select order_origin from public.orders where tenant_id=$1::uuid and branch_id=$2::uuid and id=$3::uuid',
+      [input.tenantId, input.branchId, input.orderId],
+    );
+    if (origin.rows[0]?.order_origin !== 'COURIER_REQUEST')
+      rejectCashOnDelivery();
     const cashReceivedAmount = this.requireCashAmount(input.cashReceivedAmount);
 
     const idempotencyToken = this.requireIdempotencyToken(input.idempotencyKey);

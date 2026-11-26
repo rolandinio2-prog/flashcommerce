@@ -40,11 +40,18 @@ test('courier: manual delivery request reaches dispatch, not the kitchen', async
     expect(quote.status(), await quote.text()).toBe(201);
     expect((await quote.json()).fee).toBe(9);
 
+    // Cash on delivery: the order carries the amount to collect and a pending DRIVER_COD payment,
+    // and it is still dispatched (cash is collected on arrival).
     const withCod = await request.post(api('/requests'), {
       headers,
       data: { courierClientId: client.id, recipientName: 'Ana', recipientPhone: '71111111', addressText: 'Av. 2', latitude: point!.latitude, longitude: point!.longitude, collectAmount: 50 },
     });
-    expect(withCod.status()).toBe(409);
+    expect(withCod.status(), await withCod.text()).toBe(201);
+    const cod = (await withCod.json()) as { orderNumber: number; collectAmount: number };
+    expect(cod.collectAmount).toBe(50);
+    const codState = await fixture.orderState(cod.orderNumber);
+    expect(codState).toMatchObject({ total: '50.00', paymentStatus: 'AWAITING_CONFIRMATION' });
+    expect(['WAITING_ASSIGNMENT', 'ASSIGNED']).toContain((await fixture.courierDeliveryState(cod.orderNumber))!.deliveryStatus);
 
     const res = await request.post(api('/requests'), {
       headers,

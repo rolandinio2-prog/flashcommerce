@@ -11,9 +11,10 @@ import {
   type CourierRate,
   type CourierRequestSummary,
 } from "../../../lib/courier-api";
+import { CashRemittances } from "./ops-courier-cash";
 import { ClientStatements, DriverPayouts } from "./ops-courier-settlements";
 
-type Section = "NEW" | "LIST" | "CLIENTS" | "RATES" | "STATEMENTS" | "PAYOUTS";
+type Section = "NEW" | "LIST" | "CASH" | "CLIENTS" | "RATES" | "STATEMENTS" | "PAYOUTS";
 
 const input = "w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm";
 const label = "text-xs font-bold uppercase tracking-wide text-zinc-500";
@@ -52,6 +53,7 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
   const tabs: [Section, string][] = [
     ["NEW", "Nuevo envío"],
     ["LIST", "Envíos"],
+    ["CASH", "Efectivo de conductores"],
     ...(canManage
       ? ([
           ["CLIENTS", "Clientes"],
@@ -80,6 +82,7 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">{error}</p>}
       {section === "NEW" && <NewRequest tenantCode={tenantCode} clients={clients.filter((c) => c.status === "ACTIVE")} />}
       {section === "LIST" && <RequestList />}
+      {section === "CASH" && <CashRemittances />}
       {section === "CLIENTS" && <Clients tenantCode={tenantCode} clients={clients} onChanged={loadClients} />}
       {section === "RATES" && <Rates clients={clients} />}
       {section === "STATEMENTS" && <ClientStatements clients={clients} />}
@@ -115,9 +118,10 @@ function NewRequest({ tenantCode, clients }: { tenantCode: string; clients: Cour
   const [notes, setNotes] = useState("");
   const [quote, setQuote] = useState<CourierQuote | null>(null);
   const [feeOverride, setFeeOverride] = useState("");
+  const [collectAmount, setCollectAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ orderNumber: number; trackingToken: string; fee: number } | null>(null);
+  const [created, setCreated] = useState<{ orderNumber: number; trackingToken: string; fee: number; collectAmount: number } | null>(null);
 
   function chooseClient(id: string) {
     setClientId(id);
@@ -172,6 +176,7 @@ function NewRequest({ tenantCode, clients }: { tenantCode: string; clients: Cour
         packageDescription: packageDescription || undefined,
         notes: notes || undefined,
         feeOverride: feeOverride === "" ? undefined : Number(feeOverride),
+        collectAmount: collectAmount === "" ? undefined : Number(collectAmount),
       });
       setCreated(result);
       setRecipientName("");
@@ -183,6 +188,7 @@ function NewRequest({ tenantCode, clients }: { tenantCode: string; clients: Cour
       setNotes("");
       setQuote(null);
       setFeeOverride("");
+      setCollectAmount("");
     } catch (e) {
       setError(message(e));
     } finally {
@@ -249,16 +255,22 @@ function NewRequest({ tenantCode, clients }: { tenantCode: string; clients: Cour
             </div>
             <button type="button" className={secondary} disabled={!destination || busy} onClick={() => void runQuote()}>Calcular tarifa</button>
           </div>
-          <div className="mt-3 max-w-xs">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <Field title="Tarifa manual (opcional)"><input className={input} type="number" min={0} step="0.5" value={feeOverride} onChange={(e) => setFeeOverride(e.target.value)} placeholder={quote ? quote.fee.toFixed(2) : ""} /></Field>
+            <Field title="Cobrar en la entrega (Bs)">
+              <input className={input} type="number" min={0} step="0.5" aria-label="Monto a cobrar en la entrega" value={collectAmount} onChange={(e) => setCollectAmount(e.target.value)} placeholder="0.00" />
+            </Field>
           </div>
-          <p className="mt-2 text-xs text-zinc-500">El cobro contra entrega para envíos estará disponible en la siguiente fase.</p>
+          <p className="mt-2 text-xs text-zinc-500">
+            Si el cliente vende contra entrega, el conductor cobra este monto en efectivo y lo rinde a la empresa; luego se descuenta de la tarifa en la liquidación del cliente.
+          </p>
         </div>
 
         {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
         {created && (
           <p role="status" className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
-            Envío #{created.orderNumber} creado ({money(created.fee)}). Ya está en el monitor de delivery. ·{" "}
+            Envío #{created.orderNumber} creado ({money(created.fee)}
+            {created.collectAmount > 0 ? ` · cobrar ${money(created.collectAmount)} al destinatario` : ""}). Ya está en el monitor de delivery. ·{" "}
             <a className="font-bold underline" href={`/track/${created.trackingToken}`} target="_blank" rel="noreferrer">Ver seguimiento</a>
           </p>
         )}
@@ -303,7 +315,7 @@ function RequestList() {
       ) : (
         <table className="w-full text-left text-sm">
           <thead className={label}>
-            <tr><th className="py-2">#</th><th>Cliente</th><th>Destinatario</th><th>Dirección</th><th>Tarifa</th><th>Estado</th><th>Creado</th><th /></tr>
+            <tr><th className="py-2">#</th><th>Cliente</th><th>Destinatario</th><th>Dirección</th><th>Tarifa</th><th>Cobro</th><th>Estado</th><th>Creado</th><th /></tr>
           </thead>
           <tbody>
             {rows.map((r) => (
@@ -313,6 +325,15 @@ function RequestList() {
                 <td>{r.recipientName}</td>
                 <td className="max-w-xs truncate">{r.addressText}</td>
                 <td>{money(r.fee)}</td>
+                <td>
+                  {r.collectAmount > 0 ? (
+                    <span className={r.paymentStatus === "PAID" ? "text-green-800" : "text-amber-800"}>
+                      {money(r.collectAmount)} · {r.paymentStatus === "PAID" ? "cobrado" : "por cobrar"}
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td>{DELIVERY_STATUS_LABEL[r.deliveryStatus] ?? r.deliveryStatus}</td>
                 <td>{new Date(r.createdAt).toLocaleString("es-BO", { dateStyle: "short", timeStyle: "short" })}</td>
                 <td><a className="font-bold underline" href={`/track/${r.trackingToken}`} target="_blank" rel="noreferrer">Seguimiento</a></td>

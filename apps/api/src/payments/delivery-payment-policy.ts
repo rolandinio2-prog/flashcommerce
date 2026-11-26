@@ -49,6 +49,31 @@ export async function assertDeliveryQrPaid(
     Number(row.total) === 0
   )
     return;
+  // Courier request with cash to collect (FlashCommerce Delivery COD): dispatchable
+  // while the driver's cash collection is pending, and after it was collected.
+  if (
+    row?.order_type === 'DELIVERY' &&
+    row.order_origin === 'COURIER_REQUEST' &&
+    (row.payment_status === 'AWAITING_CONFIRMATION' ||
+      row.payment_status === 'PAID')
+  ) {
+    const cod = await client.query<{ eligible: boolean }>(
+      "select exists (select 1 from public.order_payments where tenant_id=$1::uuid and branch_id=$2::uuid and order_id=$3::uuid and method='CASH' and provider='DRIVER_COD' and status=$6 and amount=$4::numeric and currency=$5) as eligible",
+      [
+        scope.tenant_id,
+        scope.branch_id,
+        scope.order_id,
+        row.total,
+        row.currency,
+        row.payment_status,
+      ],
+    );
+    if (cod.rows[0]?.eligible !== true)
+      throw new ConflictException(
+        'El envío no tiene un cobro contra entrega válido por el monto completo.',
+      );
+    return;
+  }
   if (!row || row.order_type !== 'DELIVERY' || row.payment_status !== 'PAID') {
     throw new ConflictException(
       'Delivery requiere pago QR confirmado antes del despacho.',

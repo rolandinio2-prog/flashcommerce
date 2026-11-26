@@ -34,6 +34,7 @@ export const OPERATIONS_POLICY = {
   'delivery.monitor': { module: 'delivery', roles: CASH },
   'courier.read': { module: 'delivery', roles: CASH },
   'courier.create': { module: 'delivery', roles: CASH },
+  'courier.cash': { module: 'delivery', roles: CASH },
   'courier.manage': {
     module: 'delivery',
     roles: ['ADMIN', 'MANAGER'] as readonly StaffRole[],

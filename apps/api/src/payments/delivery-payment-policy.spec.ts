@@ -70,6 +70,54 @@ describe('delivery QR payment policy', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['AWAITING_CONFIRMATION', 'PAID'])(
+    'lets a courier request with cash to collect (%s) be dispatched with its DRIVER_COD payment',
+    async (status) => {
+      const { client: c, query } = client(
+        {
+          ...paidDelivery,
+          payment_status: status,
+          total: '150.00',
+          order_origin: 'COURIER_REQUEST',
+        },
+        true,
+      );
+      await expect(assertDeliveryQrPaid(c, scope)).resolves.toBeUndefined();
+      const [sql, params] = (query.mock.calls as [string, unknown[]][])[1];
+      expect(sql).toContain("provider='DRIVER_COD'");
+      expect(params).toEqual(['t', 'b', 'o', '150.00', 'BOB', status]);
+    },
+  );
+
+  it('rejects a courier cash request without its DRIVER_COD payment', async () => {
+    const { client: c } = client(
+      {
+        ...paidDelivery,
+        payment_status: 'AWAITING_CONFIRMATION',
+        total: '150.00',
+        order_origin: 'COURIER_REQUEST',
+      },
+      false,
+    );
+    await expect(assertDeliveryQrPaid(c, scope)).rejects.toThrow(
+      'El envío no tiene un cobro contra entrega válido por el monto completo.',
+    );
+  });
+
+  it('keeps store delivery orders on prepaid QR only (cash pending is rejected)', async () => {
+    const { client: c } = client(
+      {
+        ...paidDelivery,
+        payment_status: 'AWAITING_CONFIRMATION',
+        order_origin: 'PUBLIC_MENU',
+      },
+      true,
+    );
+    await expect(assertDeliveryQrPaid(c, scope)).rejects.toThrow(
+      'Delivery requiere pago QR confirmado antes del despacho.',
+    );
+  });
+
   it('rejects when no eligible confirmed QR payment exists', async () => {
     const { client: c } = client(paidDelivery, false);
     await expect(assertDeliveryQrPaid(c, scope)).rejects.toThrow(

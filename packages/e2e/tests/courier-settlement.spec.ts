@@ -90,6 +90,60 @@ test('courier settlements: client statement and driver payout', async ({ request
   }
 });
 
+/**
+ * Courier cash on delivery: the driver collects Bs 150 for the client, hands in
+ * Bs 140 (a Bs 10 shortfall is recorded), and the client statement nets the
+ * collected cash against the Bs 10 fee (the fleet owes the client Bs 140).
+ */
+test('courier COD: collection, driver remittance and netted client statement', async ({ request }) => {
+  const fixture = await StaffFixture.open();
+  try {
+    const point = await fixture.deliveryZonePoint();
+    test.skip(!point, 'branch has no active delivery zone');
+    const { token } = await fixture.createManagerSession('COD');
+    const headers = { Cookie: `${STAFF_SESSION_COOKIE}=${token}`, Origin: env.baseUrl };
+    const api = (path: string) => `${env.apiUrl}/api/v1/ops/courier${path}`;
+
+    const code = `E2E${randomBytes(3).toString('hex').toUpperCase()}`;
+    const client = (await (await request.post(api('/clients'), { headers, data: { code, name: `Boutique ${code}` } })).json()) as { id: string };
+    await request.put(api('/rates'), { headers, data: { courierClientId: client.id, pricingMode: 'DISTANCE', baseFee: 0, perKmFee: 0, minFee: 10 } });
+    const created = await request.post(api('/requests'), {
+      headers,
+      data: { courierClientId: client.id, recipientName: 'Carla E2E', recipientPhone: '72222222', addressText: 'Calle COD 1',
+        latitude: point!.latitude, longitude: point!.longitude, collectAmount: 150 },
+    });
+    expect(created.status(), await created.text()).toBe(201);
+    const { orderNumber } = (await created.json()) as { orderNumber: number };
+    const driverId = await fixture.createPayoutDriver();
+    await fixture.completeDelivery(orderNumber, driverId, 200); // Bs 50 change
+
+    const listed = (await (await request.get(api('/requests'), { headers })).json()) as { requests: { orderNumber: number; paymentStatus: string; collectAmount: number }[] };
+    expect(listed.requests.find((r) => r.orderNumber === orderNumber)).toMatchObject({ paymentStatus: 'PAID', collectAmount: 150 });
+
+    // Driver remittance
+    const summary = (await (await request.get(api('/cash'), { headers })).json()) as { drivers: { driverId: string; amount: number; collections: number }[] };
+    expect(summary.drivers.find((d) => d.driverId === driverId)).toMatchObject({ amount: 150, collections: 1 });
+    const pending = (await (await request.get(api(`/cash/drivers/${driverId}`), { headers })).json()) as { expectedAmount: number };
+    expect(pending.expectedAmount).toBe(150);
+    const remit = await request.post(api('/cash/remittances'), { headers, data: { driverId, receivedAmount: 140, notes: 'faltan 10' } });
+    expect(remit.status(), await remit.text()).toBe(201);
+    expect(await remit.json()).toMatchObject({ expectedAmount: 150, receivedAmount: 140, differenceAmount: -10, collections: 1 });
+    expect((await request.post(api('/cash/remittances'), { headers, data: { driverId, receivedAmount: 0 } })).status()).toBe(409); // nothing left
+
+    // Netted client statement: collected 150 - fee 10 = 140 owed to the client
+    const period = { from: boDate(-1), to: boDate(1) };
+    const preview = await request.post(api('/statements/preview'), { headers, data: { courierClientId: client.id, ...period } });
+    expect(await preview.json()).toMatchObject({ deliveryCount: 1, totalFee: 10, collectedTotal: 150, netAmount: 140 });
+    const statement = await request.post(api('/statements'), { headers, data: { courierClientId: client.id, ...period } });
+    expect(statement.status(), await statement.text()).toBe(201);
+    const s = (await statement.json()) as { netAmount: number; collectedTotal: number; deliveries: { collected: number }[] };
+    expect(s).toMatchObject({ netAmount: 140, collectedTotal: 150 });
+    expect(s.deliveries[0].collected).toBe(150);
+  } finally {
+    await fixture.dispose();
+  }
+});
+
 test('courier settlements: Ops tabs render', async ({ page, context }) => {
   const fixture = await StaffFixture.open();
   try {
@@ -105,6 +159,9 @@ test('courier settlements: Ops tabs render', async ({ page, context }) => {
     await page.getByRole('button', { name: 'Pagos a conductores' }).click();
     await expect(page.getByRole('heading', { name: 'Regla de pago por conductor' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Nuevo pago a conductor' })).toBeVisible();
+    await page.getByRole('button', { name: 'Efectivo de conductores' }).click();
+    await expect(page.getByRole('heading', { name: 'Efectivo en manos de conductores' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Rendiciones recientes' })).toBeVisible();
     expect(errors).toEqual([]);
   } finally {
     await fixture.dispose();

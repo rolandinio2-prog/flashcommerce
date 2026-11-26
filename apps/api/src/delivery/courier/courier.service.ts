@@ -454,11 +454,8 @@ export class CourierService {
       latitude: requireCoordinate(body.latitude, 'latitude', -90, 90),
       longitude: requireCoordinate(body.longitude, 'longitude', -180, 180),
     };
+    // Cash the driver collects from the recipient on behalf of the courier client.
     const collectAmount = money(body.collectAmount ?? 0, 'collectAmount');
-    if (collectAmount > 0)
-      throw new ConflictException(
-        'El cobro contra entrega para envíos llega en la siguiente fase. Registra el envío sin monto a cobrar.',
-      );
     const feeOverride =
       body.feeOverride === undefined ||
       body.feeOverride === null ||
@@ -522,7 +519,7 @@ export class CourierService {
       }>(
         `insert into public.orders (tenant_id, branch_id, order_type, status, payment_status, order_origin, currency,
                                     subtotal, discount_total, delivery_fee, total, customer_name, customer_phone, delivery_address, customer_notes)
-         values ($1::uuid,$2::uuid,'DELIVERY','CONFIRMED','NOT_REQUIRED','COURIER_REQUEST','BOB',0,0,0,0,$3,$4,$5,$6)
+         values ($1::uuid,$2::uuid,'DELIVERY','CONFIRMED',$7,'COURIER_REQUEST','BOB',$8,0,0,$8,$3,$4,$5,$6)
          returning id::text, order_number::text, tracking_token::text`,
         [
           staff.tenantId,
@@ -531,9 +528,28 @@ export class CourierService {
           recipientPhone,
           addressText,
           notes,
+          collectAmount > 0 ? 'AWAITING_CONFIRMATION' : 'NOT_REQUIRED',
+          collectAmount,
         ],
       );
       const o = order.rows[0];
+      if (collectAmount > 0) {
+        // Same shape as a customer-selected DRIVER_COD attempt; the driver app
+        // collects it on arrival (cash_* columns stay null until then).
+        await client.query(
+          `insert into public.order_payments (tenant_id, branch_id, order_id, attempt_number, method, provider, status,
+                  amount, currency, external_reference, idempotency_key)
+           values ($1::uuid,$2::uuid,$3::uuid,1,'CASH','DRIVER_COD','AWAITING_CONFIRMATION',$4::numeric,'BOB',$5,$6)`,
+          [
+            staff.tenantId,
+            staff.branchId,
+            o.id,
+            collectAmount,
+            `COD-${o.order_number}-1`,
+            `courier-cod:${o.id}`,
+          ],
+        );
+      }
       const delivery = await this.deliveryCheckout.createDeliveryForOrder(
         client,
         {
@@ -558,7 +574,7 @@ export class CourierService {
       );
       await client.query(
         `update public.deliveries set courier_client_id=$3::uuid, pickup_name=$4, pickup_phone=$5, pickup_address=$6,
-                pickup_reference=$7, pickup_latitude=$8, pickup_longitude=$9, package_description=$10, collect_amount=0
+                pickup_reference=$7, pickup_latitude=$8, pickup_longitude=$9, package_description=$10, collect_amount=$11
           where tenant_id=$1::uuid and id=$2::uuid`,
         [
           staff.tenantId,
@@ -571,6 +587,7 @@ export class CourierService {
           pickup?.latitude ?? null,
           pickup?.longitude ?? null,
           packageDescription,
+          collectAmount,
         ],
       );
       // No kitchen: the request is ready for dispatch immediately (fires auto-dispatch).
@@ -586,6 +603,7 @@ export class CourierService {
         zone: { code: q.zone.code, name: q.zone.name },
         distanceMeters: q.distanceMeters,
         fee,
+        collectAmount,
         eta: q.eta,
       };
     });
@@ -604,11 +622,12 @@ export class CourierService {
       address_text: string;
       fee: string;
       collect_amount: string;
+      payment_status: string;
       created_at: string;
     }>(
       `select o.order_number::text, o.tracking_token::text, d.id::text as delivery_id, d.status as delivery_status,
               c.name as client_name, d.recipient_name, d.address_text, d.quoted_delivery_fee::text as fee,
-              d.collect_amount::text, d.created_at::text
+              d.collect_amount::text, o.payment_status, d.created_at::text
          from public.deliveries d
          join public.orders o on o.tenant_id=d.tenant_id and o.branch_id=d.branch_id and o.id=d.order_id
          left join public.courier_clients c on c.tenant_id=d.tenant_id and c.id=d.courier_client_id
@@ -627,6 +646,8 @@ export class CourierService {
         addressText: x.address_text,
         fee: Number(x.fee),
         collectAmount: Number(x.collect_amount),
+        /** AWAITING_CONFIRMATION: cash still to collect; PAID: collected; NOT_REQUIRED: nothing to collect. */
+        paymentStatus: x.payment_status,
         createdAt: x.created_at,
       })),
     };

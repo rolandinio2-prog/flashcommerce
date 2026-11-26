@@ -63,7 +63,21 @@ function PeriodFields({ period, onChange }: { period: { from: string; to: string
   );
 }
 
-function DeliveriesTable({ rows, showClient, showAmount }: { rows: SettlementDelivery[]; showClient?: boolean; showAmount?: boolean }) {
+/** Fees vs cash collected for the client, and who owes whom. */
+function NetSummary({ totalFee, collectedTotal, netAmount }: { totalFee: number; collectedTotal: number; netAmount: number }) {
+  return (
+    <dl className="grid gap-1 text-sm sm:max-w-sm">
+      <div className="flex justify-between"><dt>Tarifas de envío</dt><dd>{money(totalFee)}</dd></div>
+      <div className="flex justify-between"><dt>Cobrado para el cliente</dt><dd>{money(collectedTotal)}</dd></div>
+      <div className="flex justify-between border-t border-zinc-200 pt-1 font-bold">
+        <dt>{netAmount > 0 ? "A pagar al cliente" : netAmount < 0 ? "El cliente debe pagar" : "Saldo"}</dt>
+        <dd>{money(Math.abs(netAmount))}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function DeliveriesTable({ rows, showClient, showAmount, showCollected }: { rows: SettlementDelivery[]; showClient?: boolean; showAmount?: boolean; showCollected?: boolean }) {
   if (!rows.length) return <p className="text-sm text-zinc-500">Sin entregas.</p>;
   return (
     <table className="w-full text-left text-sm">
@@ -74,6 +88,7 @@ function DeliveriesTable({ rows, showClient, showAmount }: { rows: SettlementDel
           {showClient && <th>Cliente</th>}
           <th>Destinatario</th>
           <th className="text-right">Tarifa</th>
+          {showCollected && <th className="text-right">Cobrado</th>}
           {showAmount && <th className="text-right">Pago</th>}
         </tr>
       </thead>
@@ -85,6 +100,7 @@ function DeliveriesTable({ rows, showClient, showAmount }: { rows: SettlementDel
             {showClient && <td>{r.clientName ?? (r.courierRequest ? "Sin cliente" : "Tienda")}</td>}
             <td>{r.recipientName}</td>
             <td className="text-right">{money(r.fee)}</td>
+            {showCollected && <td className="text-right">{r.collected ? money(r.collected) : "—"}</td>}
             {showAmount && <td className="text-right">{money(r.amount ?? 0)}</td>}
           </tr>
         ))}
@@ -207,8 +223,9 @@ export function ClientStatements({ clients }: { clients: CourierClient[] }) {
           <button type="submit" className={secondary} disabled={busy || !clientId}>Ver envíos a liquidar</button>
           {preview && (
             <div className="space-y-3 rounded-xl bg-zinc-50 p-4">
-              <p className="text-sm"><b className="text-xl">{money(preview.totalFee)}</b> · {preview.deliveryCount} envíos</p>
-              <DeliveriesTable rows={preview.deliveries} />
+              <p className="text-sm">{preview.deliveryCount} envíos</p>
+              <NetSummary totalFee={preview.totalFee} collectedTotal={preview.collectedTotal} netAmount={preview.netAmount} />
+              <DeliveriesTable rows={preview.deliveries} showCollected />
               <button type="button" className={primary} disabled={busy || preview.deliveryCount === 0} onClick={() => void create()}>Generar liquidación</button>
             </div>
           )}
@@ -219,14 +236,16 @@ export function ClientStatements({ clients }: { clients: CourierClient[] }) {
           <h2 className="mb-4 text-lg font-black">Liquidaciones de clientes</h2>
           {!list ? <p className="text-zinc-500">Cargando…</p> : list.length === 0 ? <p className="text-zinc-500">Todavía no hay liquidaciones.</p> : (
             <table className="w-full text-left text-sm">
-              <thead className={label}><tr><th className="py-2">N.º</th><th>Cliente</th><th>Periodo</th><th className="text-right">Total</th><th>Estado</th></tr></thead>
+              <thead className={label}><tr><th className="py-2">N.º</th><th>Cliente</th><th>Periodo</th><th className="text-right">Saldo</th><th>Estado</th></tr></thead>
               <tbody>
                 {list.map((s) => (
                   <tr key={s.id} className="cursor-pointer border-t border-zinc-100 hover:bg-zinc-50" onClick={() => void open(s.id)}>
                     <td className="py-2 font-bold">{s.number}</td>
                     <td>{s.clientName}</td>
                     <td>{day(s.periodFrom)} – {day(s.periodTo)}</td>
-                    <td className="text-right">{money(s.totalFee)}</td>
+                    <td className="text-right" title={s.netAmount > 0 ? "A pagar al cliente" : "A cobrar al cliente"}>
+                      {s.netAmount > 0 ? "−" : ""}{money(Math.abs(s.netAmount))}
+                    </td>
                     <td><StatusBadge status={s.status} /></td>
                   </tr>
                 ))}
@@ -247,11 +266,12 @@ export function ClientStatements({ clients }: { clients: CourierClient[] }) {
             </div>
             <StatusBadge status={detail.status} />
           </header>
-          <p><b className="text-2xl">{money(detail.totalFee)}</b> · {detail.deliveryCount} envíos</p>
+          <p className="text-sm">{detail.deliveryCount} envíos</p>
+          <NetSummary totalFee={detail.totalFee} collectedTotal={detail.collectedTotal} netAmount={detail.netAmount} />
           {detail.status === "PAID" && detail.paymentMethod && (
-            <p className="text-sm text-green-800">Pagada el {when(detail.paidAt!)} · {PAYMENT_METHOD_LABEL[detail.paymentMethod]}{detail.paymentReference ? ` · ${detail.paymentReference}` : ""}</p>
+            <p className="text-sm text-green-800">Saldada el {when(detail.paidAt!)} · {PAYMENT_METHOD_LABEL[detail.paymentMethod]}{detail.paymentReference ? ` · ${detail.paymentReference}` : ""}</p>
           )}
-          {detail.status === "VOID" ? <p className="text-sm text-zinc-500">Anulada: sus envíos quedaron libres para otra liquidación.</p> : <DeliveriesTable rows={detail.deliveries} />}
+          {detail.status === "VOID" ? <p className="text-sm text-zinc-500">Anulada: sus envíos quedaron libres para otra liquidación.</p> : <DeliveriesTable rows={detail.deliveries} showCollected />}
           <SettlementActions
             status={detail.status}
             onPay={(m, ref) => guard(() => after(courierApi.payStatement(detail.id, { paymentMethod: m, paymentReference: ref || undefined })))}

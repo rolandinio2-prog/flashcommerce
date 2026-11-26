@@ -70,7 +70,12 @@ interface PendingRow {
   client_name: string | null;
   order_origin: string;
   fee: string;
+  /** Cash the driver collected for the client (COD), 0 when nothing was collected. */
+  collected?: string;
 }
+const cents = (n: number) => Math.round(n * 100) / 100;
+const sum = (rows: PendingRow[], pick: (r: PendingRow) => string | undefined) =>
+  cents(rows.reduce((s, r) => s + Number(pick(r) ?? 0), 0));
 
 /**
  * D1c: settlements of FlashCommerce Delivery.
@@ -99,12 +104,14 @@ export class CourierSettlementService {
   private completedSql(extra: string) {
     return `
       select d.id::text as delivery_id, o.order_number::text, a.completed_at::text as delivered_at,
-             d.recipient_name, c.name as client_name, o.order_origin, d.quoted_delivery_fee::text as fee
+             d.recipient_name, c.name as client_name, o.order_origin, d.quoted_delivery_fee::text as fee,
+             coalesce(cc.amount, 0)::text as collected
         from public.delivery_assignments a
         join public.deliveries d on d.tenant_id=a.tenant_id and d.branch_id=a.branch_id and d.id=a.delivery_id
         join public.orders o on o.tenant_id=d.tenant_id and o.branch_id=d.branch_id and o.id=d.order_id
         join public.branches b on b.id=a.branch_id
         left join public.courier_clients c on c.tenant_id=d.tenant_id and c.id=d.courier_client_id
+        left join public.delivery_cash_collections cc on cc.tenant_id=d.tenant_id and cc.branch_id=d.branch_id and cc.delivery_id=d.id
        where a.tenant_id=$1::uuid and a.branch_id=$2::uuid and a.status='COMPLETED' and d.status='DELIVERED'
          and (a.completed_at at time zone coalesce(b.timezone,'America/La_Paz'))::date between $3::date and $4::date
          ${extra}
@@ -121,6 +128,7 @@ export class CourierSettlementService {
       /** true for courier requests (with or without client); false for store orders. */
       courierRequest: r.order_origin === 'COURIER_REQUEST',
       fee: Number(r.fee),
+      collected: Number(r.collected ?? 0),
     }));
   }
 
@@ -167,12 +175,16 @@ export class CourierSettlementService {
       p,
     );
     const deliveries = this.pendingView(rows);
+    const totalFee = sum(rows, (r) => r.fee);
+    const collectedTotal = sum(rows, (r) => r.collected);
     return {
       period: p,
       deliveries,
       deliveryCount: deliveries.length,
-      totalFee:
-        Math.round(deliveries.reduce((s, d) => s + d.fee, 0) * 100) / 100,
+      totalFee,
+      collectedTotal,
+      /** > 0: the fleet pays the client; < 0: the client pays the fleet. */
+      netAmount: cents(collectedTotal - totalFee),
     };
   }
 
@@ -193,8 +205,8 @@ export class CourierSettlementService {
         throw new ConflictException(
           'No hay envíos entregados sin liquidar en ese periodo.',
         );
-      const total =
-        Math.round(rows.reduce((s, r) => s + Number(r.fee), 0) * 100) / 100;
+      const total = sum(rows, (r) => r.fee);
+      const collected = sum(rows, (r) => r.collected);
       const number = await this.nextNumber(
         db,
         'courier_client_statements',
@@ -203,8 +215,8 @@ export class CourierSettlementService {
       );
       const st = await db.query<{ id: string }>(
         `insert into public.courier_client_statements (tenant_id, branch_id, courier_client_id, statement_number, period_from, period_to,
-                delivery_count, total_fee, notes, created_by_staff_user_id)
-         values ($1::uuid,$2::uuid,$3::uuid,$4,$5::date,$6::date,$7,$8,$9,$10::uuid) returning id::text`,
+                delivery_count, total_fee, notes, created_by_staff_user_id, collected_total, net_amount)
+         values ($1::uuid,$2::uuid,$3::uuid,$4,$5::date,$6::date,$7,$8,$9,$10::uuid,$11,$12) returning id::text`,
         [
           staff.tenantId,
           staff.branchId,
@@ -216,17 +228,20 @@ export class CourierSettlementService {
           total,
           notes,
           staff.userId,
+          collected,
+          cents(collected - total),
         ],
       );
       await db.query(
-        `insert into public.courier_client_statement_items (statement_id, tenant_id, delivery_id, fee)
-         select $1::uuid, $2::uuid, x.delivery_id, x.fee
-           from unnest($3::uuid[], $4::numeric[]) as x(delivery_id, fee)`,
+        `insert into public.courier_client_statement_items (statement_id, tenant_id, delivery_id, fee, collected_amount)
+         select $1::uuid, $2::uuid, x.delivery_id, x.fee, x.collected
+           from unnest($3::uuid[], $4::numeric[], $5::numeric[]) as x(delivery_id, fee, collected)`,
         [
           st.rows[0].id,
           staff.tenantId,
           rows.map((r) => r.delivery_id),
           rows.map((r) => r.fee),
+          rows.map((r) => r.collected ?? '0'),
         ],
       );
       return this.getClientStatement(staff, st.rows[0].id, db);
@@ -247,13 +262,16 @@ export class CourierSettlementService {
       period_to: string;
       delivery_count: number;
       total_fee: string;
+      collected_total: string;
+      net_amount: string;
       status: string;
       payment_method: string | null;
       paid_at: string | null;
       created_at: string;
     }>(
       `select s.id::text, s.statement_number, c.name as client_name, s.period_from::text, s.period_to::text,
-              s.delivery_count, s.total_fee::text, s.status, s.payment_method, s.paid_at::text, s.created_at::text
+              s.delivery_count, s.total_fee::text, s.collected_total::text, s.net_amount::text,
+              s.status, s.payment_method, s.paid_at::text, s.created_at::text
          from public.courier_client_statements s
          join public.courier_clients c on c.tenant_id=s.tenant_id and c.id=s.courier_client_id
         where s.tenant_id=$1::uuid and s.branch_id=$2::uuid and ($3::uuid is null or s.courier_client_id=$3::uuid)
@@ -269,6 +287,8 @@ export class CourierSettlementService {
         periodTo: x.period_to,
         deliveryCount: x.delivery_count,
         totalFee: Number(x.total_fee),
+        collectedTotal: Number(x.collected_total),
+        netAmount: Number(x.net_amount),
         status: x.status,
         paymentMethod: x.payment_method,
         paidAt: x.paid_at,
@@ -293,6 +313,8 @@ export class CourierSettlementService {
       period_to: string;
       delivery_count: number;
       total_fee: string;
+      collected_total: string;
+      net_amount: string;
       status: string;
       payment_method: string | null;
       payment_reference: string | null;
@@ -301,7 +323,8 @@ export class CourierSettlementService {
       created_at: string;
     }>(
       `select s.id::text, s.statement_number, c.id::text as client_id, c.name as client_name, c.tax_id as client_tax_id,
-              s.period_from::text, s.period_to::text, s.delivery_count, s.total_fee::text, s.status,
+              s.period_from::text, s.period_to::text, s.delivery_count, s.total_fee::text,
+              s.collected_total::text, s.net_amount::text, s.status,
               s.payment_method, s.payment_reference, s.notes, s.paid_at::text, s.created_at::text
          from public.courier_client_statements s
          join public.courier_clients c on c.tenant_id=s.tenant_id and c.id=s.courier_client_id
@@ -312,7 +335,8 @@ export class CourierSettlementService {
     if (!x) throw new NotFoundException('Liquidación no encontrada.');
     const items = await db.query<PendingRow>(
       `select d.id::text as delivery_id, o.order_number::text, a.completed_at::text as delivered_at,
-              d.recipient_name, null::text as client_name, o.order_origin, i.fee::text
+              d.recipient_name, null::text as client_name, o.order_origin, i.fee::text,
+              i.collected_amount::text as collected
          from public.courier_client_statement_items i
          join public.deliveries d on d.id=i.delivery_id
          join public.orders o on o.id=d.order_id
@@ -328,6 +352,8 @@ export class CourierSettlementService {
       periodTo: x.period_to,
       deliveryCount: x.delivery_count,
       totalFee: Number(x.total_fee),
+      collectedTotal: Number(x.collected_total),
+      netAmount: Number(x.net_amount),
       status: x.status,
       paymentMethod: x.payment_method,
       paymentReference: x.payment_reference,
