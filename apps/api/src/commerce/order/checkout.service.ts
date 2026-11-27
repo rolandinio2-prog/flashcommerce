@@ -15,6 +15,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { issueQuote, requireQuoteToken, verifyQuote } from './checkout-quote';
+import type { PoolClient } from 'pg';
 import { DatabaseService } from '../../core/database/database.service';
 import { DeliveryCheckoutService } from '../../delivery/delivery-checkout.service';
 import {
@@ -46,6 +47,60 @@ import {
 } from './order.types';
 import { OrderTrackingService } from './order-tracking.service';
 import { CustomerRecoveryService } from './customer-recovery.service';
+
+type CustomerRecoverySessionRow = Awaited<
+  ReturnType<CustomerRecoveryService['findCustomerRecoverySessionByToken']>
+>;
+interface PosCheckoutContext {
+  staff: StaffSessionPrincipal;
+  intentHash: string;
+  expectedTotal: number;
+  expectedRevision: string;
+}
+/** Values of checkout() read by openTableSession(). */
+interface TableSessionContext {
+  orderType: OrderType;
+  tableCode: string | null;
+  reservationContext: ReservationOrderContextRow | null;
+  cart: CartRow;
+  tableContext: TableContextPayload | null;
+  additionalOrderContext: AdditionalOrderContextRow | null;
+}
+
+/** Values of checkout() read by persistOrder(). */
+interface PersistOrderContext {
+  input: CreateOrderInput;
+  customerRecoverySession: CustomerRecoverySessionRow | null;
+  cart: CartRow;
+  customerPhone: string | null;
+  orderType: OrderType;
+  subtotal: number;
+  discountTotal: number;
+  deliveryFee: number;
+  total: number;
+  scheduledFor: string | null;
+  customerName: string | null;
+  tableCode: string | null;
+  tableSessionId: string | null;
+  deliveryAddress: string | null;
+  customerNotes: string | null;
+  initialOrderStatus: OrderStatus;
+  reservationContext: ReservationOrderContextRow | null;
+  initialPaymentStatus: OrderPaymentStatus;
+  orderOrigin: OrderOrigin;
+  additionalOrderContext: AdditionalOrderContextRow | null;
+  additionalDeliveryContext: AdditionalDeliveryOrderContextRow | null;
+  additionalToTrackingToken: string | null;
+  quantitiesByProduct: Map<string, number>;
+  items: CheckoutItemRow[];
+  pos: PosCheckoutContext | undefined;
+  deliveryQuote: DeliveryCheckoutQuote | null;
+  joinAdditionalToExistingDelivery: boolean;
+  deliveryReference: string | null;
+  deliveryLatitude: CreateOrderInput['deliveryLatitude'];
+  deliveryLongitude: CreateOrderInput['deliveryLongitude'];
+  pricedOrderItems: CheckoutItemRow[];
+}
 
 @Injectable()
 export class CheckoutService {
@@ -128,16 +183,12 @@ export class CheckoutService {
     }
   }
 
-  private async checkout(
+  /** 1.1-1.4: normalizes the checkout request and runs the validations that need no transaction. */
+  private async normalizeCheckoutRequest(
     input: CreateOrderInput,
     customerRecoverySessionToken: string | null | undefined,
     quoteOnly: boolean,
-    pos?: {
-      staff: StaffSessionPrincipal;
-      intentHash: string;
-      expectedTotal: number;
-      expectedRevision: string;
-    },
+    pos?: PosCheckoutContext,
   ) {
     // Quote mode must never enter reservation/table-session mutation paths.
     if (
@@ -174,9 +225,9 @@ export class CheckoutService {
 
     const requestedOrderType = input.orderType;
 
-    let customerName = input.customerName?.trim() || null;
+    const customerName = input.customerName?.trim() || null;
 
-    let customerPhone = input.customerPhone?.trim() || null;
+    const customerPhone = input.customerPhone?.trim() || null;
 
     let tableCode = input.tableCode?.trim() || null;
 
@@ -188,13 +239,13 @@ export class CheckoutService {
     const additionalToTrackingToken =
       input.additionalToTrackingToken?.trim() || null;
 
-    let deliveryAddress = input.deliveryAddress?.trim() || null;
+    const deliveryAddress = input.deliveryAddress?.trim() || null;
 
-    let deliveryReference = input.deliveryReference?.trim() || null;
+    const deliveryReference = input.deliveryReference?.trim() || null;
 
-    let deliveryLatitude = input.deliveryLatitude;
+    const deliveryLatitude = input.deliveryLatitude;
 
-    let deliveryLongitude = input.deliveryLongitude;
+    const deliveryLongitude = input.deliveryLongitude;
 
     // DELIVERY ADDITIONAL V1
     //
@@ -406,6 +457,58 @@ export class CheckoutService {
         break;
       }
     }
+    return {
+      orderType,
+      additionalToTrackingToken,
+      cartToken,
+      tableContext,
+      reservationTrackingToken,
+      customerRecoverySession,
+      customerNotes,
+      hasRequestedDeliveryDestination,
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      deliveryReference,
+      deliveryLatitude,
+      deliveryLongitude,
+      tableCode,
+      scheduledFor,
+    };
+  }
+
+  private async checkout(
+    input: CreateOrderInput,
+    customerRecoverySessionToken: string | null | undefined,
+    quoteOnly: boolean,
+    pos?: PosCheckoutContext,
+  ) {
+    const request = await this.normalizeCheckoutRequest(
+      input,
+      customerRecoverySessionToken,
+      quoteOnly,
+      pos,
+    );
+    const {
+      orderType,
+      additionalToTrackingToken,
+      cartToken,
+      tableContext,
+      reservationTrackingToken,
+      customerRecoverySession,
+      customerNotes,
+      hasRequestedDeliveryDestination,
+    } = request;
+    let {
+      customerName,
+      customerPhone,
+      deliveryAddress,
+      deliveryReference,
+      deliveryLatitude,
+      deliveryLongitude,
+      tableCode,
+      scheduledFor,
+    } = request;
     // ----------------------------------------------------
     // 1.5. Transacción de checkout.
     // ----------------------------------------------------
@@ -1013,142 +1116,14 @@ export class CheckoutService {
       // solamente uno podrá completar la operación.
       // --------------------------------------------------
 
-      let tableSessionId: string | null = null;
-
-      if (orderType === 'DINE_IN' && tableCode && !reservationContext) {
-        // ------------------------------------------------
-        // 1. Buscar y BLOQUEAR la mesa seleccionada.
-        // ------------------------------------------------
-
-        const tableResult = await client.query<CheckoutDiningTableRow>(
-          `
-              select
-                dt.id::text,
-                dt.code,
-                dt.name,
-                dt.is_active
-
-              from public.dining_tables dt
-
-              where dt.tenant_id = $1::uuid
-                and dt.branch_id = $2::uuid
-                and dt.code = $3
-                and (
-                  $4::uuid is null
-                  or dt.id = $4::uuid
-                )
-
-              for update
-            `,
-          [
-            cart.tenant_id,
-            cart.branch_id,
-            tableCode,
-            tableContext?.tableId ?? null,
-          ],
-        );
-
-        const diningTable = tableResult.rows[0];
-
-        if (!diningTable) {
-          throw new BadRequestException(
-            'Selected table does not exist for this branch',
-          );
-        }
-
-        if (!diningTable.is_active) {
-          throw new ConflictException(`${diningTable.name} is not active`);
-        }
-
-        // ------------------------------------------------
-        // 2. Comprobar si ya existe una sesión OPEN.
-        // ------------------------------------------------
-
-        const openSessionResult = await client.query<OpenTableSessionRow>(
-          `
-              select
-                ts.id::text
-
-              from public.table_sessions ts
-
-              where ts.tenant_id = $1::uuid
-                and ts.branch_id = $2::uuid
-                and ts.table_id = $3::uuid
-                and ts.status = 'OPEN'
-
-              limit 1
-            `,
-          [cart.tenant_id, cart.branch_id, diningTable.id],
-        );
-
-        const openSession = openSessionResult.rows[0];
-
-        if (openSession && !tableContext && !additionalOrderContext) {
-          throw new ConflictException(
-            `${diningTable.name} is already occupied`,
-          );
-        }
-
-        if (
-          tableContext?.tableSessionId &&
-          openSession?.id !== tableContext.tableSessionId
-        ) {
-          throw new ConflictException(
-            'tableContextToken session is no longer open',
-          );
-        }
-
-        if (
-          additionalOrderContext &&
-          openSession?.id !== additionalOrderContext.table_session_id
-        ) {
-          throw new ConflictException(
-            'Additional order source table session is no longer open',
-          );
-        }
-
-        if (openSession) {
-          // El QR contextual identifica al mismo grupo que ya
-          // se encuentra en la mesa. Reutilizamos su sesión.
-          tableSessionId = openSession.id;
-        } else {
-          if (tableContext?.tableSessionId) {
-            throw new ConflictException(
-              'tableContextToken session is no longer open',
-            );
-          }
-
-          // ----------------------------------------------
-          // 3. Crear la primera sesión OPEN de la mesa.
-          //
-          // Si posteriormente falla la creación del pedido,
-          // toda la transacción hará ROLLBACK y esta sesión
-          // tampoco quedará creada.
-          // ----------------------------------------------
-
-          const sessionResult = await client.query<CreatedTableSessionRow>(
-            `
-                insert into public.table_sessions (
-                  tenant_id,
-                  branch_id,
-                  table_id,
-                  status
-                )
-                values (
-                  $1::uuid,
-                  $2::uuid,
-                  $3::uuid,
-                  'OPEN'
-                )
-                returning
-                  id::text
-              `,
-            [cart.tenant_id, cart.branch_id, diningTable.id],
-          );
-
-          tableSessionId = sessionResult.rows[0].id;
-        }
-      }
+      const tableSessionId = await this.openTableSession(client, {
+        orderType,
+        tableCode,
+        reservationContext,
+        cart,
+        tableContext,
+        additionalOrderContext,
+      });
 
       // --------------------------------------------------
       // 1.5.2. Leer productos y revalidar catálogo.
@@ -1358,429 +1333,649 @@ export class CheckoutService {
       // 1.5.5. Crear Order + Fulfillment + Table Session.
       // --------------------------------------------------
 
-      if (
-        input.requireRecoveryProfile &&
-        (!customerRecoverySession ||
-          customerRecoverySession.tenant_id !== cart.tenant_id ||
-          !sameRecoveryPhone(
-            customerPhone,
-            customerRecoverySession.phone_normalized,
-          ))
-      ) {
-        throw new UnauthorizedException(
-          'Recovery session required before checkout',
-        );
-      }
-      const orderResult = await client.query<CreatedOrderRow>(
+      return this.persistOrder(client, {
+        input,
+        customerRecoverySession,
+        cart,
+        customerPhone,
+        orderType,
+        subtotal,
+        discountTotal,
+        deliveryFee,
+        total,
+        scheduledFor,
+        customerName,
+        tableCode,
+        tableSessionId,
+        deliveryAddress,
+        customerNotes,
+        initialOrderStatus,
+        reservationContext,
+        initialPaymentStatus,
+        orderOrigin,
+        additionalOrderContext,
+        additionalDeliveryContext,
+        additionalToTrackingToken,
+        quantitiesByProduct,
+        items,
+        pos,
+        deliveryQuote,
+        joinAdditionalToExistingDelivery,
+        deliveryReference,
+        deliveryLatitude,
+        deliveryLongitude,
+        pricedOrderItems,
+      });
+    });
+  }
+
+  /** TABLES V0.2: opens (or joins) the DINE_IN table session, locking the table row. */
+  private async openTableSession(
+    client: PoolClient,
+    ctx: TableSessionContext,
+  ): Promise<string | null> {
+    const {
+      orderType,
+      tableCode,
+      reservationContext,
+      cart,
+      tableContext,
+      additionalOrderContext,
+    } = ctx;
+    let tableSessionId: string | null = null;
+
+    if (orderType === 'DINE_IN' && tableCode && !reservationContext) {
+      // ------------------------------------------------
+      // 1. Buscar y BLOQUEAR la mesa seleccionada.
+      // ------------------------------------------------
+
+      const tableResult = await client.query<CheckoutDiningTableRow>(
         `
-              insert into public.orders (
-                tenant_id,
-                branch_id,
-                cart_id,
-                order_group_id,
-                customer_account_id,
+            select
+              dt.id::text,
+              dt.code,
+              dt.name,
+              dt.is_active
 
-                order_type,
-                status,
-                payment_status,
-                order_origin,
-                currency,
+            from public.dining_tables dt
 
-                subtotal,
-                discount_total,
-                delivery_fee,
-                total,
-
-                scheduled_for,
-                customer_name,
-                customer_phone,
-                table_code,
-                table_session_id,
-                delivery_address,
-                customer_notes,
-                reservation_id
+            where dt.tenant_id = $1::uuid
+              and dt.branch_id = $2::uuid
+              and dt.code = $3
+              and (
+                $4::uuid is null
+                or dt.id = $4::uuid
               )
-              values (
-                $1::uuid,
-                $2::uuid,
-                $3::uuid,
-                coalesce($21::uuid, gen_random_uuid()),
-                coalesce(
-                  (
-                    select source_order.customer_account_id
-                    from public.orders source_order
-                    where source_order.tracking_token = $23::uuid
-                    limit 1
-                  ),
-                  $22::uuid
-                ),
 
-                $4,
-                $17::varchar,
-                $19::varchar,
-                $20::varchar,
-                $5,
-
-                $6,
-                $7,
-                $8,
-                $9,
-
-                $10::timestamptz,
-                $11,
-                $12,
-                $13,
-                $14::uuid,
-                $15,
-                $16,
-                $18::uuid
-              )
-              returning
-                id::text,
-                order_number::text,
-                tracking_token::text,
-                order_group_id::text,
-
-                order_type,
-                status,
-                payment_status,
-                order_origin,
-                currency,
-
-                subtotal::text,
-                discount_total::text,
-                delivery_fee::text,
-                total::text,
-
-                scheduled_for,
-                customer_name,
-                customer_phone,
-                table_code,
-                delivery_address,
-                customer_notes,
-                reservation_id::text,
-
-                created_at
-            `,
+            for update
+          `,
         [
           cart.tenant_id,
           cart.branch_id,
-          cart.id,
-
-          orderType,
-          cart.currency,
-
-          subtotal,
-          discountTotal,
-          deliveryFee,
-          total,
-
-          scheduledFor,
-          customerName,
-          customerPhone,
           tableCode,
-          tableSessionId,
-          deliveryAddress,
-          customerNotes,
-          initialOrderStatus,
-          reservationContext?.id ?? null,
-          initialPaymentStatus,
-          orderOrigin,
-          additionalOrderContext?.order_group_id ??
-            additionalDeliveryContext?.order_group_id ??
-            null,
-          customerRecoverySession?.tenant_id === cart.tenant_id &&
-          sameRecoveryPhone(
-            customerPhone,
-            customerRecoverySession.phone_normalized,
-          )
-            ? customerRecoverySession.customer_account_id
-            : null,
-          additionalToTrackingToken,
+          tableContext?.tableId ?? null,
         ],
       );
 
-      const order = orderResult.rows[0];
+      const diningTable = tableResult.rows[0];
 
-      // Reservar unidades de productos con inventario controlado. El UPDATE
-      // condicionado en la base serializa compradores simultaneos: si otro
-      // pedido tomo las ultimas unidades, este checkout se revierte completo.
-      await reserveOrderStock(client, {
-        tenantId: cart.tenant_id,
-        branchId: cart.branch_id,
-        orderId: order.id,
-        quantities: quantitiesByProduct,
-        names: new Map(items.map((item) => [item.product_id, item.name])),
-      });
-
-      if (pos)
-        await client.query(
-          'update public.pos_drafts set order_id=$2::uuid,checkout_hash=$3 where cart_id=$1::uuid',
-          [cart.id, order.id, pos.intentHash],
+      if (!diningTable) {
+        throw new BadRequestException(
+          'Selected table does not exist for this branch',
         );
+      }
 
-      let createdDelivery: CreatedDelivery | null = null;
+      if (!diningTable.is_active) {
+        throw new ConflictException(`${diningTable.name} is not active`);
+      }
 
-      if (orderType === 'DELIVERY') {
-        if (
-          !deliveryQuote ||
-          !customerName ||
-          !customerPhone ||
-          !deliveryAddress
-        ) {
-          throw new Error('Delivery checkout invariant failed');
+      // ------------------------------------------------
+      // 2. Comprobar si ya existe una sesión OPEN.
+      // ------------------------------------------------
+
+      const openSessionResult = await client.query<OpenTableSessionRow>(
+        `
+            select
+              ts.id::text
+
+            from public.table_sessions ts
+
+            where ts.tenant_id = $1::uuid
+              and ts.branch_id = $2::uuid
+              and ts.table_id = $3::uuid
+              and ts.status = 'OPEN'
+
+            limit 1
+          `,
+        [cart.tenant_id, cart.branch_id, diningTable.id],
+      );
+
+      const openSession = openSessionResult.rows[0];
+
+      if (openSession && !tableContext && !additionalOrderContext) {
+        throw new ConflictException(`${diningTable.name} is already occupied`);
+      }
+
+      if (
+        tableContext?.tableSessionId &&
+        openSession?.id !== tableContext.tableSessionId
+      ) {
+        throw new ConflictException(
+          'tableContextToken session is no longer open',
+        );
+      }
+
+      if (
+        additionalOrderContext &&
+        openSession?.id !== additionalOrderContext.table_session_id
+      ) {
+        throw new ConflictException(
+          'Additional order source table session is no longer open',
+        );
+      }
+
+      if (openSession) {
+        // El QR contextual identifica al mismo grupo que ya
+        // se encuentra en la mesa. Reutilizamos su sesión.
+        tableSessionId = openSession.id;
+      } else {
+        if (tableContext?.tableSessionId) {
+          throw new ConflictException(
+            'tableContextToken session is no longer open',
+          );
         }
 
-        if (joinAdditionalToExistingDelivery && additionalDeliveryContext) {
-          await client.query(
-            `
-              insert into public.delivery_order_memberships (
+        // ----------------------------------------------
+        // 3. Crear la primera sesión OPEN de la mesa.
+        //
+        // Si posteriormente falla la creación del pedido,
+        // toda la transacción hará ROLLBACK y esta sesión
+        // tampoco quedará creada.
+        // ----------------------------------------------
+
+        const sessionResult = await client.query<CreatedTableSessionRow>(
+          `
+              insert into public.table_sessions (
                 tenant_id,
                 branch_id,
-                delivery_id,
-                order_id,
-                role,
-                membership_status
+                table_id,
+                status
               )
               values (
                 $1::uuid,
                 $2::uuid,
                 $3::uuid,
-                $4::uuid,
-                'ADDITIONAL',
-                'PENDING'
+                'OPEN'
               )
+              returning
+                id::text
             `,
-            [
-              cart.tenant_id,
-              cart.branch_id,
-              additionalDeliveryContext.delivery_id,
-              order.id,
-            ],
-          );
+          [cart.tenant_id, cart.branch_id, diningTable.id],
+        );
 
-          createdDelivery = {
-            id: additionalDeliveryContext.delivery_id,
+        tableSessionId = sessionResult.rows[0].id;
+      }
+    }
+    return tableSessionId;
+  }
 
-            trackingToken: additionalDeliveryContext.delivery_tracking_token,
+  /** 1.5.5-1.5.8: creates the order, fulfillment, delivery, stock reservation and item snapshots; builds the response. */
+  private async persistOrder(client: PoolClient, ctx: PersistOrderContext) {
+    const {
+      input,
+      customerRecoverySession,
+      cart,
+      customerPhone,
+      orderType,
+      subtotal,
+      discountTotal,
+      deliveryFee,
+      total,
+      scheduledFor,
+      customerName,
+      tableCode,
+      tableSessionId,
+      deliveryAddress,
+      customerNotes,
+      initialOrderStatus,
+      reservationContext,
+      initialPaymentStatus,
+      orderOrigin,
+      additionalOrderContext,
+      additionalDeliveryContext,
+      additionalToTrackingToken,
+      quantitiesByProduct,
+      items,
+      pos,
+      deliveryQuote,
+      joinAdditionalToExistingDelivery,
+      deliveryReference,
+      deliveryLatitude,
+      deliveryLongitude,
+      pricedOrderItems,
+    } = ctx;
+    if (
+      input.requireRecoveryProfile &&
+      (!customerRecoverySession ||
+        customerRecoverySession.tenant_id !== cart.tenant_id ||
+        !sameRecoveryPhone(
+          customerPhone,
+          customerRecoverySession.phone_normalized,
+        ))
+    ) {
+      throw new UnauthorizedException(
+        'Recovery session required before checkout',
+      );
+    }
+    const orderResult = await client.query<CreatedOrderRow>(
+      `
+            insert into public.orders (
+              tenant_id,
+              branch_id,
+              cart_id,
+              order_group_id,
+              customer_account_id,
 
-            status: 'CREATED',
-          };
-        } else {
-          createdDelivery = await this.deliveryCheckout.createDeliveryForOrder(
-            client,
-            {
-              tenantId: cart.tenant_id,
-              branchId: cart.branch_id,
+              order_type,
+              status,
+              payment_status,
+              order_origin,
+              currency,
 
-              orderId: order.id,
+              subtotal,
+              discount_total,
+              delivery_fee,
+              total,
 
-              quote: deliveryQuote,
+              scheduled_for,
+              customer_name,
+              customer_phone,
+              table_code,
+              table_session_id,
+              delivery_address,
+              customer_notes,
+              reservation_id
+            )
+            values (
+              $1::uuid,
+              $2::uuid,
+              $3::uuid,
+              coalesce($21::uuid, gen_random_uuid()),
+              coalesce(
+                (
+                  select source_order.customer_account_id
+                  from public.orders source_order
+                  where source_order.tracking_token = $23::uuid
+                  limit 1
+                ),
+                $22::uuid
+              ),
 
-              recipientName: customerName,
-              recipientPhone: customerPhone,
+              $4,
+              $17::varchar,
+              $19::varchar,
+              $20::varchar,
+              $5,
 
-              addressText: deliveryAddress,
-              addressReference: deliveryReference,
+              $6,
+              $7,
+              $8,
+              $9,
 
-              latitude: deliveryLatitude as number,
+              $10::timestamptz,
+              $11,
+              $12,
+              $13,
+              $14::uuid,
+              $15,
+              $16,
+              $18::uuid
+            )
+            returning
+              id::text,
+              order_number::text,
+              tracking_token::text,
+              order_group_id::text,
 
-              longitude: deliveryLongitude as number,
-            },
-          );
-        }
+              order_type,
+              status,
+              payment_status,
+              order_origin,
+              currency,
+
+              subtotal::text,
+              discount_total::text,
+              delivery_fee::text,
+              total::text,
+
+              scheduled_for,
+              customer_name,
+              customer_phone,
+              table_code,
+              delivery_address,
+              customer_notes,
+              reservation_id::text,
+
+              created_at
+          `,
+      [
+        cart.tenant_id,
+        cart.branch_id,
+        cart.id,
+
+        orderType,
+        cart.currency,
+
+        subtotal,
+        discountTotal,
+        deliveryFee,
+        total,
+
+        scheduledFor,
+        customerName,
+        customerPhone,
+        tableCode,
+        tableSessionId,
+        deliveryAddress,
+        customerNotes,
+        initialOrderStatus,
+        reservationContext?.id ?? null,
+        initialPaymentStatus,
+        orderOrigin,
+        additionalOrderContext?.order_group_id ??
+          additionalDeliveryContext?.order_group_id ??
+          null,
+        customerRecoverySession?.tenant_id === cart.tenant_id &&
+        sameRecoveryPhone(
+          customerPhone,
+          customerRecoverySession.phone_normalized,
+        )
+          ? customerRecoverySession.customer_account_id
+          : null,
+        additionalToTrackingToken,
+      ],
+    );
+
+    const order = orderResult.rows[0];
+
+    // Reservar unidades de productos con inventario controlado. El UPDATE
+    // condicionado en la base serializa compradores simultaneos: si otro
+    // pedido tomo las ultimas unidades, este checkout se revierte completo.
+    await reserveOrderStock(client, {
+      tenantId: cart.tenant_id,
+      branchId: cart.branch_id,
+      orderId: order.id,
+      quantities: quantitiesByProduct,
+      names: new Map(items.map((item) => [item.product_id, item.name])),
+    });
+
+    if (pos)
+      await client.query(
+        'update public.pos_drafts set order_id=$2::uuid,checkout_hash=$3 where cart_id=$1::uuid',
+        [cart.id, order.id, pos.intentHash],
+      );
+
+    let createdDelivery: CreatedDelivery | null = null;
+
+    if (orderType === 'DELIVERY') {
+      if (
+        !deliveryQuote ||
+        !customerName ||
+        !customerPhone ||
+        !deliveryAddress
+      ) {
+        throw new Error('Delivery checkout invariant failed');
       }
 
-      // --------------------------------------------------
-      // 1.5.6. Crear snapshot de cada item.
-      // --------------------------------------------------
-
-      for (const item of pricedOrderItems) {
-        const unitPrice = Number(item.price);
-
-        const lineTotal = unitPrice * item.quantity;
-
+      if (joinAdditionalToExistingDelivery && additionalDeliveryContext) {
         await client.query(
           `
-              insert into public.order_items (
-                tenant_id,
-                order_id,
-                product_id,
-                rice_choice,
-                sku_snapshot,
-                name_snapshot,
-                quantity,
-                unit_price,
-                line_total,
-                currency
-              )
-              values (
-                $1::uuid,
-                $2::uuid,
-                $3::uuid,
-                $4,
-                $5,
-                $6,
-                $7,
-                $8,
-                $9,
-                $10
-              )
-            `,
+            insert into public.delivery_order_memberships (
+              tenant_id,
+              branch_id,
+              delivery_id,
+              order_id,
+              role,
+              membership_status
+            )
+            values (
+              $1::uuid,
+              $2::uuid,
+              $3::uuid,
+              $4::uuid,
+              'ADDITIONAL',
+              'PENDING'
+            )
+          `,
           [
             cart.tenant_id,
+            cart.branch_id,
+            additionalDeliveryContext.delivery_id,
             order.id,
-            item.product_id,
-            item.rice_choice,
-            item.sku,
-            item.name,
-            item.quantity,
-            unitPrice,
-            lineTotal,
-            item.currency,
           ],
         );
-      }
 
-      // --------------------------------------------------
-      // 1.5.7. Marcar carrito como convertido.
-      // --------------------------------------------------
+        createdDelivery = {
+          id: additionalDeliveryContext.delivery_id,
+
+          trackingToken: additionalDeliveryContext.delivery_tracking_token,
+
+          status: 'CREATED',
+        };
+      } else {
+        createdDelivery = await this.deliveryCheckout.createDeliveryForOrder(
+          client,
+          {
+            tenantId: cart.tenant_id,
+            branchId: cart.branch_id,
+
+            orderId: order.id,
+
+            quote: deliveryQuote,
+
+            recipientName: customerName,
+            recipientPhone: customerPhone,
+
+            addressText: deliveryAddress,
+            addressReference: deliveryReference,
+
+            latitude: deliveryLatitude as number,
+
+            longitude: deliveryLongitude as number,
+          },
+        );
+      }
+    }
+
+    // --------------------------------------------------
+    // 1.5.6. Crear snapshot de cada item.
+    // --------------------------------------------------
+
+    for (const item of pricedOrderItems) {
+      const unitPrice = Number(item.price);
+
+      const lineTotal = unitPrice * item.quantity;
 
       await client.query(
         `
-            update public.carts
-            set
-              status = 'CONVERTED',
-              updated_at = now()
-            where tenant_id = $1::uuid
-              and id = $2::uuid
+            insert into public.order_items (
+              tenant_id,
+              order_id,
+              product_id,
+              rice_choice,
+              sku_snapshot,
+              name_snapshot,
+              quantity,
+              unit_price,
+              line_total,
+              currency
+            )
+            values (
+              $1::uuid,
+              $2::uuid,
+              $3::uuid,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8,
+              $9,
+              $10
+            )
           `,
-        [cart.tenant_id, cart.id],
+        [
+          cart.tenant_id,
+          order.id,
+          item.product_id,
+          item.rice_choice,
+          item.sku,
+          item.name,
+          item.quantity,
+          unitPrice,
+          lineTotal,
+          item.currency,
+        ],
       );
+    }
 
-      // --------------------------------------------------
-      // 1.5.8. Respuesta.
-      // --------------------------------------------------
+    // --------------------------------------------------
+    // 1.5.7. Marcar carrito como convertido.
+    // --------------------------------------------------
 
-      return {
-        kind: 'order' as const,
-        order: {
-          id: order.id,
+    await client.query(
+      `
+          update public.carts
+          set
+            status = 'CONVERTED',
+            updated_at = now()
+          where tenant_id = $1::uuid
+            and id = $2::uuid
+        `,
+      [cart.tenant_id, cart.id],
+    );
 
-          orderNumber: order.order_number,
+    // --------------------------------------------------
+    // 1.5.8. Respuesta.
+    // --------------------------------------------------
 
-          trackingToken: order.tracking_token,
+    return {
+      kind: 'order' as const,
+      order: {
+        id: order.id,
 
-          orderGroup: order.order_group_id,
+        orderNumber: order.order_number,
 
-          orderType: order.order_type,
+        trackingToken: order.tracking_token,
 
-          status: order.status,
+        orderGroup: order.order_group_id,
 
-          paymentStatus: order.payment_status,
+        orderType: order.order_type,
 
-          orderOrigin: order.order_origin,
+        status: order.status,
 
-          currency: order.currency,
+        paymentStatus: order.payment_status,
 
-          // ----------------------------------------------
-          // Fulfillment V0.1
-          // ----------------------------------------------
+        orderOrigin: order.order_origin,
 
-          fulfillment: {
-            scheduledFor: order.scheduled_for,
+        currency: order.currency,
 
-            customerName: order.customer_name,
+        // ----------------------------------------------
+        // Fulfillment V0.1
+        // ----------------------------------------------
 
-            customerPhone: order.customer_phone,
+        fulfillment: {
+          scheduledFor: order.scheduled_for,
 
-            tableCode: order.table_code,
+          customerName: order.customer_name,
 
-            deliveryAddress: order.delivery_address,
+          customerPhone: order.customer_phone,
 
-            customerNotes: order.customer_notes,
-          },
+          tableCode: order.table_code,
 
-          deliveryRelationship:
-            orderType === 'DELIVERY' && additionalToTrackingToken
-              ? {
-                  mode: joinAdditionalToExistingDelivery
-                    ? 'JOINED_EXISTING'
-                    : 'SEPARATE_DELIVERY',
-                }
-              : null,
+          deliveryAddress: order.delivery_address,
 
-          delivery:
-            createdDelivery && deliveryQuote
-              ? {
-                  status: createdDelivery.status,
+          customerNotes: order.customer_notes,
+        },
 
-                  zone: {
-                    code: deliveryQuote.zone.code,
-                    name: deliveryQuote.zone.name,
-                  },
-
-                  deliveryFee,
-
-                  eta: {
-                    minMinutes: deliveryQuote.eta.minMinutes,
-                    maxMinutes: deliveryQuote.eta.maxMinutes,
-                  },
-                }
-              : null,
-
-          reservation: reservationContext
+        deliveryRelationship:
+          orderType === 'DELIVERY' && additionalToTrackingToken
             ? {
-                id: reservationContext.id,
-                reservationCode: reservationContext.reservation_code,
-                trackingToken: reservationContext.tracking_token,
-                reservedFor: reservationContext.reserved_for,
-                table: {
-                  id: reservationContext.table_id,
-                  code: reservationContext.table_code,
-                  name: reservationContext.table_name,
+                mode: joinAdditionalToExistingDelivery
+                  ? 'JOINED_EXISTING'
+                  : 'SEPARATE_DELIVERY',
+              }
+            : null,
+
+        delivery:
+          createdDelivery && deliveryQuote
+            ? {
+                status: createdDelivery.status,
+
+                zone: {
+                  code: deliveryQuote.zone.code,
+                  name: deliveryQuote.zone.name,
+                },
+
+                deliveryFee,
+
+                eta: {
+                  minMinutes: deliveryQuote.eta.minMinutes,
+                  maxMinutes: deliveryQuote.eta.maxMinutes,
                 },
               }
             : null,
 
-          tenant: {
-            code: cart.tenant_code,
-          },
+        reservation: reservationContext
+          ? {
+              id: reservationContext.id,
+              reservationCode: reservationContext.reservation_code,
+              trackingToken: reservationContext.tracking_token,
+              reservedFor: reservationContext.reserved_for,
+              table: {
+                id: reservationContext.table_id,
+                code: reservationContext.table_code,
+                name: reservationContext.table_name,
+              },
+            }
+          : null,
 
-          branch: {
-            code: cart.branch_code,
-          },
-
-          items: pricedOrderItems.map((item) => ({
-            product: {
-              id: item.product_id,
-              sku: item.sku,
-              name: item.name,
-            },
-
-            quantity: item.quantity,
-
-            unitPrice: Number(item.price),
-
-            lineTotal: Number(item.price) * item.quantity,
-
-            currency: item.currency,
-          })),
-
-          totals: {
-            subtotal: Number(order.subtotal),
-
-            discountTotal: Number(order.discount_total),
-
-            deliveryFee: Number(order.delivery_fee),
-
-            total: Number(order.total),
-          },
-
-          createdAt: order.created_at,
+        tenant: {
+          code: cart.tenant_code,
         },
-      };
-    });
+
+        branch: {
+          code: cart.branch_code,
+        },
+
+        items: pricedOrderItems.map((item) => ({
+          product: {
+            id: item.product_id,
+            sku: item.sku,
+            name: item.name,
+          },
+
+          quantity: item.quantity,
+
+          unitPrice: Number(item.price),
+
+          lineTotal: Number(item.price) * item.quantity,
+
+          currency: item.currency,
+        })),
+
+        totals: {
+          subtotal: Number(order.subtotal),
+
+          discountTotal: Number(order.discount_total),
+
+          deliveryFee: Number(order.delivery_fee),
+
+          total: Number(order.total),
+        },
+
+        createdAt: order.created_at,
+      },
+    };
   }
 
   // =======================================================
