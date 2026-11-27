@@ -24,8 +24,8 @@ Plan completo: `docs/FlashCommerce_Cloud_Plan_Consolidacion.docx` (v1, 2026-11-2
 |---|---|---|
 | R0 | Orden: archivo de parches, import de Cloud a `docs/cloud`, regla de nombres | Hecho |
 | R1 | Dividir `order.service.ts` (checkout, ciclo de vida, POS, stock) | Hecho |
-| R2 | API por áreas: núcleo, comercio, pagos, delivery, salón; dividir `delivery.service.ts` | Hecho (falta `payments.service.ts` y el método `checkout`) |
-| D1 | Delivery independiente: solicitud de envío, clientes del courier, tarifas, liquidación | Pendiente |
+| R2 | API por áreas: núcleo, comercio, pagos, delivery, salón; dividir `delivery.service.ts` | Hecho (`payments.service.ts` dividido en QR, callback BCP, efectivo en caja y contra entrega; falta el método `checkout`) |
+| D1 | Delivery independiente: solicitud de envío, clientes del courier, tarifas, liquidación, cobro contra entrega | Hecho (piloto en producción, S10) |
 | R3 | Apps web: tienda, backoffice, panel de Delivery | Pendiente |
 | R4 | Base SaaS: alta de negocios, planes por producto, suscripción, dominios | Pendiente |
 | R5 | Live: subastas, venta en vivo, videos cortos | Pendiente |

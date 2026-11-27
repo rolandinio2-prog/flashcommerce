@@ -17,6 +17,9 @@ import {
 } from './payments.controller';
 import { OpsAccessGuard } from '../delivery/ops-access.guard';
 import { PaymentsService } from './payments.service';
+import { BcpQrCallbackService } from './bcp-qr-callback.service';
+import { CashPaymentService } from './cash-payment.service';
+import { DriverCodCashService } from './driver-cod-cash.service';
 
 @Module({
   imports: [OperationsModule, StaffModule],
@@ -32,6 +35,9 @@ import { PaymentsService } from './payments.service';
     CashClosingService,
     CashSummaryService,
     PaymentsService,
+    BcpQrCallbackService,
+    CashPaymentService,
+    DriverCodCashService,
     MockQrProvider,
     BcpQrProvider,
     OpsAccessGuard,
