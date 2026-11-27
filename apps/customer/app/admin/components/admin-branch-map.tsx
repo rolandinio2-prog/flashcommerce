@@ -4,7 +4,8 @@ import {loadTrackingMapLibraries} from '../../../lib/google-maps';
 import {containMapGestures} from '../../../lib/map-gestures';
 import styles from './admin-branch-location.module.css';
 export type BranchPoint={latitude:number;longitude:number};
-export default function AdminBranchMap({point,onChange,disabled,tenantCode}:{tenantCode:string;point:BranchPoint|null;onChange:(p:BranchPoint)=>void;disabled:boolean}) {
+/** `fallbackCenter` centers the map (without choosing a point) while `point` is still empty. */
+export default function AdminBranchMap({point,onChange,disabled,tenantCode,fallbackCenter}:{tenantCode:string;point:BranchPoint|null;onChange:(p:BranchPoint)=>void;disabled:boolean;fallbackCenter?:BranchPoint|null}) {
   const container=useRef<HTMLDivElement>(null),map=useRef<google.maps.Map|null>(null),alive=useRef(false),manual=useRef(0);
   const onChangeRef=useRef(onChange),disabledRef=useRef(disabled);
   const initial=useRef(point),gpsBusy=useRef(false);
@@ -28,6 +29,7 @@ export default function AdminBranchMap({point,onChange,disabled,tenantCode}:{ten
     return()=>{disposed=true;alive.current=false;release?.();if(keyMove)container.current?.removeEventListener('keyup',keyMove);listeners.forEach(l=>l.remove());map.current?.unbindAll();map.current=null;};
   },[]);
   useEffect(()=>{if(ready&&point){const c=map.current?.getCenter();if(!c||Math.abs(c.lat()-point.latitude)>0.0000005||Math.abs(c.lng()-point.longitude)>0.0000005)map.current?.setCenter({lat:point.latitude,lng:point.longitude});}},[point?.latitude,point?.longitude,ready]);
+  useEffect(()=>{if(ready&&!point&&fallbackCenter){map.current?.setCenter({lat:fallbackCenter.latitude,lng:fallbackCenter.longitude});map.current?.setZoom(15);}},[ready,point,fallbackCenter?.latitude,fallbackCenter?.longitude]);
   function locate(){
     if(disabled||gpsBusy.current)return;
     if(!navigator.geolocation){setError('Este navegador no permite obtener la ubicación. Selecciónala en el mapa.');return;}

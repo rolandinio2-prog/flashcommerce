@@ -27,6 +27,10 @@ test('courier: manual delivery request reaches dispatch, not the kitchen', async
     expect(created.status(), await created.text()).toBe(201);
     const client = (await created.json()) as { id: string; name: string };
 
+    // The client list carries the branch origin so the Ops maps open centered on the branch.
+    const clientList = (await (await request.get(api('/clients'), { headers })).json()) as { branchOrigin: { latitude: number; longitude: number } | null };
+    expect(clientList.branchOrigin).toEqual({ latitude: expect.any(Number), longitude: expect.any(Number) });
+
     const rate = await request.put(api('/rates'), {
       headers,
       data: { courierClientId: client.id, pricingMode: 'DISTANCE', baseFee: 5, perKmFee: 0, minFee: 9 },

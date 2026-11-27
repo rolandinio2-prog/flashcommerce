@@ -36,6 +36,7 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
   const [section, setSection] = useState<Section>("NEW");
   const [clients, setClients] = useState<CourierClient[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [origin, setOrigin] = useState<BranchPoint | null>(null);
 
   const [clientsRevision, setClientsRevision] = useState(0);
   const loadClients = useCallback(async () => setClientsRevision((v) => v + 1), []);
@@ -43,7 +44,11 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
     let alive = true;
     courierApi
       .listClients()
-      .then((r) => alive && setClients(r.clients))
+      .then((r) => {
+        if (!alive) return;
+        setClients(r.clients);
+        setOrigin(r.branchOrigin ?? null);
+      })
       .catch((e: unknown) => alive && setError(message(e)));
     return () => {
       alive = false;
@@ -80,10 +85,10 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
         ))}
       </nav>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">{error}</p>}
-      {section === "NEW" && <NewRequest tenantCode={tenantCode} clients={clients.filter((c) => c.status === "ACTIVE")} />}
+      {section === "NEW" && <NewRequest tenantCode={tenantCode} origin={origin} clients={clients.filter((c) => c.status === "ACTIVE")} />}
       {section === "LIST" && <RequestList />}
       {section === "CASH" && <CashRemittances />}
-      {section === "CLIENTS" && <Clients tenantCode={tenantCode} clients={clients} onChanged={loadClients} />}
+      {section === "CLIENTS" && <Clients tenantCode={tenantCode} origin={origin} clients={clients} onChanged={loadClients} />}
       {section === "RATES" && <Rates clients={clients} />}
       {section === "STATEMENTS" && <ClientStatements clients={clients} />}
       {section === "PAYOUTS" && <DriverPayouts />}
@@ -93,7 +98,7 @@ export default function OpsCourierPanel({ tenantCode, canManage }: { tenantCode:
 
 // ------------------------------------------------------------------ new request
 
-function NewRequest({ tenantCode, clients }: { tenantCode: string; clients: CourierClient[] }) {
+function NewRequest({ tenantCode, origin, clients }: { tenantCode: string; origin: BranchPoint | null; clients: CourierClient[] }) {
   const [clientId, setClientId] = useState("");
   const [pickupName, setPickupName] = useState("");
   const [pickupPhone, setPickupPhone] = useState("");
@@ -217,7 +222,7 @@ function NewRequest({ tenantCode, clients }: { tenantCode: string; clients: Cour
           <span className="text-zinc-600">{pickupPoint ? `Punto: ${pickupPoint.latitude.toFixed(5)}, ${pickupPoint.longitude.toFixed(5)}` : "Punto: la sucursal"}</span>
           <button type="button" className={secondary} onClick={() => setEditPickup((v) => !v)}>{editPickup ? "Listo" : "Cambiar punto en el mapa"}</button>
         </div>
-        {editPickup && <AdminBranchMap tenantCode={tenantCode} point={pickupPoint} onChange={(p) => { setPickupPoint(p); setQuote(null); }} disabled={busy} />}
+        {editPickup && <AdminBranchMap tenantCode={tenantCode} point={pickupPoint} fallbackCenter={origin} onChange={(p) => { setPickupPoint(p); setQuote(null); }} disabled={busy} />}
         <h2 className="pt-2 text-lg font-black">3. Paquete</h2>
         <Field title="Qué se lleva"><input className={input} value={packageDescription} onChange={(e) => setPackageDescription(e.target.value)} maxLength={500} placeholder="Ej.: sobre, caja pequeña, medicamentos" /></Field>
         <Field title="Notas para el conductor"><textarea className={input} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} /></Field>
@@ -231,7 +236,7 @@ function NewRequest({ tenantCode, clients }: { tenantCode: string; clients: Cour
         </div>
         <Field title="Dirección"><input className={input} required value={addressText} onChange={(e) => setAddressText(e.target.value)} maxLength={500} /></Field>
         <Field title="Referencia"><input className={input} value={addressReference} onChange={(e) => setAddressReference(e.target.value)} maxLength={500} /></Field>
-        <AdminBranchMap tenantCode={tenantCode} point={destination} onChange={(p) => { setDestination(p); setQuote(null); }} disabled={busy} />
+        <AdminBranchMap tenantCode={tenantCode} point={destination} fallbackCenter={pickupPoint ?? origin} onChange={(p) => { setDestination(p); setQuote(null); }} disabled={busy} />
         <div className="grid gap-3 sm:grid-cols-2">
           <Field title="Latitud destino">
             <input className={input} inputMode="decimal" aria-label="Latitud destino" value={destLat} onChange={(e) => { setDestLat(e.target.value); setQuote(null); }} />
@@ -350,7 +355,7 @@ function RequestList() {
 
 const emptyClient = { code: "", name: "", phone: "", taxId: "", pickupAddress: "", pickupReference: "", billingMode: "PER_DELIVERY" as const };
 
-function Clients({ tenantCode, clients, onChanged }: { tenantCode: string; clients: CourierClient[]; onChanged: () => Promise<void> }) {
+function Clients({ tenantCode, origin, clients, onChanged }: { tenantCode: string; origin: BranchPoint | null; clients: CourierClient[]; onChanged: () => Promise<void> }) {
   const [editing, setEditing] = useState<CourierClient | null>(null);
   const [form, setForm] = useState<typeof emptyClient | Omit<CourierClient, "id" | "status" | "pickupLatitude" | "pickupLongitude">>(emptyClient);
   const [point, setPoint] = useState<BranchPoint | null>(null);
@@ -430,7 +435,7 @@ function Clients({ tenantCode, clients, onChanged }: { tenantCode: string; clien
         </Field>
         <Field title="Dirección de recogida"><input className={input} value={form.pickupAddress ?? ""} onChange={set("pickupAddress")} maxLength={500} /></Field>
         <Field title="Referencia"><input className={input} value={form.pickupReference ?? ""} onChange={set("pickupReference")} maxLength={500} /></Field>
-        <AdminBranchMap tenantCode={tenantCode} point={point} onChange={setPoint} disabled={busy} />
+        <AdminBranchMap tenantCode={tenantCode} point={point} fallbackCenter={origin} onChange={setPoint} disabled={busy} />
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         <div className="flex gap-2">
           <button type="submit" className={primary} disabled={busy}>{editing ? "Guardar cambios" : "Crear cliente"}</button>

@@ -182,7 +182,8 @@ const BASE = "/api/v1/ops/courier";
 const json = (method: string, body: unknown): RequestInit => ({ method, body: JSON.stringify(body) });
 
 export const courierApi = {
-  listClients: () => apiRequest<{ clients: CourierClient[] }>(`${BASE}/clients`),
+  listClients: () =>
+    apiRequest<{ clients: CourierClient[]; branchOrigin?: { latitude: number; longitude: number } | null }>(`${BASE}/clients`),
   createClient: (input: Partial<CourierClient>) => apiRequest<CourierClient>(`${BASE}/clients`, json("POST", input)),
   updateClient: (id: string, input: Partial<CourierClient>) =>
     apiRequest<CourierClient>(`${BASE}/clients/${encodeURIComponent(id)}`, json("PATCH", input)),

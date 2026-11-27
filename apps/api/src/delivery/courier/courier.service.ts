@@ -161,7 +161,17 @@ export class CourierService {
       `select ${CLIENT_COLUMNS} from public.courier_clients where tenant_id=$1::uuid order by status, name`,
       [staff.tenantId],
     );
-    return { clients: r.rows.map(clientView) };
+    // The branch delivery origin lets Ops center its maps before a point is chosen.
+    const b = await this.databaseService.query<{ lat: string | null; lng: string | null }>(
+      'select delivery_origin_latitude::text as lat, delivery_origin_longitude::text as lng from public.branches where tenant_id=$1::uuid and id=$2::uuid',
+      [staff.tenantId, staff.branchId],
+    );
+    const o = b.rows[0];
+    const branchOrigin =
+      o?.lat != null && o.lng != null
+        ? { latitude: Number(o.lat), longitude: Number(o.lng) }
+        : null;
+    return { clients: r.rows.map(clientView), branchOrigin };
   }
 
   private clientFields(input: CourierClientInput, creating: boolean) {
