@@ -18,6 +18,8 @@ export interface TenantSummary {
   branchCount: number;
   products: PlatformProduct[];
   staffCount: number;
+  paidUntil: string | null;
+  subscription: { state: SubscriptionState; daysLeft: number } | null;
 }
 export interface TenantDetail {
   id: string;
@@ -80,4 +82,51 @@ export const platformApi = {
     apiRequest<TenantDetail>(`${BASE}/tenants/${id}/status`, json("PATCH", { status, reason })),
   setProducts: (id: string, products: PlatformProduct[]) =>
     apiRequest<TenantDetail>(`${BASE}/tenants/${id}/products`, json("PUT", { products })),
+
+  // R4b billing
+  getPrices: () => apiRequest<PriceList>(`${BASE}/billing/prices`),
+  setPrices: (prices: Partial<Record<PlatformProduct, number>>) =>
+    apiRequest<PriceList>(`${BASE}/billing/prices`, json("PUT", { prices })),
+  getSubscription: (id: string) => apiRequest<Subscription>(`${BASE}/tenants/${id}/subscription`),
+  assignSubscription: (id: string, body: { paidUntil: string; monthlyPriceOverride: number | null; notes?: string }) =>
+    apiRequest<Subscription>(`${BASE}/tenants/${id}/subscription`, json("PUT", body)),
+  exemptSubscription: (id: string) => apiRequest<Subscription>(`${BASE}/tenants/${id}/subscription`, json("DELETE")),
+  recordPayment: (id: string, body: { months: number; amount: number; method: PaymentMethod; reference?: string }) =>
+    apiRequest<Subscription>(`${BASE}/tenants/${id}/subscription/payments`, json("POST", body)),
+  voidPayment: (id: string, paymentId: string, reason: string) =>
+    apiRequest<Subscription>(`${BASE}/tenants/${id}/subscription/payments/${paymentId}/void`, json("POST", { reason })),
 };
+
+export type SubscriptionState = "ACTIVE" | "DUE_SOON" | "GRACE" | "OVERDUE";
+export type PaymentMethod = "CASH" | "TRANSFER" | "QR" | "OTHER";
+export interface PriceList {
+  currency: string;
+  prices: Record<PlatformProduct, number>;
+}
+export interface SubscriptionPayment {
+  id: string;
+  amount: number;
+  months: number;
+  method: PaymentMethod;
+  reference: string | null;
+  paidUntilBefore: string;
+  paidUntilAfter: string;
+  createdAt: string;
+  voidedAt: string | null;
+  voidReason: string | null;
+  operator: string | null;
+}
+export interface Subscription {
+  currency: string;
+  monthlyAmount: number;
+  monthlyPriceOverride: number | null;
+  graceDays: number;
+  warnDays: number;
+  exempt: boolean;
+  paidUntil: string | null;
+  suspendsOn?: string;
+  state: SubscriptionState | null;
+  daysLeft: number | null;
+  notes: string | null;
+  payments: SubscriptionPayment[];
+}

@@ -258,6 +258,26 @@ function isAdvanceOrderPreparationLocked(
   );
 }
 
+/** R4b: tells the business its FlashCommerce subscription is about to expire or has expired. */
+function SubscriptionNotice({ notice }: { notice: NonNullable<OperationsCapabilities["subscription"]> }) {
+  const date = (d: string) =>
+    new Date(`${d}T12:00:00`).toLocaleDateString("es-BO", { day: "2-digit", month: "long" });
+  const text =
+    notice.state === "DUE_SOON"
+      ? notice.daysLeft === 0
+        ? `Tu suscripción de FlashCommerce vence hoy.`
+        : `Tu suscripción de FlashCommerce vence en ${notice.daysLeft} días (${date(notice.paidUntil)}).`
+      : `Tu suscripción de FlashCommerce venció el ${date(notice.paidUntil)}. El servicio se suspenderá el ${date(notice.suspendsOn)} si no se registra el pago.`;
+  return (
+    <div
+      role="status"
+      className={`px-6 py-3 text-sm font-bold ${notice.state === "DUE_SOON" ? "bg-amber-100 text-amber-900" : "bg-red-100 text-red-900"}`}
+    >
+      {text} Comunícate con FlashCommerce para renovarla.
+    </div>
+  );
+}
+
 // =========================================================
 // 4. COMPONENTE KDS
 // =========================================================
@@ -611,6 +631,8 @@ export default function OpsOrdersClient({
           </div>
         </div>
       </header>
+
+      {capabilities?.subscription && <SubscriptionNotice notice={capabilities.subscription} />}
 
       <div className="border-b border-zinc-200 bg-white">
         <nav className="mx-auto flex flex-wrap max-w-[1600px] gap-2 px-6 py-3">

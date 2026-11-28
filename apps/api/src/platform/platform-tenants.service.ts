@@ -7,6 +7,7 @@ import {
 
 import { DatabaseService } from '../core/database/database.service';
 import { StaffService } from '../core/staff/staff.service';
+import { subscriptionState, todayIn } from './billing-rules';
 import type { PlatformPrincipal } from './platform-auth.service';
 
 const PRODUCTS = ['COMMERCE', 'DELIVERY'] as const;
@@ -92,13 +93,16 @@ export class PlatformTenantsService {
       branches: number;
       products: string[] | null;
       staff: number;
+      paid_until: string | null;
     }>(
       `select t.id::text, t.code, t.name, t.status, t.created_at::text,
               (select count(*)::int from public.branches b where b.tenant_id=t.id) as branches,
               (select array_agg(p.product order by p.product) from public.tenant_products p where p.tenant_id=t.id and p.status='ACTIVE') as products,
-              (select count(*)::int from public.staff_users u where u.tenant_id=t.id) as staff
+              (select count(*)::int from public.staff_users u where u.tenant_id=t.id) as staff,
+              (select s.paid_until::text from public.tenant_subscriptions s where s.tenant_id=t.id) as paid_until
          from public.tenants t order by t.created_at desc`,
     );
+    const today = todayIn();
     return {
       tenants: r.rows.map((t) => ({
         id: t.id,
@@ -109,6 +113,10 @@ export class PlatformTenantsService {
         branchCount: t.branches,
         products: t.products ?? [],
         staffCount: t.staff,
+        paidUntil: t.paid_until,
+        subscription: t.paid_until
+          ? subscriptionState(t.paid_until, today)
+          : null,
       })),
     };
   }

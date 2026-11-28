@@ -27,7 +27,7 @@ Plan completo: `docs/FlashCommerce_Cloud_Plan_Consolidacion.docx` (v1, 2026-11-2
 | R2 | API por áreas: núcleo, comercio, pagos, delivery, salón; dividir `delivery.service.ts` | Hecho (`payments.service.ts` dividido en QR, callback BCP, efectivo en caja y contra entrega; `checkout` dividido en normalización, sesión de mesa y creación del pedido) |
 | D1 | Delivery independiente: solicitud de envío, clientes del courier, tarifas, liquidación, cobro contra entrega | Hecho (piloto en producción, S10) |
 | R3 | Apps web: tienda, backoffice, panel de Delivery | Hecho por dentro: `app/(tienda)`, `app/(backoffice)`, `app/(delivery)` y lo común en `lib/` y `app/_shared/`, con límites en ESLint; falta separarlas en apps propias |
-| R4 | Base SaaS: alta de negocios, planes por producto, suscripción, dominios | R4a hecho: consola de plataforma en `/platform` (alta de negocio, sucursal, productos y primer Admin; suspender o reactivar). Pendiente R4b (planes y suscripción manual) y dominios |
+| R4 | Base SaaS: alta de negocios, planes por producto, suscripción, dominios | R4a y R4b hechos: consola `/platform` (alta, productos, suspensión) y suscripción manual (precio por producto, pagos mensuales, aviso 5 días antes, 7 días de gracia y suspensión automática). Pendiente: dominios |
 | R5 | Live: subastas, venta en vivo, videos cortos | Pendiente |
 
 Reglas vigentes: el simulador de QR se mantiene hasta el final; el QR real del BCP es el último paso;

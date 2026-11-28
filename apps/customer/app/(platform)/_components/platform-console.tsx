@@ -12,6 +12,8 @@ import {
   type TenantSummary,
   platformApi,
 } from "../_lib/platform-api";
+import { PriceEditor, STATE_LABEL, STATE_STYLE, SubscriptionSection } from "./platform-billing";
+import { platformError } from "./platform-errors";
 
 const input = "w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-900 focus:outline-none";
 const primary = "rounded-lg bg-zinc-950 px-4 py-2 text-sm font-bold text-white disabled:opacity-50";
@@ -26,7 +28,7 @@ const ACTION_LABEL: Record<string, string> = {
   TENANT_PRODUCTS_CHANGED: "Productos cambiados",
 };
 
-const message = (e: unknown) => (e instanceof Error ? e.message : "Ocurrió un error.");
+const message = platformError;
 
 function Field({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -225,6 +227,15 @@ function TenantPanel({ id, onChanged }: { id: string; onChanged: () => void }) {
         </form>
       )}
 
+      <SubscriptionSection
+        tenantId={tenant.id}
+        onChanged={() => {
+          onChanged();
+          // A payment can lift an automatic suspension.
+          void platformApi.getTenant(tenant.id).then(setTenant, () => undefined);
+        }}
+      />
+
       <div className="space-y-2">
         <h3 className="font-black">Estado</h3>
         <Field title="Motivo (obligatorio para suspender o dar de baja)">
@@ -265,6 +276,7 @@ function Tenants({ operator, onLogout }: { operator: PlatformOperator; onLogout:
   const [creating, setCreating] = useState(false);
   const [credentials, setCredentials] = useState<InitialAdmin | null>(null);
   const [revision, setRevision] = useState(0);
+  const [pricing, setPricing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(() => setRevision((r) => r + 1), []);
 
@@ -285,6 +297,7 @@ function Tenants({ operator, onLogout }: { operator: PlatformOperator; onLogout:
         </div>
         <div className="flex items-center gap-3 text-sm">
           <span className="text-zinc-600">{operator.displayName}</span>
+          <button type="button" className={secondary} onClick={() => setPricing((v) => !v)}>Precios</button>
           <button type="button" className={secondary} onClick={onLogout}>Salir</button>
         </div>
       </header>
@@ -309,12 +322,20 @@ function Tenants({ operator, onLogout }: { operator: PlatformOperator; onLogout:
                   <span className="block text-xs text-zinc-500">
                     {t.code} · {STATUS_LABEL[t.status]} · {t.products.map((p) => PRODUCT_LABEL[p]).join(", ") || "sin productos"}
                   </span>
+                  <span className="mt-1 block text-xs">
+                    {t.subscription ? (
+                      <span className={`rounded-full px-2 py-0.5 font-bold ${STATE_STYLE[t.subscription.state]}`}>{STATE_LABEL[t.subscription.state]}</span>
+                    ) : (
+                      <span className="text-zinc-400">Sin suscripción</span>
+                    )}
+                  </span>
                 </button>
               </li>
             ))}
           </ul>
         </section>
         <div>
+          {pricing && <div className="mb-6"><PriceEditor onClose={() => setPricing(false)} /></div>}
           {creating && (
             <NewTenant
               onCreated={(t, admin) => {

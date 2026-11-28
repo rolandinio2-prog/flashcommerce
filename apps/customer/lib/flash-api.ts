@@ -2004,6 +2004,13 @@ export interface OperationsCapabilities {
   orderStatuses: string[];
   /** Contracted products (COMMERCE, DELIVERY); missing on an older API. */
   products?: string[];
+  /** Present only while the subscription is due soon or overdue (R4b). */
+  subscription?: {
+    state: 'DUE_SOON' | 'GRACE' | 'OVERDUE';
+    daysLeft: number;
+    paidUntil: string;
+    suspendsOn: string;
+  } | null;
 }
 export function getOperationsCapabilities(): Promise<OperationsCapabilities> {
   return apiRequest<OperationsCapabilities>('/api/v1/ops/access', { cache: 'no-store' });
