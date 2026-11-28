@@ -657,7 +657,7 @@ export default function OpsOrdersClient({
           </button>
           )}
 
-          {capabilities?.permissions.includes("courier.read") && (
+          {capabilities?.permissions.includes("courier.read") && (capabilities.products?.includes("DELIVERY") ?? true) && (
           <button
             type="button"
             onClick={() => setActiveTab("COURIER")}
@@ -728,7 +728,7 @@ export default function OpsOrdersClient({
             orders={orders}
             onOrdersChanged={loadOrders}
           />
-        ) : activeTab === "COURIER" && capabilities?.permissions.includes("courier.read") ? (
+        ) : activeTab === "COURIER" && capabilities?.permissions.includes("courier.read") && (capabilities.products?.includes("DELIVERY") ?? true) ? (
           <OpsCourierPanel
             tenantCode={tenantCode}
             canManage={capabilities.permissions.includes("courier.manage")}

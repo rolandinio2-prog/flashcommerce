@@ -98,6 +98,16 @@ test('platform console: create, suspend and reactivate a business', async ({ req
     expect(detail.audit.map((a) => a.action)).toEqual(expect.arrayContaining(['TENANT_CREATED', 'INITIAL_ADMIN_CREATED', 'TENANT_STATUS_CHANGED', 'TENANT_PRODUCTS_CHANGED']));
     expect((await request.put(api(`/platform/tenants/${tenant.id}/products`), { headers, data: { products: [] } })).status()).toBe(400);
 
+    // Ops learns the contracted products, so it can hide the areas the business does not have.
+    // (Ops needs the temporary password replaced first.)
+    const again = await staffLogin();
+    const adminCookie = { Cookie: again.headers()['set-cookie']!.split(';')[0], ...origin };
+    const changed = await request.post(api('/staff/auth/change-password'), { headers: adminCookie, data: { newPassword: `Nueva-${randomBytes(8).toString('hex')}` } });
+    expect(changed.status(), await changed.text()).toBeLessThan(300);
+    const access = await request.get(api('/ops/access'), { headers: adminCookie });
+    expect(access.status(), await access.text()).toBe(200);
+    expect(((await access.json()) as { products: string[] }).products).toEqual(['DELIVERY']);
+
     const listed = (await (await request.get(api('/platform/tenants'), { headers })).json()) as { tenants: { code: string }[] };
     expect(listed.tenants.map((t) => t.code)).toContain(code);
   });

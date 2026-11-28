@@ -203,7 +203,10 @@ export class StaffService {
       user.branch_user_status !== 'ACTIVE' ||
       !this.verifyPassword(password, user.password_hash)
     ) {
-      throw new UnauthorizedException('Invalid staff credentials');
+      // Same message whether the user, password or business is wrong, so it reveals nothing.
+      throw new UnauthorizedException(
+        'Usuario o contraseña incorrectos, o el negocio no está activo.',
+      );
     }
 
     const rawToken = randomBytes(32).toString('base64url');

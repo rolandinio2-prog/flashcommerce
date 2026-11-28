@@ -2002,6 +2002,8 @@ export interface OperationsCapabilities {
   branchCode: string;
   permissions: string[];
   orderStatuses: string[];
+  /** Contracted products (COMMERCE, DELIVERY); missing on an older API. */
+  products?: string[];
 }
 export function getOperationsCapabilities(): Promise<OperationsCapabilities> {
   return apiRequest<OperationsCapabilities>('/api/v1/ops/access', { cache: 'no-store' });
