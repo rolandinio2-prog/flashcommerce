@@ -206,7 +206,7 @@ export default function OpsUsersClient({
             </p>
             <h1 className="text-2xl font-black">Administración de usuarios</h1>
             <p className="mt-1 text-sm text-zinc-500">
-              {tenantCode} · {branchCode}
+              {sessionUser?.tenantCode ?? tenantCode} · {sessionUser?.branchCode ?? branchCode}
               {sessionUser ? ` · ${sessionUser.displayName}` : ""}
             </p>
           </div>

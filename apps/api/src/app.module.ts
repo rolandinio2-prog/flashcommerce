@@ -17,6 +17,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { DeliveryModule } from './delivery/delivery.module';
 import { StaffModule } from './core/staff/staff.module';
 import { BranchOperationsModule } from './core/branch-operations/branch-operations.module';
+import { PlatformModule } from './platform/platform.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { BranchOperationsModule } from './core/branch-operations/branch-operatio
     DeliveryModule,
     StaffModule,
     BranchOperationsModule,
+    PlatformModule,
   ],
 
   controllers: [AppController],

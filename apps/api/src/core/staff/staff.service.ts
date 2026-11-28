@@ -188,6 +188,8 @@ export class StaffService {
         where upper(t.code) = $1
           and upper(b.code) = $2
           and upper(u.user_code) = $3
+          and t.status = 'ACTIVE'
+          and b.status = 'ACTIVE'
         limit 1
       `,
       [tenantCode, branchCode, userCode],
@@ -319,6 +321,9 @@ export class StaffService {
           and s.expires_at > now()
           and u.status = 'ACTIVE'
           and ub.status = 'ACTIVE'
+          -- A suspended or inactive business (or branch) ends its staff sessions immediately.
+          and t.status = 'ACTIVE'
+          and b.status = 'ACTIVE'
         limit 1
       `,
       [tokenHash],
@@ -746,6 +751,33 @@ export class StaffService {
           status,
         },
       };
+    });
+  }
+
+  /**
+   * First ADMIN of a branch created from the platform console (R4a). Same rules as bootstrapAdmin
+   * (only while the branch has no staff), but authorized by the platform session instead of the ops key.
+   */
+  async createInitialAdminForPlatform(
+    input: Omit<BootstrapAdminInput, 'opsAccessKey'>,
+  ) {
+    const tenantCode = this.requireCode(input.tenantCode, 'tenantCode');
+    const branchCode = this.requireCode(input.branchCode, 'branchCode');
+    const existing = await this.getBootstrapStatus(tenantCode, branchCode);
+    if (!existing.bootstrapRequired)
+      throw new ConflictException(
+        'Staff administration has already been initialized for this branch',
+      );
+    return this.createStaffUserInternal({
+      tenantCode,
+      branchCode,
+      firstName: input.firstName,
+      lastName: input.lastName,
+      identityDocument: input.identityDocument,
+      phone: input.phone,
+      email: input.email,
+      role: 'ADMIN',
+      createdByUserId: null,
     });
   }
 
